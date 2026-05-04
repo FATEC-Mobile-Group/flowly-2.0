@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
+import { Link } from 'react-router-dom';
+import { FaBell } from 'react-icons/fa';
 import { Bar } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -12,6 +14,7 @@ import {
 } from 'chart.js';
 import Sidebar from "../../components/layout/Sidebar";
 import { formatarStatus } from "../../config/statusUtils";
+import { API_ENDPOINTS } from "../../config/config";
 import "../../styles/pages/dashboard/DashboardGeral.css";
 import "../../styles/pages/admin/DashboardAdmin.css";
 
@@ -28,10 +31,14 @@ function DashboardGeral() {
   const [equipes, setEquipes] = useState([]);
   const [tarefas, setTarefas] = useState([]);
   const [dadosGraficos, setDadosGraficos] = useState([]);
+  const [notificationCount, setNotificationCount] = useState(0);
+
+  const adminName = localStorage.getItem('nome') || 'Admin Flowly';
 
   useEffect(() => {
     buscarEquipes();
     buscarTarefas();
+    buscarNotificationCount();
   }, []);
 
   useEffect(() => {
@@ -91,6 +98,19 @@ function DashboardGeral() {
     }
   };
 
+  const buscarNotificationCount = async () => {
+    try {
+      const res = await axios.get(API_ENDPOINTS.NOTIFICATIONS_COUNT, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+      });
+      setNotificationCount(res.data?.count || 0);
+    } catch (err) {
+      console.error('Erro ao buscar notificações:', err);
+    }
+  };
+
   const totalTarefas = tarefas.length;
   const tarefasConcluidas = tarefas.filter(t => t.status === 'concluido').length;
   const totalTempoGasto = tarefas.reduce((acc, t) => acc + (t.tempoGasto || 0), 0);
@@ -126,10 +146,13 @@ function DashboardGeral() {
           <input type="text" placeholder="Pesquisar painéis..." />
         </div>
         <div className="header-profile">
-          <div className="notification-bell">🔔</div>
+          <Link to="/notificacoes" className="notification-bell" aria-label="Ver notificações" style={{ position: 'relative', fontSize: '1.8em', color: '#333', textDecoration: 'none', display: 'flex', alignItems: 'center' }}>
+            <FaBell />
+            {notificationCount > 0 && <span style={{ position: 'absolute', top: '-8px', right: '-8px', backgroundColor: '#ff4444', color: 'white', borderRadius: '50%', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75em', fontWeight: 'bold' }}>{notificationCount}</span>}
+          </Link>
           <div className="profile-info">
-            <div className="avatar">A</div>
-            <span>Admin Flowly</span>
+            <div className="avatar">{adminName.charAt(0).toUpperCase()}</div>
+            <span>{adminName}</span>
           </div>
         </div>
       </header>

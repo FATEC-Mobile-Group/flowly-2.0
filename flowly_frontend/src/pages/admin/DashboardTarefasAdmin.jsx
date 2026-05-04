@@ -59,32 +59,60 @@ function DashboardTarefasAdmin() {
           </Link>
         </div>
 
-        <div className="metrics">
-          <div className="metric">
-            <span className="metric-title">Número de Tarefas:</span>
-            <span className="metric-value">{tarefas.length}</span>
-          </div>
-        </div>
-
-        <div className="teams-list">
+        <div className="tasks-list">
           {loading ? (
-            <p>Carregando tarefas...</p>
+            <p className="tasks-feedback">Carregando tarefas...</p>
           ) : tarefas.length === 0 ? (
-            <p>Nenhuma tarefa encontrada.</p>
+            <p className="tasks-feedback">Nenhuma tarefa encontrada.</p>
           ) : (
             tarefas.map((tarefa) => (
-              <div key={tarefa._id} className="team-item">
-                <h3>{tarefa.descricao}</h3>
-                <p><strong>Entrega:</strong> {new Date(tarefa.dataEntrega).toLocaleDateString()}</p>
-                <p><strong>Usuário:</strong> {tarefa.user?.nome || 'Sem responsável (Backlog)'}</p>
-                <p><strong>Equipe:</strong> {tarefa.equipe?.nome}</p>
-                <p><strong>Status:</strong> {formatarStatus(tarefa.status)}</p>
+              <div key={tarefa._id} className={`task-item task-urgency-${tarefa.urgencia}`}>
+                <div className="task-item-header">
+                  <div>
+                    <h3>{tarefa.descricao}</h3>
+                    <span className="task-subtitle">
+                      {tarefa.equipe?.nome || "Sem equipe definida"}
+                    </span>
+                  </div>
+                  <span className={`task-status task-status-${String(tarefa.status || "").toLowerCase()}`}>
+                    {formatarStatus(tarefa.status)}
+                  </span>
+                </div>
 
-                <div className="actions">
-                  <button className="btn-edit" onClick={() => handleEdit(tarefa._id)}>
+                <div className="task-meta-grid">
+                  <div className="task-meta-card">
+                    <span className="task-meta-label">Entrega</span>
+                    <span className="task-meta-value">
+                      {new Date(tarefa.dataEntrega).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <div className="task-meta-card">
+                    <span className="task-meta-label">Responsável</span>
+                    <span className="task-meta-value">
+                      {tarefa.user?.nome || "Sem responsável (Backlog)"}
+                    </span>
+                  </div>
+                  <div className="task-meta-card">
+                    <span className="task-meta-label">Urgência</span>
+                    <span className="task-meta-value">
+                      {String(tarefa.urgencia || "").charAt(0).toUpperCase() + String(tarefa.urgencia || "").slice(1)}
+                    </span>
+                  </div>
+                  {tarefa.tempoEstimado && (
+                    <div className="task-meta-card">
+                      <span className="task-meta-label">Tempo estimado</span>
+                      <span className="task-meta-value">{tarefa.tempoEstimado} min</span>
+                    </div>
+                  )}
+                </div>
+
+                {tarefa.detalhes && <p className="task-details">{tarefa.detalhes}</p>}
+
+                <div className="actions task-actions">
+                  <button type="button" className="btn-edit" onClick={() => handleEdit(tarefa._id)}>
                     Editar
                   </button>
-                  <button className="btn-delete" onClick={() => handleDelete(tarefa._id)}>
+                  <button type="button" className="btn-delete" onClick={() => handleDelete(tarefa._id)}>
                     Excluir
                   </button>
                 </div>

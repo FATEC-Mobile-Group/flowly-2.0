@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   FaChartPie, FaUsers, FaTasks, FaSignOutAlt,
-  FaBars, FaTimes, FaPlus, FaClipboardList, FaHome, FaInbox, FaComments
+  FaBars, FaTimes, FaPlus, FaClipboardList, FaHome, FaInbox, FaComments, FaBell
 } from 'react-icons/fa';
 import { authUtils } from '../../config/authUtils';
 import '../../styles/components/Sidebar.css';
@@ -46,16 +46,35 @@ const Sidebar = () => {
   };
 
   const isActive = (path) => {
-    if (location.pathname === path) {
-      return true;
-    }
-    return location.pathname.startsWith(`${path}/`);
+    // Mapa de rotas relacionadas para evitar que parent paths ativem eroneamente
+    const relatedRoutes = {
+      '/admin': ['/admin', '/admin/equipe/', '/admin/criar-equipe'],
+      '/admin/geral': ['/admin/geral'],
+      '/admin/chats': ['/admin/chats'],
+      '/admin/tarefas': ['/admin/tarefas', '/admin/criar-tarefa', '/admin/editar-tarefa/'],
+      '/notificacoes': ['/notificacoes'],
+      '/dashboard': ['/dashboard'],
+      '/minhas-tarefas': ['/minhas-tarefas'],
+      '/backlog': ['/backlog', '/backlog/'],
+      '/equipes': ['/equipes'],
+      '/chats': ['/chats'],
+    };
+
+    const routes = relatedRoutes[path] || [path];
+    
+    return routes.some(route => {
+      if (route.endsWith('/')) {
+        return location.pathname.startsWith(route) || location.pathname === route.slice(0, -1);
+      }
+      return location.pathname === route || location.pathname.startsWith(`${route}/`);
+    });
   };
 
   const adminMenuItems = [
     { path: '/admin/geral', icon: <FaChartPie />, label: 'Painel Geral' },
     { path: '/admin', icon: <FaUsers />, label: 'Equipes' },
     { path: '/admin/chats', icon: <FaComments />, label: 'Chats' },
+    { path: '/notificacoes', icon: <FaBell />, label: 'Notificações' },
     { path: '/admin/criar-equipe', icon: <FaPlus />, label: 'Nova Equipe' },
     { path: '/admin/tarefas', icon: <FaClipboardList />, label: 'Tarefas' },
     { path: '/admin/criar-tarefa', icon: <FaPlus />, label: 'Nova Tarefa' },
@@ -66,6 +85,7 @@ const Sidebar = () => {
     { path: '/minhas-tarefas', icon: <FaTasks />, label: 'Kanban Board' },
     { path: '/backlog', icon: <FaInbox />, label: 'Backlog' },
     { path: '/chats', icon: <FaComments />, label: 'Chats' },
+    { path: '/notificacoes', icon: <FaBell />, label: 'Notificações' },
     { path: '/equipes', icon: <FaUsers />, label: 'Minhas Equipes' },
   ];
 

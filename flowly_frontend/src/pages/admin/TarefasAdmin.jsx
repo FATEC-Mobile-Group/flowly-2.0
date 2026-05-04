@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { formatarStatus } from "../../config/statusUtils";
+import { Link, useLocation, useParams } from "react-router-dom";
 import "../../styles/pages/admin/DashboardAdmin.css";
 import "../../styles/pages/admin/TarefasAdmin.css";
 import Sidebar from "../../components/layout/Sidebar";
@@ -14,7 +13,6 @@ function TarefasAdmin() {
   const [users, setUsers] = useState([]);
   const [equipeSelecionada, setEquipeSelecionada] = useState("");
   const [userSelecionado, setUserSelecionado] = useState("");
-  const [tarefas, setTarefas] = useState([]);
   const [mensagem, setMensagem] = useState("");
   const [tipoMensagem, setTipoMensagem] = useState("sucesso");
   const [modoEdicao, setModoEdicao] = useState(false);
@@ -22,85 +20,44 @@ function TarefasAdmin() {
   const [tempoEstimado, setTempoEstimado] = useState("");
   const [urgencia, setUrgencia] = useState("baixa");
   const location = useLocation();
-  const navigate = useNavigate();
+  const { id } = useParams();
 
   useEffect(() => {
     buscarEquipes();
-    listarTarefas();
   }, []);
 
+  useEffect(() => {
+    if (!id) return;
 
-
-  const iniciarEdicao = (tarefa) => {
-    setModoEdicao(true);
-    setIdTarefaEditando(tarefa._id);
-    setDescricao(tarefa.descricao);
-    setDetalhes(tarefa.detalhes || "");
-    setDataEntrega(tarefa.dataEntrega.split("T")[0]);
-    setEquipeSelecionada(tarefa.equipe?._id);
-    setTempoEstimado(tarefa.tempoEstimado || "");
-    setUrgencia(tarefa.urgencia || "baixa");
-    buscarMembersDaEquipe(tarefa.equipe?._id);
-    setUserSelecionado(tarefa.user?._id || '');
-  };
-
-  const atualizarTarefa = async () => {
-    try {
-      await axios.put(
-        `http://localhost:5000/api/tarefas/${idTarefaEditando}`,
-        {
-          descricao,
-          detalhes,
-          dataEntrega,
-          equipe: equipeSelecionada,
-          user: userSelecionado,
-          tempoEstimado: parseInt(tempoEstimado) || null,
-          urgencia
-        },
-        {
+    const carregarTarefa = async () => {
+      try {
+        const res = await axios.get(`http://localhost:5000/api/tarefas/${id}`, {
           headers: {
             Authorization: `Bearer ${localStorage.getItem("token")}`,
           },
+        });
+
+        const tarefa = res.data;
+        setModoEdicao(true);
+        setIdTarefaEditando(tarefa._id);
+        setDescricao(tarefa.descricao || "");
+        setDetalhes(tarefa.detalhes || "");
+        setDataEntrega(tarefa.dataEntrega ? tarefa.dataEntrega.split("T")[0] : "");
+        setEquipeSelecionada(tarefa.equipe?._id || "");
+        setUserSelecionado(tarefa.user?._id || "");
+        setTempoEstimado(tarefa.tempoEstimado || "");
+        setUrgencia(tarefa.urgencia || "baixa");
+
+        if (tarefa.equipe?._id) {
+          buscarMembersDaEquipe(tarefa.equipe._id);
         }
-      );
-      setTipoMensagem("sucesso");
-      setMensagem("Tarefa atualizada com sucesso!");
-      setTimeout(() => setMensagem(""), 3000);
-      cancelarEdicao();
-      listarTarefas();
-    } catch (err) {
-      console.error("Erro ao atualizar tarefa:", err);
-    }
-  };
+      } catch (err) {
+        console.error("Erro ao carregar tarefa para edição:", err);
+      }
+    };
 
-  const cancelarEdicao = () => {
-    setModoEdicao(false);
-    setIdTarefaEditando(null);
-    setDescricao("");
-    setDetalhes("");
-    setDataEntrega("");
-    setEquipeSelecionada("");
-    setUserSelecionado("");
-    setTempoEstimado("");
-    setUrgencia("baixa");
-    setUsers([]);
-  };
-
-  const deletarTarefa = async (id) => {
-    try {
-      await axios.delete(`http://localhost:5000/api/tarefas/${id}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      });
-      setTipoMensagem("sucesso");
-      setMensagem("Tarefa deletada com sucesso!");
-      setTimeout(() => setMensagem(""), 3000);
-      listarTarefas();
-    } catch (err) {
-      console.error("Erro ao deletar tarefa:", err);
-    }
-  };
+    carregarTarefa();
+  }, [id]);
 
   const buscarEquipes = async () => {
     try {
@@ -117,38 +74,68 @@ function TarefasAdmin() {
 
   const buscarMembersDaEquipe = async (equipeId) => {
     try {
-      const res = await axios.get(
-        `http://localhost:5000/api/equipes/${equipeId}/membros`,
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
-          },
-        }
-      );
+      const res = await axios.get(`http://localhost:5000/api/equipes/${equipeId}/membros`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+      });
       setUsers(res.data);
     } catch (err) {
       console.error("Erro ao buscar membros da equipe:", err);
     }
   };
 
-  const listarTarefas = async () => {
-    try {
-      const res = await axios.get("http://localhost:5000/api/tarefas", {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      });
-      setTarefas(res.data);
-    } catch (err) {
-      console.error("Erro ao listar tarefas:", err);
+  const handleEquipeChange = (e) => {
+    const equipeId = e.target.value;
+    setEquipeSelecionada(equipeId);
+    setUserSelecionado("");
+    if (equipeId) {
+      buscarMembersDaEquipe(equipeId);
+    } else {
+      setUsers([]);
     }
   };
 
-  const handleEquipeChange = (e) => {
-    const id = e.target.value;
-    setEquipeSelecionada(id);
-    setUserSelecionado(""); // Resetar user selecionado
-    buscarMembersDaEquipe(id);
+  const cancelarEdicao = () => {
+    setModoEdicao(false);
+    setIdTarefaEditando(null);
+    setDescricao("");
+    setDetalhes("");
+    setDataEntrega("");
+    setEquipeSelecionada("");
+    setUserSelecionado("");
+    setTempoEstimado("");
+    setUrgencia("baixa");
+    setUsers([]);
+  };
+
+  const atualizarTarefa = async () => {
+    try {
+      await axios.put(
+        `http://localhost:5000/api/tarefas/${idTarefaEditando}`,
+        {
+          descricao,
+          detalhes,
+          dataEntrega,
+          equipe: equipeSelecionada,
+          user: userSelecionado,
+          tempoEstimado: parseInt(tempoEstimado) || null,
+          urgencia,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+        }
+      );
+
+      setTipoMensagem("sucesso");
+      setMensagem("Tarefa atualizada com sucesso!");
+      setTimeout(() => setMensagem(""), 3000);
+      cancelarEdicao();
+    } catch (err) {
+      console.error("Erro ao atualizar tarefa:", err);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -156,7 +143,6 @@ function TarefasAdmin() {
 
     const hoje = new Date();
     const dataSelecionada = new Date(dataEntrega);
-
     hoje.setHours(0, 0, 0, 0);
     dataSelecionada.setHours(0, 0, 0, 0);
 
@@ -167,10 +153,10 @@ function TarefasAdmin() {
       return;
     }
 
-    if(modoEdicao){
-      await atualizarTarefa();
-    }else{
-      try {
+    try {
+      if (modoEdicao) {
+        await atualizarTarefa();
+      } else {
         await axios.post(
           "http://localhost:5000/api/tarefas",
           {
@@ -180,7 +166,7 @@ function TarefasAdmin() {
             equipe: equipeSelecionada,
             user: userSelecionado,
             tempoEstimado: parseInt(tempoEstimado) || null,
-            urgencia
+            urgencia,
           },
           {
             headers: {
@@ -188,6 +174,7 @@ function TarefasAdmin() {
             },
           }
         );
+
         setDescricao("");
         setDetalhes("");
         setDataEntrega("");
@@ -196,16 +183,13 @@ function TarefasAdmin() {
         setTempoEstimado("");
         setUrgencia("baixa");
         setUsers([]);
-        listarTarefas();
 
         setTipoMensagem("sucesso");
         setMensagem("Tarefa criada com sucesso!");
-        setTimeout(() => {
-          setMensagem("");
-        }, 3000);
-      } catch (err) {
-        console.error("Erro ao criar tarefa:", err);
+        setTimeout(() => setMensagem(""), 3000);
       }
+    } catch (err) {
+      console.error("Erro ao salvar tarefa:", err);
     }
   };
 
@@ -216,9 +200,11 @@ function TarefasAdmin() {
       <main className="dashboard-container">
         <div className="dashboard-header">
           <h2 className="dashboard-title">
-            {location.pathname === '/admin/criar-tarefa' ? 'Criar Nova Tarefa' : 
-             location.pathname.includes('/admin/editar-tarefa/') ? 'Editar Tarefa' : 
-             'Gerenciar Tarefas'}
+            {location.pathname === "/admin/criar-tarefa"
+              ? "Criar Nova Tarefa"
+              : location.pathname.includes("/admin/editar-tarefa/")
+              ? "Editar Tarefa"
+              : "Gerenciar Tarefas"}
           </h2>
           <Link to="/admin/tarefas" className="btn-back">
             ← Voltar ao Dashboard de Tarefas
@@ -233,12 +219,13 @@ function TarefasAdmin() {
             onChange={(e) => setDescricao(e.target.value)}
             required
           />
+
           <textarea
             placeholder="Descrição detalhada da tarefa"
             value={detalhes}
-            onChange={e => setDetalhes(e.target.value)}
+            onChange={(e) => setDetalhes(e.target.value)}
             rows={3}
-            style={{resize: 'vertical'}}
+            style={{ resize: "vertical" }}
           />
 
           <input
@@ -256,11 +243,7 @@ function TarefasAdmin() {
             min="0"
           />
 
-          <select 
-            value={urgencia} 
-            onChange={(e) => setUrgencia(e.target.value)}
-            required
-          >
+          <select value={urgencia} onChange={(e) => setUrgencia(e.target.value)} required>
             <option value="baixa">Urgência Baixa</option>
             <option value="media">Urgência Média</option>
             <option value="alta">Urgência Alta</option>
@@ -268,9 +251,9 @@ function TarefasAdmin() {
 
           <select value={equipeSelecionada} onChange={handleEquipeChange} required>
             <option value="">Selecione uma equipe</option>
-            {equipes.map((e) => (
-              <option key={e._id} value={e._id}>
-                {e.nome}
+            {equipes.map((equipe) => (
+              <option key={equipe._id} value={equipe._id}>
+                {equipe.nome}
               </option>
             ))}
           </select>
@@ -281,48 +264,17 @@ function TarefasAdmin() {
             disabled={!equipeSelecionada}
           >
             <option value="">Sem responsável (Backlog)</option>
-            {users.map((u) => (
-              <option key={u._id} value={u._id}>
-                {u.nome}
+            {users.map((user) => (
+              <option key={user._id} value={user._id}>
+                {user.nome}
               </option>
             ))}
           </select>
 
-          <button type="submit">
-            {modoEdicao ? "Salvar Alterações" : "Criar Tarefa"}
-          </button>
+          <button type="submit">{modoEdicao ? "Salvar Alterações" : "Criar Tarefa"}</button>
 
           {mensagem && <div className={`mensagem ${tipoMensagem}`}>{mensagem}</div>}
         </form>
-
-        <div className="lista-tarefas">
-          <h3>Tarefas Criadas</h3>
-          {tarefas.length === 0 ? (
-            <p>Nenhuma tarefa cadastrada.</p>
-          ) : (
-            tarefas.map((t) => (
-              <div key={t._id} className={`tarefa-item urgencia-${t.urgencia}`}>
-                <p><strong>Nome da tarefa:</strong> {t.descricao}</p>
-                {t.detalhes && <p><strong>Descrição:</strong> {t.detalhes}</p>}
-                <p><strong>Entrega:</strong> {new Date(t.dataEntrega).toLocaleDateString()}</p>
-                <p><strong>Usuário:</strong> {t.user?.nome || 'Sem responsável (Backlog)'}</p>
-                <p><strong>Equipe:</strong> {t.equipe?.nome}</p>
-                <p><strong>Status:</strong> {formatarStatus(t.status)}</p>
-                <p><strong>Urgência:</strong> {t.urgencia.charAt(0).toUpperCase() + t.urgencia.slice(1)}</p>
-                {t.tempoEstimado && (
-                  <p><strong>Tempo Estimado:</strong> {t.tempoEstimado} minutos</p>
-                )}
-                {t.tempoGasto > 0 && (
-                  <p><strong>Tempo Gasto:</strong> {t.tempoGasto} minutos</p>
-                )}
-                <div className="buttons">
-                  <button className="edit-btn" onClick={() => iniciarEdicao(t)}>Editar</button>
-                  <button className="delete-btn" onClick={() => deletarTarefa(t._id)}>Excluir</button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
       </main>
     </div>
   );

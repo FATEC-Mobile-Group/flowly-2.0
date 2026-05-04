@@ -1,0 +1,124 @@
+.notifications-page {
+  flex: 1;
+  padding: 3rem 4rem;
+  margin-left: 260px;
+  position: relative;
+  z-index: 10;
+  color: #fff;
+}
+
+.notifications-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.notifications-header h2 {
+  font-size: 2.2rem;
+  margin: 0;
+}
+
+.notifications-header p {
+  margin-top: 6px;
+  color: #c5d0df;
+}
+
+.mark-all-btn,
+.read-btn {
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--primary-color), #4527a0);
+  color: #fff;
+  padding: 10px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.notifications-error,
+.notifications-empty {
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #d7d4e3;
+}
+
+.notifications-list {
+  display: grid;
+  gap: 14px;
+}
+
+.notification-card {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.notification-card.unread {
+  border-color: rgba(126, 87, 194, 0.35);
+}
+
+.notification-card.read {
+  opacity: 0.82;
+}
+
+.notification-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.notification-type {
+  display: inline-flex;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.type-chat { background: rgba(79, 140, 255, 0.18); color: #9cc2ff; }
+.type-task { background: rgba(255, 152, 0, 0.18); color: #ffd08a; }
+.type-team { background: rgba(0, 212, 141, 0.18); color: #9be6c7; }
+.type-system { background: rgba(255, 255, 255, 0.12); color: #fff; }
+
+.unread-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ff3366;
+}
+
+.notification-text {
+  margin: 0 0 14px;
+  line-height: 1.5;
+  color: #fff;
+}
+
+.notification-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #b0bec5;
+  font-size: 0.85rem;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 768px) {
+  .notifications-page {
+    margin-left: 0;
+    padding: 88px 16px 24px;
+  }
+
+  .notifications-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

@@ -29,6 +29,12 @@ export const API_ENDPOINTS = {
   // Admin
   ADMIN: `${API_BASE_URL}/admin`,
 
+  // Notificações
+  NOTIFICATIONS: `${API_BASE_URL}/notificacoes`,
+  NOTIFICATIONS_COUNT: `${API_BASE_URL}/notificacoes/count`,
+  NOTIFICATIONS_MARK_ALL_READ: `${API_BASE_URL}/notificacoes/mark-all-read`,
+  NOTIFICATIONS_MARK_READ: (id) => `${API_BASE_URL}/notificacoes/${id}/read`,
+
   // Users
   USERS: `${API_BASE_URL}/users`,
   USER_ME: `${API_BASE_URL}/users/me`,

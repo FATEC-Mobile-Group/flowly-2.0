@@ -2,7 +2,8 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { Link } from "react-router-dom";
 import { useNavigate } from "react-router-dom";
-import { FaTasks, FaFileDownload } from 'react-icons/fa';
+import { FaTasks, FaFileDownload, FaBell } from 'react-icons/fa';
+import { API_ENDPOINTS } from "../../config/config";
 import { formatarStatus } from "../../config/statusUtils";
 import "../../styles/pages/user/DashboardUser.css";
 import "../../styles/pages/admin/DashboardAdmin.css";
@@ -15,9 +16,11 @@ function DashboardUser() {
   const [statusAtualizado, setStatusAtualizado] = useState("");
   const [userName, setUserName] = useState("");
   const [cronometrosAtivos, setCronometrosAtivos] = useState({});
+  const [notificationCount, setNotificationCount] = useState(0);
 
   useEffect(() => {
     buscarTarefas();
+    buscarNotificationCount();
     setUserName(localStorage.getItem('nome') || '');
   }, []);
 
@@ -70,6 +73,19 @@ function DashboardUser() {
       setCronometrosAtivos(cronometros);
     } catch (err) {
       console.error("Erro ao buscar tarefas:", err);
+    }
+  };
+
+  const buscarNotificationCount = async () => {
+    try {
+      const res = await axios.get(API_ENDPOINTS.NOTIFICATIONS_COUNT, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+      });
+      setNotificationCount(res.data?.count || 0);
+    } catch (err) {
+      console.error('Erro ao buscar notificações:', err);
     }
   };
 
@@ -190,8 +206,16 @@ function DashboardUser() {
       <Sidebar />
 
       <div className="dashboard-user">
-        {userName && <h3 className="boas-vindas">Bem-vindo(a), {userName}!</h3>}
-        <h2>Minhas Tarefas</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', paddingBottom: '20px', borderBottom: '1px solid #eee' }}>
+          <div>
+            {userName && <h3 className="boas-vindas">Bem-vindo(a), {userName}!</h3>}
+            <h2 style={{ margin: '0' }}>Minhas Tarefas</h2>
+          </div>
+          <Link to="/notificacoes" className="notification-bell" aria-label="Ver notificações" style={{ position: 'relative', fontSize: '1.8em', color: '#333', textDecoration: 'none' }}>
+            <FaBell />
+            {notificationCount > 0 && <span style={{ position: 'absolute', top: '-8px', right: '-8px', backgroundColor: '#ff4444', color: 'white', borderRadius: '50%', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75em', fontWeight: 'bold' }}>{notificationCount}</span>}
+          </Link>
+        </div>
 
         {tarefas.length === 0 ? (
           <p>Nenhuma tarefa atribuída.</p>
