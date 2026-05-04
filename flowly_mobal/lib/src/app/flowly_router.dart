@@ -8,6 +8,7 @@ import 'package:meu_app/src/screens/auth/verify_email_screen.dart';
 import 'package:meu_app/src/screens/home/home_screen.dart';
 import 'package:meu_app/src/screens/profile/profile_screen.dart';
 import 'package:meu_app/src/screens/profile/user_settings_screen.dart';
+import 'package:meu_app/src/screens/notifications/notifications_screen.dart';
 import 'package:meu_app/src/screens/chats/chats_screen.dart';
 import 'package:meu_app/src/screens/tasks/task_detail_screen.dart';
 import 'package:meu_app/src/screens/teams/create_team_screen.dart';
@@ -92,6 +93,11 @@ final GoRouter flowlyRouter = GoRouter(
       path: '/perfil',
       builder: (BuildContext context, GoRouterState state) =>
           const ProfileScreen(),
+    ),
+    GoRoute(
+      path: '/notificacoes',
+      builder: (BuildContext context, GoRouterState state) =>
+          const NotificationsScreen(),
     ),
     GoRoute(
       path: '/perfil/configuracoes',

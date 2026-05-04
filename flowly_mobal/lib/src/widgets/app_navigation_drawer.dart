@@ -118,6 +118,11 @@ class _AppNavigationDrawerState extends State<AppNavigationDrawer> {
         route: '/chats',
       ),
       _DrawerItem(
+        title: 'Notificações',
+        icon: Icons.notifications_outlined,
+        route: '/notificacoes',
+      ),
+      _DrawerItem(
         title: 'Minhas Equipes',
         icon: Icons.groups_outlined,
         route: '/equipes/minhas',

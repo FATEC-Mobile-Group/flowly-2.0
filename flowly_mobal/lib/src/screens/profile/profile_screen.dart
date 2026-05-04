@@ -180,13 +180,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     icon: Icons.notifications,
                     title: 'Notificações',
                     subtitle: 'Gerenciar notificações',
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Funcionalidade em desenvolvimento'),
-                        ),
-                      );
-                    },
+                    onTap: () => context.go('/notificacoes'),
                   ),
                   const SizedBox(height: 12),
                   _buildMenuTile(
