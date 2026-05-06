@@ -1,6 +1,7 @@
 const Equipe = require('../models/Equipe');
 const User = require('../models/User');
 const Message = require('../models/Message');
+const 
 const mongoose = require('mongoose');
 
 exports.criarEquipe = async (req, res) => {
@@ -133,4 +134,29 @@ exports.getMessages = async (req, res) => {
     res.status(500).json({ erro: 'Erro ao buscar histórico de mensagens' });
   }
 };
+
+exports.addNovoUsuario = async (req, res) => {
+  try {
+    const { equipeId, userId } = req.body;
+    const equipe = await Equipe.findById(equipeId);
+    if (!equipe) return res.status(404).json({ erro: 'Equipe não encontrada' });
+
+    const usuario = await User.findById(userId);
+    if (!usuario) return res.status(404).json({ erro: 'Usuario não encontrado' });
+
+    if (equipe.membros.includes(userId)) {
+      return res.status(400).json({ erro: 'Usuario já é membro da equipe' });
+    }
+
+    equipe.membros.push(userId);
+    await equipe.save();
+    notificarEntradaEquipe(usuario.nome, equipe.nome);
+
+    res.status(201).json(equipe);
+  } catch (err) {
+    res.status(500).json({ erro: 'Erro ao adicionar usuário à equipe' });
+  }
+};
+
+
 
