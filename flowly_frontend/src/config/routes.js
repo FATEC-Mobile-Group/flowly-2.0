@@ -17,6 +17,7 @@ import PerfilUser from '../pages/user/PerfilUser';
 import Equipes from '../pages/admin/Equipes';
 import ChatsPage from '../pages/common/ChatsPage';
 import NotificationsPage from '../pages/common/NotificationsPage';
+import VoiceAssistantPage from '../pages/common/VoiceAssistantPage';
 import { USER_TYPES } from './config';
 
 /**
@@ -82,6 +83,11 @@ export const adminRoutes = [
     requiredRole: USER_TYPES.ADMIN,
   },
   {
+    path: '/admin/assistente-voz',
+    element: <VoiceAssistantPage />,
+    requiredRole: USER_TYPES.ADMIN,
+  },
+  {
     path: '/perfil',
     element: <PerfilUser />,
   },
@@ -119,6 +125,11 @@ export const userRoutes = [
   {
     path: '/chats',
     element: <ChatsPage />,
+    requiredRole: USER_TYPES.USER,
+  },
+  {
+    path: '/assistente-voz',
+    element: <VoiceAssistantPage />,
     requiredRole: USER_TYPES.USER,
   },
   {

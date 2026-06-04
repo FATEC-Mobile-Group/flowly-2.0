@@ -33,10 +33,13 @@ const tarefaSchema = new mongoose.Schema({
     concluida: { type: Boolean, default: false }
   }],
   anexos: [{
-    url: { type: String, required: true },
+    url: { type: String },
+    objectName: { type: String },
     nomeOriginal: { type: String, required: true },
     mimetype: { type: String },
-    size: { type: Number }
+    size: { type: Number },
+    signedUrl: { type: String },
+    signedUrlExpiresAt: { type: Date }
   }]
 }, { timestamps: true });
 

@@ -71,11 +71,7 @@ export const authUtils = {
     if (user.id) {
       localStorage.setItem(LOCAL_STORAGE_KEYS.USER_ID, user.id);
     }
-    if (user.fotoPerfil) {
-      localStorage.setItem(LOCAL_STORAGE_KEYS.USER_PHOTO, user.fotoPerfil);
-    } else {
-      localStorage.removeItem(LOCAL_STORAGE_KEYS.USER_PHOTO);
-    }
+    localStorage.removeItem(LOCAL_STORAGE_KEYS.USER_PHOTO);
   },
 
   /**
@@ -85,6 +81,7 @@ export const authUtils = {
     Object.values(LOCAL_STORAGE_KEYS).forEach((key) => {
       localStorage.removeItem(key);
     });
+    sessionStorage.removeItem('flowly.profilePhotoSignedUrl');
   },
 };
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import apiClient, { getFullApiUrl } from '../../config/apiClient';
+import apiClient from '../../config/apiClient';
 //import { authUtils } from '../../config/authUtils';
 import { formatarStatus } from '../../config/statusUtils';
 import '../../styles/components/TarefaModal.css';
@@ -78,6 +78,41 @@ const TarefaModal = ({ tarefaId, onClose }) => {
       alert(err?.response?.data?.erro || 'Falha ao enviar arquivo');
     } finally {
       setUploading(false);
+    }
+  };
+
+  const abrirAnexo = async (anexo) => {
+    if (!anexo?._id) {
+      return;
+    }
+
+    const cacheKey = `flowly.attachmentSignedUrl.${tarefaId}.${anexo._id}`;
+    try {
+      const cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
+      const expiresAt = cached?.expiresAt ? new Date(cached.expiresAt).getTime() : 0;
+
+      if (cached?.url && expiresAt > Date.now() + 60000) {
+        window.open(cached.url, '_blank', 'noopener,noreferrer');
+        return;
+      }
+    } catch (error) {
+      sessionStorage.removeItem(cacheKey);
+    }
+
+    try {
+      const response = await apiClient.get(`/tarefas/${tarefaId}/anexos/${anexo._id}/signed-url`);
+      const payload = response.data || {};
+
+      if (payload.url) {
+        sessionStorage.setItem(cacheKey, JSON.stringify({
+          url: payload.url,
+          expiresAt: payload.expiresAt,
+        }));
+        window.open(payload.url, '_blank', 'noopener,noreferrer');
+      }
+    } catch (error) {
+      console.error(error);
+      alert(error?.response?.data?.erro || 'Falha ao abrir anexo');
     }
   };
 
@@ -175,7 +210,7 @@ const TarefaModal = ({ tarefaId, onClose }) => {
               <div className="anexos-list">
                 {tarefa.anexos?.map((anexo, i) => (
                   <div key={i} className="anexo-item">
-                    📄 <a href={getFullApiUrl(anexo.url)} target="_blank" rel="noreferrer">{anexo.nomeOriginal || anexo.nome || 'Arquivo'}</a>
+                    📄 <button type="button" onClick={() => abrirAnexo(anexo)}>{anexo.nomeOriginal || anexo.nome || 'Arquivo'}</button>
                     <span className="anexo-size">({Math.round((anexo.size || anexo.tamanho || 0) / 1024)} KB)</span>
                   </div>
                 ))}

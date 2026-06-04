@@ -43,6 +43,7 @@ export const API_ENDPOINTS = {
   // Users
   USERS: `${API_BASE_URL}/users`,
   USER_ME: `${API_BASE_URL}/users/me`,
+  USER_ME_PHOTO_URL: `${API_BASE_URL}/users/me/photo-url`,
   USER_ME_PASSWORD: `${API_BASE_URL}/users/me/password`,
 };
 

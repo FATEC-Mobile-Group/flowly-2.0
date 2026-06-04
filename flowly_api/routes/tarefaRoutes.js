@@ -41,6 +41,7 @@ router.put('/:id/subtarefas/:subId', tarefaController.toggleSubtarefa);
 
 // ALL: Upload de anexo (suporta multipart/form-data)
 router.post('/:id/anexos', upload.single('file'), tarefaController.adicionarAnexo);
+router.get('/:id/anexos/:anexoId/signed-url', tarefaController.obterUrlAssinadaAnexo);
 
 // USER: atualizar status da tarefa
 router.put('/:id/status', isUser, tarefaController.atualizarStatusUser);

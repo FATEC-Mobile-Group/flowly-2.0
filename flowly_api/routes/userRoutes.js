@@ -9,6 +9,7 @@ router.use(auth);
 router.get('/search', userController.searchUsers);
 router.get('/', userController.listarUsers);
 router.get('/me', userController.me);
+router.get('/me/photo-url', userController.obterUrlAssinadaFotoPerfil);
 router.put('/me', upload.single('fotoPerfil'), userController.atualizarPerfil);
 router.put('/me/password', userController.atualizarSenha);
 

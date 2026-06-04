@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   FaChartPie, FaUsers, FaTasks, FaSignOutAlt,
-  FaBars, FaTimes, FaPlus, FaClipboardList, FaHome, FaInbox, FaComments, FaBell
+  FaBars, FaTimes, FaPlus, FaClipboardList, FaHome, FaInbox, FaComments, FaBell, FaMicrophone
 } from 'react-icons/fa';
 import { authUtils } from '../../config/authUtils';
-import { getFullApiUrl } from '../../config/apiClient';
+import { getProfilePhotoUrl } from '../../config/profilePhotoCache';
 import '../../styles/components/Sidebar.css';
 
 const Sidebar = () => {
@@ -17,8 +17,27 @@ const Sidebar = () => {
   const userType = authUtils.getUserType();
   const isAdmin = userType === 'admin';
   const userName = localStorage.getItem('nome') || 'Usuário';
-  const userPhoto = localStorage.getItem('fotoPerfil') || '';
-  const userPhotoUrl = userPhoto ? getFullApiUrl(userPhoto) : '';
+  const [userPhotoUrl, setUserPhotoUrl] = useState('');
+
+  useEffect(() => {
+    let mounted = true;
+
+    getProfilePhotoUrl()
+      .then((url) => {
+        if (mounted) {
+          setUserPhotoUrl(url);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setUserPhotoUrl('');
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -47,6 +66,7 @@ const Sidebar = () => {
       '/admin': ['/admin', '/admin/equipe/', '/admin/criar-equipe'],
       '/admin/geral': ['/admin/geral'],
       '/admin/chats': ['/admin/chats'],
+      '/admin/assistente-voz': ['/admin/assistente-voz'],
       '/admin/tarefas': ['/admin/tarefas', '/admin/criar-tarefa', '/admin/editar-tarefa/'],
       '/notificacoes': ['/notificacoes'],
       '/dashboard': ['/dashboard'],
@@ -54,6 +74,7 @@ const Sidebar = () => {
       '/backlog': ['/backlog', '/backlog/'],
       '/equipes': ['/equipes'],
       '/chats': ['/chats'],
+      '/assistente-voz': ['/assistente-voz'],
     };
 
     const routes = relatedRoutes[path] || [path];
@@ -70,6 +91,7 @@ const Sidebar = () => {
     { path: '/admin/geral', icon: <FaChartPie />, label: 'Painel Geral' },
     { path: '/admin', icon: <FaUsers />, label: 'Equipes' },
     { path: '/admin/chats', icon: <FaComments />, label: 'Chats' },
+    { path: '/admin/assistente-voz', icon: <FaMicrophone />, label: 'Assistente de Voz' },
     { path: '/notificacoes', icon: <FaBell />, label: 'Notificações' },
     { path: '/admin/criar-equipe', icon: <FaPlus />, label: 'Nova Equipe' },
     { path: '/admin/tarefas', icon: <FaClipboardList />, label: 'Tarefas' },
@@ -81,6 +103,7 @@ const Sidebar = () => {
     { path: '/minhas-tarefas', icon: <FaTasks />, label: 'Kanban Board' },
     { path: '/backlog', icon: <FaInbox />, label: 'Backlog' },
     { path: '/chats', icon: <FaComments />, label: 'Chats' },
+    { path: '/assistente-voz', icon: <FaMicrophone />, label: 'Assistente de Voz' },
     { path: '/notificacoes', icon: <FaBell />, label: 'Notificações' },
     { path: '/equipes', icon: <FaUsers />, label: 'Minhas Equipes' },
   ];

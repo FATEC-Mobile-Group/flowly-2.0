@@ -1,0 +1,31 @@
+# Dependências do Módulo de Mineração de Dados
+
+# Core NLP
+transformers==4.36.0
+torch==2.1.0
+sentence-transformers==2.2.2
+
+# Machine Learning
+scikit-learn==1.3.2
+numpy==1.24.3
+
+# NLP
+nltk==3.8.1
+
+# Utilidades
+tqdm==4.66.1
+
+# Opcional: para bancos de dados
+# sqlalchemy==2.0.23
+# psycopg2-binary==2.9.9
+
+# Opcional: para APIs
+# fastapi==0.104.1
+# flask==3.0.0
+# pydantic==2.5.0
+
+# Desenvolvimento
+pytest==7.4.3
+black==23.12.0
+flake8==6.1.0
+mypy==1.7.1

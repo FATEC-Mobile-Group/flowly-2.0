@@ -62,7 +62,7 @@ exports.login = async (req, res) => {
         id: user._id,
         nome: user.nome,
         tipo: user.tipo,
-        fotoPerfil: user.fotoPerfil,
+        hasFotoPerfil: Boolean(user.fotoPerfilObjectName || user.fotoPerfil),
       },
     });
     

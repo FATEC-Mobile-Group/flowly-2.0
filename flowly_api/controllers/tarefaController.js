@@ -1,4 +1,4 @@
-const Tarefa = require('../models/Tarefa');
+﻿const Tarefa = require('../models/Tarefa');
 const User = require('../models/User');
 const Equipe = require('../models/Equipe');
 const Comment = require('../models/Comment');
@@ -6,17 +6,18 @@ const ActivityLog = require('../models/ActivityLog');
 const logActivity = require('../utils/activityLogger');
 const { notifyUsers } = require('../utils/notificationService');
 const bucket = require('../services/storage');
+const path = require('path');
 
 
 // ADMIN creates task for user
 exports.criarTarefa = async (req, res) => {
   try {
     const { descricao, detalhes, dataEntrega, user, equipe, tempoEstimado, urgencia, tags, subtarefas } = req.body;
-    if (!equipe) return res.status(400).json({ erro: 'Equipe é obrigatória' });
+    if (!equipe) return res.status(400).json({ erro: 'Equipe Ã© obrigatÃ³ria' });
 
     const equipeDoc = await Equipe.findById(equipe).select('membros nome');
     if (!equipeDoc) {
-      return res.status(400).json({ erro: 'Equipe inválida' });
+      return res.status(400).json({ erro: 'Equipe invÃ¡lida' });
     }
 
     let usuario = null;
@@ -28,13 +29,13 @@ exports.criarTarefa = async (req, res) => {
     if (userId) {
       usuario = await User.findById(userId);
       if (!usuario || usuario.tipo !== 'user') {
-        return res.status(400).json({ erro: 'User inválido' });
+        return res.status(400).json({ erro: 'User invÃ¡lido' });
       }
       const pertenceEquipe = equipeDoc.membros.some(
         (membroId) => String(membroId) === String(usuario._id),
       );
       if (!pertenceEquipe) {
-        return res.status(400).json({ erro: 'Usuário não pertence à equipe selecionada' });
+        return res.status(400).json({ erro: 'UsuÃ¡rio nÃ£o pertence Ã  equipe selecionada' });
       }
     }
 
@@ -53,8 +54,8 @@ exports.criarTarefa = async (req, res) => {
     await tarefa.save();
 
     const descricaoCriacao = usuario
-      ? `Tarefa criada e atribuída a ${usuario.nome}`
-      : 'Tarefa criada sem responsável e enviada ao backlog';
+      ? `Tarefa criada e atribuÃ­da a ${usuario.nome}`
+      : 'Tarefa criada sem responsÃ¡vel e enviada ao backlog';
     await logActivity('criacao', descricaoCriacao, req.user.id, tarefa._id);
 
     res.status(201).json(tarefa);
@@ -88,13 +89,13 @@ exports.editarTarefa = async (req, res) => {
 
     const tarefaAtual = await Tarefa.findById(req.params.id);
     if (!tarefaAtual) {
-      return res.status(404).json({ erro: 'Tarefa não encontrada' });
+      return res.status(404).json({ erro: 'Tarefa nÃ£o encontrada' });
     }
 
     const equipeAlvo = equipe || tarefaAtual.equipe;
     const equipeDoc = await Equipe.findById(equipeAlvo).select('membros');
     if (!equipeDoc) {
-      return res.status(400).json({ erro: 'Equipe inválida' });
+      return res.status(400).json({ erro: 'Equipe invÃ¡lida' });
     }
 
     let userAlvo = user;
@@ -105,13 +106,13 @@ exports.editarTarefa = async (req, res) => {
     if (userAlvo) {
       const usuario = await User.findById(userAlvo);
       if (!usuario || usuario.tipo !== 'user') {
-        return res.status(400).json({ erro: 'User inválido' });
+        return res.status(400).json({ erro: 'User invÃ¡lido' });
       }
       const pertenceEquipe = equipeDoc.membros.some(
         (membroId) => String(membroId) === String(usuario._id),
       );
       if (!pertenceEquipe) {
-        return res.status(400).json({ erro: 'Usuário não pertence à equipe selecionada' });
+        return res.status(400).json({ erro: 'UsuÃ¡rio nÃ£o pertence Ã  equipe selecionada' });
       }
     }
 
@@ -145,7 +146,7 @@ exports.editarTarefa = async (req, res) => {
 exports.excluirTarefa = async (req, res) => {
   try {
     await Tarefa.findByIdAndDelete(req.params.id);
-    res.json({ msg: 'Tarefa excluída' });
+    res.json({ msg: 'Tarefa excluÃ­da' });
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao excluir tarefa' });
   }
@@ -158,7 +159,7 @@ exports.detalhesTarefa = async (req, res) => {
       .populate('user', 'nome')
       .populate('equipe', 'nome');
 
-    if (!tarefa) return res.status(404).json({ erro: 'Tarefa não encontrada' });
+    if (!tarefa) return res.status(404).json({ erro: 'Tarefa nÃ£o encontrada' });
 
     const comentarios = await Comment.find({ tarefa: req.params.id }).populate('user', 'nome').sort({ createdAt: 1 });
     const logs = await ActivityLog.find({ tarefa: req.params.id }).populate('user', 'nome').sort({ createdAt: -1 });
@@ -173,17 +174,17 @@ exports.detalhesTarefa = async (req, res) => {
 exports.adicionarComentario = async (req, res) => {
   try {
     const { texto } = req.body;
-    if (!texto) return res.status(400).json({ erro: 'Texto do comentário vazio' });
+    if (!texto) return res.status(400).json({ erro: 'Texto do comentÃ¡rio vazio' });
 
     const comentario = new Comment({ texto, user: req.user.id, tarefa: req.params.id });
     await comentario.save();
 
-    await logActivity('comentario', 'Comentário adicionado', req.user.id, req.params.id);
+    await logActivity('comentario', 'ComentÃ¡rio adicionado', req.user.id, req.params.id);
 
     const populateComentario = await Comment.findById(comentario._id).populate('user', 'nome');
     res.status(201).json(populateComentario);
   } catch (err) {
-    res.status(500).json({ erro: 'Erro ao adicionar comentário', detalhe: err.message });
+    res.status(500).json({ erro: 'Erro ao adicionar comentÃ¡rio', detalhe: err.message });
   }
 };
 
@@ -191,10 +192,10 @@ exports.adicionarComentario = async (req, res) => {
 exports.adicionarSubtarefa = async (req, res) => {
   try {
     const { descricao } = req.body;
-    if (!descricao) return res.status(400).json({ erro: 'Obrigatório fornecer descrição' });
+    if (!descricao) return res.status(400).json({ erro: 'ObrigatÃ³rio fornecer descriÃ§Ã£o' });
 
     const tarefa = await Tarefa.findById(req.params.id);
-    if (!tarefa) return res.status(404).json({ erro: 'Tarefa não encontrada' });
+    if (!tarefa) return res.status(404).json({ erro: 'Tarefa nÃ£o encontrada' });
 
     tarefa.subtarefas.push({ descricao, concluida: false });
     await tarefa.save();
@@ -211,10 +212,10 @@ exports.toggleSubtarefa = async (req, res) => {
   try {
     const { subId } = req.params;
     const tarefa = await Tarefa.findById(req.params.id);
-    if (!tarefa) return res.status(404).json({ erro: 'Tarefa não encontrada' });
+    if (!tarefa) return res.status(404).json({ erro: 'Tarefa nÃ£o encontrada' });
 
     const sub = tarefa.subtarefas.id(subId);
-    if (!sub) return res.status(404).json({ erro: 'Subtarefa não encontrada' });
+    if (!sub) return res.status(404).json({ erro: 'Subtarefa nÃ£o encontrada' });
 
     sub.concluida = !sub.concluida;
     await tarefa.save();
@@ -236,7 +237,7 @@ exports.minhasTarefas = async (req, res) => {
   }
 };
 
-// USER: backlog de tarefas sem responsável (apenas equipes do usuário)
+// USER: backlog de tarefas sem responsÃ¡vel (apenas equipes do usuÃ¡rio)
 exports.listarBacklog = async (req, res) => {
   try {
     const minhasEquipes = await Equipe.find({ membros: req.user.id }).select('_id');
@@ -264,16 +265,16 @@ exports.atribuirParaMim = async (req, res) => {
   try {
     const tarefa = await Tarefa.findById(req.params.id);
     if (!tarefa) {
-      return res.status(404).json({ erro: 'Tarefa não encontrada' });
+      return res.status(404).json({ erro: 'Tarefa nÃ£o encontrada' });
     }
 
     if (tarefa.user) {
-      return res.status(409).json({ erro: 'Esta tarefa já possui responsável' });
+      return res.status(409).json({ erro: 'Esta tarefa jÃ¡ possui responsÃ¡vel' });
     }
 
     const equipe = await Equipe.findById(tarefa.equipe).select('membros createdBy nome');
     if (!equipe) {
-      return res.status(400).json({ erro: 'Equipe da tarefa não encontrada' });
+      return res.status(400).json({ erro: 'Equipe da tarefa nÃ£o encontrada' });
     }
 
     const pertenceEquipe = equipe.membros.some(
@@ -281,7 +282,7 @@ exports.atribuirParaMim = async (req, res) => {
     );
 
     if (!pertenceEquipe) {
-      return res.status(403).json({ erro: 'Você não pertence à equipe desta tarefa' });
+      return res.status(403).json({ erro: 'VocÃª nÃ£o pertence Ã  equipe desta tarefa' });
     }
 
     tarefa.user = req.user.id;
@@ -289,7 +290,7 @@ exports.atribuirParaMim = async (req, res) => {
 
     await logActivity(
       'atualizacao_geral',
-      'Tarefa atribuída automaticamente para o colaborador',
+      'Tarefa atribuÃ­da automaticamente para o colaborador',
       req.user.id,
       tarefa._id,
     );
@@ -310,7 +311,7 @@ exports.atribuirParaMim = async (req, res) => {
       .populate('user', 'nome')
       .populate('equipe', 'nome');
 
-    res.json({ msg: 'Tarefa atribuída com sucesso', tarefa: tarefaAtualizada });
+    res.json({ msg: 'Tarefa atribuÃ­da com sucesso', tarefa: tarefaAtualizada });
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao atribuir tarefa', detalhe: err.message });
   }
@@ -322,13 +323,13 @@ exports.atualizarStatusUser = async (req, res) => {
     const { status } = req.body;
 
     if (!status || !["pendente", "em_andamento", "concluido"].includes(status)) {
-      return res.status(400).json({ erro: "Status inválido" });
+      return res.status(400).json({ erro: "Status invÃ¡lido" });
     }
 
     const tarefa = await Tarefa.findOne({ _id: req.params.id, user: req.user.id }).populate('equipe', 'createdBy nome');
 
     if (!tarefa) {
-      return res.status(403).json({ erro: 'Você não pode editar essa tarefa' });
+      return res.status(403).json({ erro: 'VocÃª nÃ£o pode editar essa tarefa' });
     }
 
     tarefa.status = status;
@@ -342,7 +343,7 @@ exports.atualizarStatusUser = async (req, res) => {
       const statusLegivel = status === 'em_andamento'
         ? 'em andamento'
         : status === 'concluido'
-          ? 'concluída'
+          ? 'concluÃ­da'
           : status;
 
       await notifyUsers({
@@ -360,24 +361,24 @@ exports.atualizarStatusUser = async (req, res) => {
   }
 };
 
-// USER: controlar cronômetro
+// USER: controlar cronÃ´metro
 exports.controlarCronometro = async (req, res) => {
   try {
     const { acao } = req.body; // 'iniciar' ou 'pausar'
     const tarefa = await Tarefa.findOne({ _id: req.params.id, user: req.user.id });
 
-    if (!tarefa) return res.status(403).json({ erro: 'Acesso negado à tarefa' });
+    if (!tarefa) return res.status(403).json({ erro: 'Acesso negado Ã  tarefa' });
 
     if (acao === 'iniciar') {
       if (tarefa.cronometroAtivo) {
-        return res.status(400).json({ erro: 'Cronômetro já está ativo' });
+        return res.status(400).json({ erro: 'CronÃ´metro jÃ¡ estÃ¡ ativo' });
       }
       tarefa.cronometroAtivo = true;
       tarefa.ultimaAtualizacaoCronometro = new Date();
-      await logActivity('cronometro_iniciado', `Cronômetro iniciado`, req.user.id, tarefa._id);
+      await logActivity('cronometro_iniciado', `CronÃ´metro iniciado`, req.user.id, tarefa._id);
     } else if (acao === 'pausar') {
       if (!tarefa.cronometroAtivo) {
-        return res.status(400).json({ erro: 'Cronômetro já está pausado' });
+        return res.status(400).json({ erro: 'CronÃ´metro jÃ¡ estÃ¡ pausado' });
       }
       const tempoDecorrido = Math.floor((new Date() - tarefa.ultimaAtualizacaoCronometro) / 60000); // converte para minutos
       tarefa.tempoGasto += tempoDecorrido;
@@ -387,17 +388,17 @@ exports.controlarCronometro = async (req, res) => {
       if (tarefa.tempoEstimado && tarefa.tempoGasto > tarefa.tempoEstimado) {
         tarefa.tempoExcedido = true;
       }
-      await logActivity('cronometro_pausado', `Cronômetro pausado. +${tempoDecorrido} mins`, req.user.id, tarefa._id);
+      await logActivity('cronometro_pausado', `CronÃ´metro pausado. +${tempoDecorrido} mins`, req.user.id, tarefa._id);
     }
 
     await tarefa.save();
     res.json({
-      msg: `Cronômetro ${acao}do com sucesso`,
+      msg: `CronÃ´metro ${acao}do com sucesso`,
       tarefa,
       tempoExcedido: tarefa.tempoExcedido
     });
   } catch (err) {
-    res.status(500).json({ erro: 'Erro ao controlar cronômetro' });
+    res.status(500).json({ erro: 'Erro ao controlar cronÃ´metro' });
   }
 };
 
@@ -405,17 +406,17 @@ exports.controlarCronometro = async (req, res) => {
 exports.adicionarAnexo = async (req, res) => {
   try {
     const tarefa = await Tarefa.findById(req.params.id);
-    if (!tarefa) return res.status(404).json({ erro: 'Tarefa não encontrada' });
+    if (!tarefa) return res.status(404).json({ erro: 'Tarefa nÃ£o encontrada' });
 
     if (!req.file) {
       return res.status(400).json({ erro: 'Nenhum arquivo enviado' });
     }
 
-    // Arquivo foi validado pela middleware, agora fazer upload
-    const publicUrl = await uploadAnexoParaGCS(tarefa._id, req.file);
+    // Arquivo foi validado pela middleware, agora fazer upload privado
+    const uploadedFile = await uploadAnexoParaGCS(tarefa._id, req.file);
 
     const novoAnexo = {
-      url: publicUrl,
+      objectName: uploadedFile.objectName,
       nomeOriginal: req.file.originalname,
       mimetype: req.file.mimetype,
       size: req.file.size
@@ -444,37 +445,80 @@ exports.adicionarAnexo = async (req, res) => {
   }
 };
 
+exports.obterUrlAssinadaAnexo = async (req, res) => {
+  try {
+    const tarefa = await Tarefa.findById(req.params.id);
+    if (!tarefa) return res.status(404).json({ erro: 'Tarefa nao encontrada' });
+
+    const anexo = tarefa.anexos.id(req.params.anexoId);
+    if (!anexo) return res.status(404).json({ erro: 'Anexo nao encontrado' });
+
+    const objectName = anexo.objectName || getObjectNameFromPublicUrl(anexo.url);
+    if (!objectName) {
+      return res.status(400).json({ erro: 'Anexo sem referencia valida no Cloud Storage' });
+    }
+
+    const signed = await bucket.getSignedReadUrl(objectName, {
+      contentType: anexo.mimetype,
+    });
+
+    res.json({
+      url: signed.url,
+      expiresAt: signed.expiresAt,
+      nomeOriginal: anexo.nomeOriginal,
+      mimetype: anexo.mimetype,
+      size: anexo.size,
+    });
+  } catch (err) {
+    console.error('Erro ao gerar URL assinada do anexo:', err);
+    res.status(500).json({ erro: 'Erro ao gerar URL assinada do anexo', detalhe: err.message });
+  }
+};
+
 /**
- * Função auxiliar para upload de anexo usando bucket.file().save()
+ * FunÃ§Ã£o auxiliar para upload de anexo usando bucket.file().save()
  * Armazena em: arquivos/{tarefaId}/{timestamp}-{random}.{ext}
  * @param {string} tarefaId - ID da tarefa
  * @param {Object} file - Objeto do arquivo (req.file)
- * @returns {Promise<string>} URL pública do arquivo
+ * @returns {Promise<string>} URL pÃºblica do arquivo
  */
 const uploadAnexoParaGCS = async (tarefaId, file) => {
   try {
-    const path = require('path');
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     const extension = path.extname(file.originalname);
     // Organizar em pasta: arquivos/{tarefaId}/{arquivo}
     const filename = `arquivos/${tarefaId}/${uniqueSuffix}${extension}`;
 
-    const blob = bucket.file(filename);
-
-    // Usar save() em vez de createWriteStream() para evitar race conditions
-    await blob.save(file.buffer, {
-      metadata: {
-        contentType: file.mimetype,
-        cacheControl: 'public, max-age=31536000'
-      },
-      timeout: 60000 // 60 segundos de timeout
+    const uploadedFile = await bucket.uploadPrivateFile(filename, file.buffer, {
+      contentType: file.mimetype,
     });
 
-    const publicUrl = `https://storage.googleapis.com/${bucket.name}/${blob.name}`;
-    console.log('✅ Upload de anexo concluído em:', filename);
-    return publicUrl;
+    console.log('Upload de anexo privado concluido em:', filename);
+    return uploadedFile;
   } catch (error) {
-    console.error('❌ Erro ao fazer upload de anexo:', error.message);
+    console.error('âŒ Erro ao fazer upload de anexo:', error.message);
     throw error;
   }
+};
+
+const getObjectNameFromPublicUrl = (url = '') => {
+  if (!url) return '';
+
+  try {
+    const parsedUrl = new URL(url);
+    const publicHostPath = `/${bucket.name}/`;
+
+    if (
+      parsedUrl.hostname === 'storage.googleapis.com' &&
+      parsedUrl.pathname.startsWith(publicHostPath)
+    ) {
+      return decodeURIComponent(parsedUrl.pathname.slice(publicHostPath.length));
+    }
+  } catch (error) {
+    if (url.startsWith('arquivos/')) {
+      return url;
+    }
+  }
+
+  return '';
 };

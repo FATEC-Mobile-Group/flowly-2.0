@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'; //useMemo
-import apiClient, { getFullApiUrl } from '../../config/apiClient';
+import apiClient from '../../config/apiClient';
 import Sidebar from '../../components/layout/Sidebar';
 import { API_ENDPOINTS, LOCAL_STORAGE_KEYS } from '../../config/config';
+import { clearProfilePhotoCache, getProfilePhotoUrl } from '../../config/profilePhotoCache';
 //import { authUtils } from '../../config/authUtils';
 import '../../styles/pages/admin/DashboardAdmin.css';
 import '../../styles/pages/user/PerfilUser.css';
@@ -34,7 +35,12 @@ function PerfilUser() {
       setNome(res.data.nome || '');
       setEmail(res.data.email || '');
       setTipo(res.data.tipo || '');
-      setFotoPerfil(res.data.fotoPerfil || '');
+      if (res.data.hasFotoPerfil) {
+        setFotoPerfil(await getProfilePhotoUrl());
+      } else {
+        clearProfilePhotoCache();
+        setFotoPerfil('');
+      }
     } catch (error) {
       setErro('Nao foi possivel carregar seu perfil.');
     } finally {
@@ -45,11 +51,6 @@ function PerfilUser() {
   useEffect(() => {
     carregarPerfil();
   }, []);
-
-  const resolverFoto = (url) => {
-    if (!url) return '';
-    return getFullApiUrl(url);
-  };
 
   const salvarPerfil = async (e) => {
     e.preventDefault();
@@ -68,13 +69,14 @@ function PerfilUser() {
 
       const usuarioAtualizado = res.data.user;
       localStorage.setItem(LOCAL_STORAGE_KEYS.USER_NAME, usuarioAtualizado.nome);
-      if (usuarioAtualizado.fotoPerfil) {
-        localStorage.setItem(LOCAL_STORAGE_KEYS.USER_PHOTO, usuarioAtualizado.fotoPerfil);
-      } else {
-        localStorage.removeItem(LOCAL_STORAGE_KEYS.USER_PHOTO);
-      }
+      localStorage.removeItem(LOCAL_STORAGE_KEYS.USER_PHOTO);
+      clearProfilePhotoCache();
 
-      setFotoPerfil(usuarioAtualizado.fotoPerfil || '');
+      if (usuarioAtualizado.hasFotoPerfil) {
+        setFotoPerfil(await getProfilePhotoUrl({ forceRefresh: true }));
+      } else {
+        setFotoPerfil('');
+      }
       setArquivoFoto(null);
       setMensagemPerfil('Perfil atualizado com sucesso.');
     } catch (error) {
@@ -134,7 +136,7 @@ function PerfilUser() {
                 <div className="perfil-avatar-wrap">
                   {fotoPerfil ? (
                     <img
-                      src={resolverFoto(fotoPerfil)}
+                      src={fotoPerfil}
                       alt="Foto de perfil"
                       className="perfil-avatar-img"
                     />
