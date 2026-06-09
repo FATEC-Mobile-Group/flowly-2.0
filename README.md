@@ -550,7 +550,7 @@ perfil. O design atual é uma evolução do último protótipo, focado apenas em
 novidades e melhorias visuais adequadas paras as plataformas que serão usadas pelo app. Você pode encontrar
 nosso design Figma e ver a evolução [aqui](https://www.figma.com/design/bAzWl5WbbMZV22b4faw7uH/Flowly?node-id=0-1&t=78oIDFaUWRSZeyul-1).
 
-## Telas da aplicação
+## Telas do protótipo da aplicação
 <table>
   <tr>
     <td align="center">
