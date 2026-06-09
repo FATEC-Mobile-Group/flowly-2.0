@@ -52,6 +52,15 @@ const TarefasUser = () => {
   const controlarCronometro = async (id, acao) => {
     try {
       const response = await apiClient.put(API_ENDPOINTS.UPDATE_TAREFA(id) + '/cronometro', { acao });
+      setTarefas((atuais) => atuais.map((tarefa) => (
+        tarefa._id === id
+          ? {
+              ...tarefa,
+              ...(response.data.tarefa || {}),
+              cronometroAtivo: acao === 'iniciar',
+            }
+          : tarefa
+      )));
       carregarTarefas();
       if (response.data.tempoExcedido) {
         setMensagem('Atenção: O tempo estimado para esta tarefa foi excedido!');
@@ -85,7 +94,11 @@ const TarefasUser = () => {
       const taskId = result.draggableId;
       
       // Atualização otimista da UI
-      const updatedTarefas = tarefas.map(t => t._id === taskId ? { ...t, status: destStatus } : t);
+      const updatedTarefas = tarefas.map((t) => (
+        t._id === taskId
+          ? { ...t, status: destStatus, cronometroAtivo: destStatus === 'em_andamento' ? t.cronometroAtivo : false }
+          : t
+      ));
       setTarefas(updatedTarefas);
       
       // Persiste no banco

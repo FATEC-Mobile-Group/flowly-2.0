@@ -182,11 +182,9 @@ function DashboardAdmin() {
             <div className="insights-tabs">
               {[
                 ["resumo", "Resumo"],
-                ["chats", "Chats"],
-                ["topicos", "Tópicos"],
-                ["equipes", "Equipes"],
+                ["chats", "Equipes"],
                 ["alertas", "Alertas"],
-              ].filter(([key]) => key !== "topicos").map(([key, label]) => (
+              ].map(([key, label]) => (
                 <button
                   key={key}
                   type="button"
@@ -263,57 +261,6 @@ function DashboardAdmin() {
                   </div>
                 )}
 
-                {insightsTab === "topicos" && (
-                  <div className="insights-list">
-                    {(insights?.topTopics || []).length === 0 ? (
-                      <p className="insights-feedback">Nenhum tópico minerado ainda.</p>
-                    ) : (
-                      insights.topTopics.map((item) => (
-                        <div key={item.topic} className="insight-row">
-                          <span>{item.topic}</span>
-                          <strong>{item.count}</strong>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-
-                {insightsTab === "equipes" && (
-                  <div className="team-insights-list">
-                    {(insights?.byTeam || []).length === 0 ? (
-                      <p className="insights-feedback">Nenhum insight por equipe disponível ainda.</p>
-                    ) : (
-                      insights.byTeam.map((team) => (
-                        <article key={team.channelId} className="team-insight-card">
-                          <div className="team-insight-header">
-                            <div>
-                              <span>Equipe</span>
-                              <h4>{team.teamName}</h4>
-                            </div>
-                            <strong>{team.totalMessages} msg</strong>
-                          </div>
-                          <div className="team-insight-metrics">
-                            <span>Positivo: {team.sentiments?.positivo || 0}</span>
-                            <span>Neutro: {team.sentiments?.neutro || 0}</span>
-                            <span>Negativo: {team.sentiments?.negativo || 0}</span>
-                            <span>Spam: {team.spamAlerts || 0}</span>
-                          </div>
-                          <div className="team-insight-topics">
-                            {(team.topTopics || []).map((topic) => (
-                              <span key={topic.topic}>{topic.topic} · {topic.count}</span>
-                            ))}
-                          </div>
-                          <div className="insight-suggestions compact">
-                            {(team.suggestions || []).map((suggestion) => (
-                              <p key={suggestion}>{suggestion}</p>
-                            ))}
-                          </div>
-                        </article>
-                      ))
-                    )}
-                  </div>
-                )}
-
                 {insightsTab === "alertas" && (
                   <div className="insights-list">
                     {badActors.length > 0 && (
@@ -324,6 +271,7 @@ function DashboardAdmin() {
                               <strong>{actor.userName}</strong>
                               <span>{actor.teamName} · {actor.count} ocorrências</span>
                             </div>
+                            <p><strong>Motivo:</strong> {actor.reasonText || "Acompanhamento preventivo"}</p>
                             <p>{actor.recommendation}</p>
                             <p>Risco: {Math.round((actor.conflictRisk || 0) * 100)}%</p>
                           </div>
@@ -336,9 +284,11 @@ function DashboardAdmin() {
                       recentInsights.map((item) => (
                         <div key={item._id} className={`insight-message ${item.spamAlert || item.alertLevel === "high" ? "spam" : ""}`}>
                           <div>
-                            <strong>{item.alertLevel || item.sentiment}</strong>
-                            <span>{item.channelId} · {new Date(item.createdAt).toLocaleString()}</span>
+                            <strong>{item.userName || "Usuario"}</strong>
+                            <span>{item.teamName || item.channelId} · {new Date(item.createdAt).toLocaleString()}</span>
                           </div>
+                          <p><strong>Nível:</strong> {item.alertLevelLabel || item.alertLevel || item.sentiment}</p>
+                          <p><strong>Motivo:</strong> {item.reasonText || "Acompanhamento preventivo"}</p>
                           <p>{item.content}</p>
                           {item.recommendation && <p>{item.recommendation}</p>}
                         </div>

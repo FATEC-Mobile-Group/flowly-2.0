@@ -4,6 +4,19 @@
 
 import { LOCAL_STORAGE_KEYS, USER_TYPES } from './config';
 
+const decodeJwtPayload = (token) => {
+  try {
+    const payload = token?.split('.')?.[1];
+    if (!payload) return null;
+
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const decoded = atob(normalized);
+    return JSON.parse(decoded);
+  } catch (error) {
+    return null;
+  }
+};
+
 export const authUtils = {
   /**
    * Verifica se o usuário está autenticado
@@ -30,7 +43,11 @@ export const authUtils = {
    * Obtém o ID do usuário
    */
   getUserId: () => {
-    return localStorage.getItem(LOCAL_STORAGE_KEYS.USER_ID);
+    const storedId = localStorage.getItem(LOCAL_STORAGE_KEYS.USER_ID);
+    if (storedId) return storedId;
+
+    const payload = decodeJwtPayload(localStorage.getItem(LOCAL_STORAGE_KEYS.TOKEN));
+    return payload?.id || payload?.userId || '';
   },
 
   /**

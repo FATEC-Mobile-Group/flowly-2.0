@@ -4,6 +4,44 @@ const User = require('../models/User');
 
 const CHAT_INSIGHTS_DAYS = 7;
 const BEHAVIOR_ALERT_DAYS = 14;
+const ALERT_REASON_LABELS = {
+  offensive_language: 'Linguagem ofensiva detectada',
+  offensive_language_excess: 'Linguagem ofensiva recorrente',
+  blocked_message: 'Mensagem bloqueada por segurança',
+  possible_conflict: 'Possível conflito na conversa',
+  conflict_language: 'Linguagem de conflito detectada',
+  help_request: 'Pedido de ajuda ou dúvida recorrente',
+  team_help_needed: 'Equipe pode precisar de apoio',
+  help_needed: 'Possível necessidade de apoio',
+  negative_sentiment: 'Tom negativo recorrente',
+  spam: 'Indício de spam ou uso inadequado',
+};
+
+const formatAlertLevel = (level = 'none') => ({
+  high: 'Alto',
+  medium: 'Médio',
+  low: 'Baixo',
+  none: 'Sem alerta',
+}[level] || level);
+
+const formatSignals = (signals = [], fallbackLevel = 'none') => {
+  const flattened = [...new Set((signals || []).flat().filter(Boolean))];
+  const labels = flattened.map((signal) => ALERT_REASON_LABELS[signal] || signal.replace(/_/g, ' '));
+
+  if (labels.length > 0) {
+    return labels;
+  }
+
+  if (fallbackLevel === 'high') {
+    return ['Risco alto identificado no histórico recente'];
+  }
+
+  if (fallbackLevel === 'medium') {
+    return ['Risco médio identificado no histórico recente'];
+  }
+
+  return ['Acompanhamento preventivo'];
+};
 
 const buildSuggestions = ({
   sentiments = {},
@@ -48,36 +86,60 @@ const buildSuggestions = ({
   return suggestions;
 };
 
-const buildAggregation = async () => {
+const buildAggregation = async (adminId) => {
   const chatSince = new Date(Date.now() - CHAT_INSIGHTS_DAYS * 24 * 60 * 60 * 1000);
   const behaviorSince = new Date(Date.now() - BEHAVIOR_ALERT_DAYS * 24 * 60 * 60 * 1000);
+  const adminEquipes = await Equipe.find({
+    $or: [{ membros: adminId }, { createdBy: adminId }],
+  })
+    .select('_id nome')
+    .lean();
+  const allowedTeamIds = adminEquipes.map((equipe) => String(equipe._id));
+  const teamNames = adminEquipes.reduce((acc, equipe) => {
+    acc[String(equipe._id)] = equipe.nome;
+    return acc;
+  }, {});
+
+  const scopedTeamMatch = allowedTeamIds.length > 0
+    ? {
+        $or: [
+          { teamId: { $in: adminEquipes.map((equipe) => equipe._id) } },
+          { channelId: { $in: allowedTeamIds } },
+        ],
+      }
+    : { _id: { $exists: false } };
+
   const chatMatch = {
+    ...scopedTeamMatch,
     source: { $in: ['team_chat', 'team_chat_blocked'] },
     createdAt: { $gte: chatSince },
   };
+  const scopedAnd = (extraMatch) => ({ $and: [scopedTeamMatch, extraMatch] });
   const behaviorSignals = ['offensive_language', 'offensive_language_excess', 'blocked_message', 'possible_conflict'];
 
   const [totalMessages, sentimentRows, topicRows, spamAlerts, criticalAlerts, recent, teamRows, behaviorRows] = await Promise.all([
-    AssistantInsight.countDocuments(),
+    AssistantInsight.countDocuments(scopedTeamMatch),
     AssistantInsight.aggregate([
+      { $match: scopedTeamMatch },
       { $group: { _id: '$sentiment', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]),
     AssistantInsight.aggregate([
+      { $match: scopedTeamMatch },
       { $unwind: '$topics' },
       { $group: { _id: '$topics', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
       { $limit: 10 },
     ]),
-    AssistantInsight.countDocuments({ spamAlert: true }),
-    AssistantInsight.countDocuments({ alertLevel: { $in: ['medium', 'high'] } }),
-    AssistantInsight.find({
+    AssistantInsight.countDocuments({ ...scopedTeamMatch, spamAlert: true }),
+    AssistantInsight.countDocuments({ ...scopedTeamMatch, alertLevel: { $in: ['medium', 'high'] } }),
+    AssistantInsight.find(scopedAnd({
       $or: [
         { alertLevel: { $in: ['medium', 'high'] } },
         { helpNeeded: true },
         { spamAlert: true },
       ],
-    })
+    }))
       .sort({ createdAt: -1 })
       .limit(12)
       .select('userId channelId teamId teamName content sentiment topics spamAlert alertLevel conflictRisk helpNeeded signals recommendation createdAt')
@@ -128,7 +190,7 @@ const buildAggregation = async () => {
     ]),
     AssistantInsight.aggregate([
       {
-        $match: {
+        $match: scopedAnd({
           source: { $in: ['team_chat', 'team_chat_blocked'] },
           createdAt: { $gte: behaviorSince },
           $or: [
@@ -136,7 +198,7 @@ const buildAggregation = async () => {
             { alertLevel: { $in: ['medium', 'high'] } },
             { signals: { $in: behaviorSignals } },
           ],
-        },
+        }),
       },
       {
         $group: {
@@ -163,14 +225,6 @@ const buildAggregation = async () => {
   }, { positivo: 0, neutro: 0, negativo: 0 });
 
   const teamFacet = teamRows[0] || { totals: [], sentiments: [], topics: [] };
-  const teamIds = teamFacet.totals.map((row) => String(row._id || 'web'));
-  const equipes = await Equipe.find({ _id: { $in: teamIds.filter((id) => /^[a-fA-F0-9]{24}$/.test(id)) } })
-    .select('nome')
-    .lean();
-  const teamNames = equipes.reduce((acc, equipe) => {
-    acc[String(equipe._id)] = equipe.nome;
-    return acc;
-  }, {});
 
   const recentUserIds = recent.map((item) => item.userId).filter(Boolean);
   const behaviorUserIds = behaviorRows.map((row) => row._id.userId).filter(Boolean);
@@ -182,10 +236,22 @@ const buildAggregation = async () => {
     return acc;
   }, {});
 
-  const recentAlerts = recent.map((item) => ({
-    ...item,
-    userName: userNames[String(item.userId)] || item.userId,
-  }));
+  const recentAlerts = recent.map((item) => {
+    const reasonSignals = [
+      ...(item.signals || []),
+      ...(item.spamAlert ? ['spam'] : []),
+      ...(item.helpNeeded ? ['help_needed'] : []),
+    ];
+    const reasonLabels = formatSignals(reasonSignals, item.alertLevel);
+
+    return {
+      ...item,
+      userName: userNames[String(item.userId)] || item.userId,
+      alertLevelLabel: formatAlertLevel(item.alertLevel),
+      reasonLabels,
+      reasonText: reasonLabels.join(', '),
+    };
+  });
 
   const byTeam = teamFacet.totals.map((row) => {
     const channelId = String(row._id || 'web');
@@ -218,7 +284,13 @@ const buildAggregation = async () => {
   const badActors = behaviorRows
     .map((row) => {
       const channelId = String(row._id.teamKey || 'web');
-      const flattenedSignals = [...new Set((row.signals || []).flat().filter(Boolean))];
+      const flattenedSignals = [
+        ...new Set([
+          ...(row.signals || []).flat().filter(Boolean),
+          ...(row.spamAlerts > 0 ? ['spam'] : []),
+        ]),
+      ];
+      const reasonLabels = formatSignals(flattenedSignals, row.highAlerts > 0 ? 'high' : 'medium');
       return {
         channelId,
         teamName: teamNames[channelId] || (channelId === 'web' ? 'Canal Web' : `Equipe ${channelId.slice(-6)}`),
@@ -229,6 +301,8 @@ const buildAggregation = async () => {
         spamAlerts: row.spamAlerts || 0,
         conflictRisk: Number((row.avgConflictRisk || 0).toFixed(2)),
         signals: flattenedSignals,
+        reasonLabels,
+        reasonText: reasonLabels.join(', '),
         lastAt: row.lastAt,
         recommendation: row.highAlerts > 0 || row.count >= 3
           ? 'Converse em particular com este usuario e acompanhe a conduta nas proximas interacoes.'
@@ -303,9 +377,9 @@ const ingestAssistantInsight = async (req, res) => {
   }
 };
 
-const getAssistantInsights = async (_req, res) => {
+const getAssistantInsights = async (req, res) => {
   try {
-    const insights = await buildAggregation();
+    const insights = await buildAggregation(req.user.id);
     return res.json({ success: true, insights });
   } catch (err) {
     return res.status(500).json({ success: false, error: 'Erro ao carregar insights do assistente' });

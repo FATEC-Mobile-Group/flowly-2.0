@@ -26,6 +26,26 @@ const assinarAnexosTarefa = async (tarefa) => {
 
 const assinarAnexosTarefas = (tarefas) => Promise.all(tarefas.map(assinarAnexosTarefa));
 
+const pausarCronometroAtivo = async (tarefa, userId, motivo = 'cronometro_pausado') => {
+  if (!tarefa.cronometroAtivo) {
+    return 0;
+  }
+
+  const ultimaAtualizacao = tarefa.ultimaAtualizacaoCronometro || new Date();
+  const tempoDecorrido = Math.floor((new Date() - ultimaAtualizacao) / 60000);
+
+  tarefa.tempoGasto = (tarefa.tempoGasto || 0) + Math.max(tempoDecorrido, 0);
+  tarefa.cronometroAtivo = false;
+  tarefa.ultimaAtualizacaoCronometro = undefined;
+
+  if (tarefa.tempoEstimado && tarefa.tempoGasto > tarefa.tempoEstimado) {
+    tarefa.tempoExcedido = true;
+  }
+
+  await logActivity(motivo, `Cronômetro pausado. +${Math.max(tempoDecorrido, 0)} mins`, userId, tarefa._id);
+  return Math.max(tempoDecorrido, 0);
+};
+
 const getEquipeIdsAcessiveis = async (req) => {
   const filtroEquipes = req.user.tipo === 'admin'
     ? { $or: [{ membros: req.user.id }, { createdBy: req.user.id }] }
@@ -417,6 +437,10 @@ exports.atualizarStatusUser = async (req, res) => {
 
     if (!tarefa) {
       return res.status(403).json({ erro: 'Você não pode editar essa tarefa' });
+    }
+
+    if (tarefa.cronometroAtivo && status !== 'em_andamento') {
+      await pausarCronometroAtivo(tarefa, req.user.id, 'cronometro_pausado_por_status');
     }
 
     tarefa.status = status;

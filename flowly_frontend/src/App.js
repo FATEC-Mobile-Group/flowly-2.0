@@ -1,11 +1,13 @@
-import React from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { publicRoutes, adminRoutes, userRoutes } from "./config/routes";
 import { authUtils } from "./config/authUtils";
 import { ThemeProvider } from "./config/ThemeContext";
+import createSocketConnection from "./config/socketClient";
 import ThemeToggle from "./components/layout/ThemeToggle";
 import FloatingTimer from "./components/timer/FloatingTimer";
 import ColorBendsBackground from "./components/layout/ColorBendsBackground";
+import MessageToastContainer from "./components/notifications/MessageToastContainer";
 import "./styles/common/App.css";
 
 function App() {
@@ -19,6 +21,49 @@ function App() {
 }
 
 function AppContent() {
+  const [messageToasts, setMessageToasts] = useState([]);
+  const location = useLocation();
+
+  useEffect(() => {
+    const token = authUtils.getToken();
+    const userId = authUtils.getUserId();
+
+    if (!token) {
+      setMessageToasts([]);
+      return undefined;
+    }
+
+    if (!userId) {
+      return undefined;
+    }
+
+    const socket = createSocketConnection();
+    const joinUserRoom = () => {
+      socket.emit('join_user', userId);
+    };
+
+    socket.on('connect', joinUserRoom);
+
+    if (socket.connected) {
+      joinUserRoom();
+    }
+
+    socket.on('notification_created', (notification) => {
+      if (notification?.tipo !== 'chat') return;
+
+      const toastId = notification._id || `${Date.now()}-${Math.random()}`;
+      setMessageToasts((current) => [...current, { ...notification, toastId }].slice(-4));
+
+      setTimeout(() => {
+        setMessageToasts((current) => current.filter((toast) => toast.toastId !== toastId));
+      }, 2000);
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [location.pathname]);
+
   /**
    * Componente para renderizar rotas protegidas
    */
@@ -46,6 +91,7 @@ function AppContent() {
 
   return (
     <>
+      <MessageToastContainer toasts={messageToasts} />
       <Routes>
         {/* Rotas públicas */}
         {publicRoutes.map((route) => (

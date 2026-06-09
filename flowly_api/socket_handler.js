@@ -50,7 +50,7 @@ const setupSocketInteractions = (server) => {
           return;
         }
 
-        const sender = await User.findById(userId).select('nome tipo');
+        const sender = await User.findById(userId).select('nome tipo fotoPerfil');
         if (!sender) {
           socket.emit('message_blocked', {
             reason: 'invalid_user',
@@ -113,12 +113,22 @@ const setupSocketInteractions = (server) => {
             }
           }
 
+          const senderPhoto = await getSignedUrl(sender?.fotoPerfil);
+
           await notifyUsers({
             userIds: [...recipientIds],
             texto: `${sender?.nome || 'Um usuário'} enviou uma mensagem no chat da equipe ${equipe.nome}`,
             tipo: 'chat',
             origemId: message._id,
-            metadata: { equipeId, messageId: message._id },
+            metadata: {
+              equipeId,
+              messageId: message._id,
+              equipeNome: equipe.nome,
+              senderId: userId,
+              senderName: sender?.nome || 'Usuario',
+              senderPhoto,
+              messageText: cleanText,
+            },
           });
         }
 

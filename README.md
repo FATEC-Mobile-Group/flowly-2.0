@@ -265,6 +265,8 @@ Pode:
 * Controle de tempo gasto
 * Tempo excedido
 * Atualização em tempo real
+* Pausa automática ao mover tarefa ativa de volta para pendente ou concluir
+* Indicador visual de cronômetro ativo removido imediatamente ao pausar
 
 ## Subtarefas
 
@@ -291,6 +293,8 @@ Pode:
 * Histórico persistente
 * Socket.IO
 * Controle de acesso
+* Popup no canto superior direito para novas mensagens
+* Popup de mensagem com remetente, foto de perfil, equipe e conteúdo
 
 ## Dashboards
 
@@ -298,6 +302,9 @@ Pode:
 * Ranking de equipes
 * Indicadores por status
 * Dashboard do usuário
+* Painel de insights com abas Resumo, Equipes e Alertas
+* Insights restritos às equipes das quais o administrador participa
+* Alertas com nome do usuário e motivo traduzido/formatado
 
 ---
 
@@ -437,6 +444,8 @@ GET  /api/storage/files/:encodedPath
 * Validação de formulários
 * Alternância de senha
 * Confirmação antes de exclusão de equipes e tarefas
+* Atualização de status no Kanban após selecionar uma equipe diferente da padrão
+* Pausa/remoção visual do cronômetro ao pausar ou alterar status da tarefa
 * Navegação inicial
 
 ---
@@ -448,6 +457,7 @@ GET  /api/storage/files/:encodedPath
 * JWT
 * Argon2
 * Controle de acesso
+* Escopo de insights por equipes vinculadas ao administrador
 * Códigos temporários para verificação de e-mail e recuperação de senha
 * Variáveis de ambiente
 * Restrição de uploads
@@ -460,6 +470,7 @@ GET  /api/storage/files/:encodedPath
 * Kanban drag and drop
 * Modais organizados
 * Popups de confirmação para ações destrutivas
+* Popups temporários para mensagens recebidas em tempo real
 
 ## Performance
 
