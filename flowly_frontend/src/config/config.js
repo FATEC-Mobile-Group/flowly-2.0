@@ -22,6 +22,9 @@ export const API_ENDPOINTS = {
   SEND_2FA: `${API_BASE_URL}/auth/2fa/enviar-codigo`,
   VALIDATE_2FA_CODE: `${API_BASE_URL}/auth/2fa/validar-codigo`,
   VALIDATE_2FA_TOKEN: `${API_BASE_URL}/auth/2fa/validar-token`,
+  SEND_PASSWORD_RESET: `${API_BASE_URL}/auth/recuperar-senha/enviar-codigo`,
+  VALIDATE_PASSWORD_RESET_CODE: `${API_BASE_URL}/auth/recuperar-senha/validar-codigo`,
+  RESET_PASSWORD: `${API_BASE_URL}/auth/recuperar-senha/redefinir`,
   LIST_USERS: `${API_BASE_URL}/users`,
 
   TAREFAS: `${API_BASE_URL}/tarefas`,

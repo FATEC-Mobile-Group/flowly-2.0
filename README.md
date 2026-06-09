@@ -47,8 +47,8 @@ flowly-2.0/
 ├── flowly_iot_face/    # Microserviço Python de reconhecimento facial
 │
 ├── flowly_api/k8s/     # Manifests Kubernetes da API e MongoDB
-├── flowly_frontend/k8s/# Manifest Kubernetes do frontend
-└── *.md                # Documentação técnica, deploy e integração
+└── flowly_frontend/k8s/# Manifest Kubernetes do frontend
+
 ```
 <img width="1304" height="586" alt="arquitetura" src="https://github.com/user-attachments/assets/af18d19d-bb61-4780-91c2-bbf94df10381" />
 
@@ -233,6 +233,9 @@ Pode:
 
 * Cadastro de usuários
 * Login com JWT
+* Verificação de e-mail por código 2FA
+* Redirecionamento automático para a dashboard após validação do cadastro
+* Recuperação de senha por código enviado por e-mail
 * Criptografia de senhas com Argon2
 * Controle de acesso por roles
 * Logout
@@ -244,6 +247,7 @@ Pode:
 * Associação de membros
 * Visualização de participantes
 * Código identificador de equipe
+* Popup de confirmação antes de excluir equipes
 
 ## Tarefas
 
@@ -253,6 +257,7 @@ Pode:
 * Filtros
 * PDF de tarefas
 * Modal de detalhes
+* Popup de confirmação antes de excluir tarefas
 
 ## Cronômetro
 
@@ -309,6 +314,9 @@ GET  /api/auth/users
 POST /api/auth/2fa/enviar-codigo
 POST /api/auth/2fa/validar-codigo
 GET  /api/auth/2fa/validar-token
+POST /api/auth/recuperar-senha/enviar-codigo
+POST /api/auth/recuperar-senha/validar-codigo
+POST /api/auth/recuperar-senha/redefinir
 ```
 
 ### Usuários
@@ -424,8 +432,11 @@ GET  /api/storage/files/:encodedPath
 
 * Login
 * Cadastro
+* Verificação de e-mail/2FA com entrada direta na dashboard
+* Recuperação de senha por e-mail
 * Validação de formulários
 * Alternância de senha
+* Confirmação antes de exclusão de equipes e tarefas
 * Navegação inicial
 
 ---
@@ -437,6 +448,7 @@ GET  /api/storage/files/:encodedPath
 * JWT
 * Argon2
 * Controle de acesso
+* Códigos temporários para verificação de e-mail e recuperação de senha
 * Variáveis de ambiente
 * Restrição de uploads
 * Configuração CORS
@@ -447,6 +459,7 @@ GET  /api/storage/files/:encodedPath
 * Feedback visual
 * Kanban drag and drop
 * Modais organizados
+* Popups de confirmação para ações destrutivas
 
 ## Performance
 

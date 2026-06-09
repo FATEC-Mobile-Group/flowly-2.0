@@ -5,6 +5,7 @@ import { API_ENDPOINTS } from "../../config/config";
 import "../../styles/pages/admin/DashboardAdmin.css";
 import "../../styles/pages/admin/Equipes.css";
 import Sidebar from "../../components/layout/Sidebar";
+import ConfirmDialog from "../../components/common/ConfirmDialog";
 
 export default function Equipes() {
   const [equipes, setEquipes] = useState([]);
@@ -13,6 +14,8 @@ export default function Equipes() {
   const [editandoId, setEditandoId] = useState(null);
   const [mensagemErro, setMensagemErro] = useState("");
   const [mensagemSucesso, setMensagemSucesso] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const { id } = useParams();
   const location = useLocation();
   const currentUserId = localStorage.getItem("id");
@@ -167,12 +170,18 @@ export default function Equipes() {
     }
   };
 
-  const excluirEquipe = async (id) => {
+  const excluirEquipe = async () => {
+    if (!deleteTarget) return;
+
+    setDeleteLoading(true);
     try {
-      await apiClient.delete(API_ENDPOINTS.DELETE_EQUIPE(id));
+      await apiClient.delete(API_ENDPOINTS.DELETE_EQUIPE(deleteTarget._id));
+      setDeleteTarget(null);
       carregarEquipes();
     } catch (err) {
       console.error("Erro ao excluir equipe", err);
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -311,7 +320,7 @@ export default function Equipes() {
                   </button>
                   <button
                     className="delete-btn"
-                    onClick={() => excluirEquipe(equipe._id)}
+                    onClick={() => setDeleteTarget(equipe)}
                   >
                     Excluir
                   </button>
@@ -321,6 +330,15 @@ export default function Equipes() {
           </div>
         )}
       </main>
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Excluir equipe?"
+        message={`A equipe "${deleteTarget?.nome || ""}" sera excluida permanentemente. Esta acao nao pode ser desfeita.`}
+        confirmLabel="Excluir equipe"
+        loading={deleteLoading}
+        onConfirm={excluirEquipe}
+        onCancel={() => !deleteLoading && setDeleteTarget(null)}
+      />
     </div>
   );
 }

@@ -11,6 +11,9 @@ router.get('/users', authController.listarUsers);
 router.post('/2fa/enviar-codigo', emailController.enviarCodigoVerificacao);
 router.post('/2fa/validar-codigo', emailController.validarCodigoVerificacao);
 router.get('/2fa/validar-token', emailController.validarTokenVerificacao);
+router.post('/recuperar-senha/enviar-codigo', emailController.enviarCodigoRecuperacaoSenha);
+router.post('/recuperar-senha/validar-codigo', emailController.validarCodigoRecuperacaoSenha);
+router.post('/recuperar-senha/redefinir', emailController.redefinirSenhaComCodigo);
 
 module.exports = router;
 

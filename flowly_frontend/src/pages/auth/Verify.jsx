@@ -24,6 +24,29 @@ function Verify() {
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState(tokenFromUrl ? "token-verify" : (emailFromUrl ? "enter-code" : "request"));
 
+  const redirectAfterVerification = async (res) => {
+    const jwt = res.data.token;
+    let user = res.data.user;
+
+    localStorage.setItem('token', jwt);
+
+    if (!user) {
+      try {
+        const userRes = await apiClient.get(API_ENDPOINTS.USER_ME);
+        user = userRes.data;
+      } catch (err) {
+        console.warn('Nao foi possivel obter user/me apos validacao de email.');
+      }
+    }
+
+    if (user) {
+      authUtils.saveAuthData(jwt, user);
+    }
+
+    const redirect = res.data.redirect || (user?.tipo === "admin" ? "/admin" : "/dashboard");
+    window.location.href = redirect;
+  };
+
   useEffect(() => {
     if (emailFromUrl) {
       setEmail(emailFromUrl);
@@ -42,6 +65,10 @@ function Verify() {
         setStatus({ type: "", message: "" });
         try {
           const res = await apiClient.get(`${API_ENDPOINTS.VALIDATE_2FA_TOKEN}?token=${encodeURIComponent(tokenFromUrl)}`);
+          await redirectAfterVerification(res);
+          if (res.data.user) {
+            return;
+          }
           const jwt = res.data.token;
           // armazenar token temporariamente e buscar dados do usuário
           localStorage.setItem('token', jwt);
@@ -94,6 +121,13 @@ function Verify() {
 
     try {
       const res = await apiClient.post(API_ENDPOINTS.VALIDATE_2FA_CODE, { userId, email, codigo });
+      if (res.data.user) {
+        setStatus({ type: "success", message: 'VerificaÃ§Ã£o bem-sucedida! Redirecionando...' });
+        setTimeout(() => {
+          redirectAfterVerification(res);
+        }, 900);
+        return;
+      }
       const jwt = res.data.token;
       localStorage.setItem('token', jwt);
       try {

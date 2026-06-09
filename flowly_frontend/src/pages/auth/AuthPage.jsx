@@ -5,7 +5,7 @@ import { API_ENDPOINTS } from "../../config/config";
 import { authUtils } from "../../config/authUtils";
 import {
   FaEnvelope, FaLock, FaSignInAlt, FaEye, FaEyeSlash,
-  FaUser, FaUserGraduate, FaUserPlus
+  FaUser, FaUserGraduate, FaUserPlus, FaKey
 } from "react-icons/fa";
 import LightRays from "../../components/backgrounds/LightRays";
 import CurvedLoop from "../../components/text/CurvedLoop";
@@ -69,6 +69,15 @@ function AuthPage() {
   const [loginErro, setLoginErro] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [mostrarSenhaLogin, setMostrarSenhaLogin] = useState(false);
+  const [recoveringPassword, setRecoveringPassword] = useState(false);
+  const [recoveryStep, setRecoveryStep] = useState("request");
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [recoveryPassword, setRecoveryPassword] = useState("");
+  const [recoveryConfirmPassword, setRecoveryConfirmPassword] = useState("");
+  const [recoveryStatus, setRecoveryStatus] = useState({ type: "", message: "" });
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [mostrarSenhaRecovery, setMostrarSenhaRecovery] = useState(false);
 
   // Register state
   const [regNome, setRegNome] = useState("");
@@ -103,6 +112,7 @@ function AuthPage() {
 
   // Switch to Register
   const goToRegister = () => {
+    setRecoveringPassword(false);
     setSlideDirection("slide-left");
     setTimeout(() => {
       setIsRegistering(true);
@@ -115,8 +125,16 @@ function AuthPage() {
     setSlideDirection("slide-right");
     setTimeout(() => {
       setIsRegistering(false);
+      setRecoveringPassword(false);
       setSlideDirection("enter-left");
     }, 350);
+  };
+
+  const goToPasswordRecovery = () => {
+    setRecoveryEmail(loginEmail);
+    setRecoveryStep("request");
+    setRecoveryStatus({ type: "", message: "" });
+    setRecoveringPassword(true);
   };
 
   const redirectAfterLogin = (user) => {
@@ -217,6 +235,90 @@ function AuthPage() {
     }
   };
 
+  const handleSendRecoveryCode = async (e) => {
+    e.preventDefault();
+    setRecoveryLoading(true);
+    setRecoveryStatus({ type: "", message: "" });
+
+    try {
+      await apiClient.post(API_ENDPOINTS.SEND_PASSWORD_RESET, { email: recoveryEmail });
+      setRecoveryStep("validate");
+      setRecoveryStatus({
+        type: "success",
+        message: "Codigo enviado. Verifique seu email para continuar.",
+      });
+    } catch (err) {
+      setRecoveryStatus({
+        type: "error",
+        message: err.response?.data?.message || err.response?.data?.erro || "Erro ao enviar codigo.",
+      });
+    } finally {
+      setRecoveryLoading(false);
+    }
+  };
+
+  const handleValidateRecoveryCode = async (e) => {
+    e.preventDefault();
+    setRecoveryLoading(true);
+    setRecoveryStatus({ type: "", message: "" });
+
+    try {
+      const res = await apiClient.post(API_ENDPOINTS.VALIDATE_PASSWORD_RESET_CODE, {
+        email: recoveryEmail,
+        codigo: recoveryCode,
+      });
+
+      setRecoveryStep("reset");
+      setRecoveryStatus({
+        type: "success",
+        message: res.data?.message || "Codigo validado. Informe sua nova senha.",
+      });
+    } catch (err) {
+      setRecoveryStatus({
+        type: "error",
+        message: err.response?.data?.message || err.response?.data?.erro || "Erro ao validar codigo.",
+      });
+    } finally {
+      setRecoveryLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    setRecoveryLoading(true);
+    setRecoveryStatus({ type: "", message: "" });
+
+    if (recoveryPassword !== recoveryConfirmPassword) {
+      setRecoveryStatus({ type: "error", message: "A confirmacao da senha nao confere." });
+      setRecoveryLoading(false);
+      return;
+    }
+
+    try {
+      await apiClient.post(API_ENDPOINTS.RESET_PASSWORD, {
+        email: recoveryEmail,
+        codigo: recoveryCode,
+        novaSenha: recoveryPassword,
+      });
+
+      setLoginEmail(recoveryEmail);
+      setLoginSenha("");
+      setRecoveryCode("");
+      setRecoveryPassword("");
+      setRecoveryConfirmPassword("");
+      setRecoveryStep("request");
+      setRecoveringPassword(false);
+      setLoginErro("");
+    } catch (err) {
+      setRecoveryStatus({
+        type: "error",
+        message: err.response?.data?.message || err.response?.data?.erro || "Erro ao redefinir senha.",
+      });
+    } finally {
+      setRecoveryLoading(false);
+    }
+  };
+
   return (
     <div className="auth-fullscreen" data-theme="dark">
       {/* ========== FULLSCREEN BACKGROUND — LightRays ========== */}
@@ -256,6 +358,145 @@ function AuthPage() {
                 onComplete={redirectAfterLogin}
                 onCancel={resetFaceStep}
               />
+            </div>
+          ) : recoveringPassword ? (
+            <div className="auth-form-container">
+              <div className="auth-header">
+                <h2>Recuperar senha</h2>
+                <p>
+                  {recoveryStep === "request"
+                    ? "Informe seu email para receber um codigo"
+                    : recoveryStep === "validate"
+                      ? "Digite o codigo recebido no email"
+                      : "Codigo validado. Escolha uma nova senha"}
+                </p>
+              </div>
+
+              {recoveryStep === "request" ? (
+                <form className="auth-form" onSubmit={handleSendRecoveryCode}>
+                  {recoveryStatus.message && (
+                    <div className={recoveryStatus.type === "success" ? "sucesso-container" : "erro-container"}>
+                      {recoveryStatus.message}
+                    </div>
+                  )}
+
+                  <div className="input-group">
+                    <div className="input-icon"><FaEnvelope /></div>
+                    <input
+                      type="email"
+                      placeholder="Seu email"
+                      value={recoveryEmail}
+                      onChange={(e) => setRecoveryEmail(e.target.value)}
+                      required
+                      disabled={recoveryLoading}
+                    />
+                  </div>
+
+                  <button type="submit" className="glass-btn primary" disabled={recoveryLoading} onMouseDown={handleRipple}>
+                    <FaKey /> {recoveryLoading ? "Enviando..." : "Enviar codigo"}
+                  </button>
+
+                  <div className="auth-footer">
+                    <p>
+                      Lembrou a senha?{" "}
+                      <button type="button" className="auth-switch-btn" onClick={goToLogin}>
+                        Voltar ao login
+                      </button>
+                    </p>
+                  </div>
+                </form>
+              ) : recoveryStep === "validate" ? (
+                <form className="auth-form" onSubmit={handleValidateRecoveryCode}>
+                  {recoveryStatus.message && (
+                    <div className={recoveryStatus.type === "success" ? "sucesso-container" : "erro-container"}>
+                      {recoveryStatus.message}
+                    </div>
+                  )}
+
+                  <div className="input-group">
+                    <div className="input-icon"><FaKey /></div>
+                    <input
+                      type="text"
+                      placeholder="Codigo de 6 digitos"
+                      value={recoveryCode}
+                      onChange={(e) => setRecoveryCode(e.target.value)}
+                      required
+                      disabled={recoveryLoading}
+                      maxLength={6}
+                    />
+                  </div>
+
+                  <button type="submit" className="glass-btn primary" disabled={recoveryLoading} onMouseDown={handleRipple}>
+                    <FaKey /> {recoveryLoading ? "Validando..." : "Validar codigo"}
+                  </button>
+
+                  <div className="auth-footer">
+                    <p>
+                      <button type="button" className="auth-switch-btn" onClick={goToLogin}>
+                        Voltar ao login
+                      </button>
+                    </p>
+                  </div>
+                </form>
+              ) : (
+                <form className="auth-form" onSubmit={handleResetPassword}>
+                  {recoveryStatus.message && (
+                    <div className={recoveryStatus.type === "success" ? "sucesso-container" : "erro-container"}>
+                      {recoveryStatus.message}
+                    </div>
+                  )}
+
+                  <div className="input-group">
+                    <div className="input-icon"><FaLock /></div>
+                    <input
+                      type={mostrarSenhaRecovery ? "text" : "password"}
+                      placeholder="Nova senha"
+                      value={recoveryPassword}
+                      onChange={(e) => setRecoveryPassword(e.target.value)}
+                      required
+                      disabled={recoveryLoading}
+                    />
+                    <button
+                      type="button"
+                      className="toggle-password"
+                      onClick={() => setMostrarSenhaRecovery(!mostrarSenhaRecovery)}
+                      tabIndex={-1}
+                    >
+                      {mostrarSenhaRecovery ? <FaEyeSlash /> : <FaEye />}
+                    </button>
+                  </div>
+
+                  <div className="input-group">
+                    <div className="input-icon"><FaLock /></div>
+                    <input
+                      type={mostrarSenhaRecovery ? "text" : "password"}
+                      placeholder="Confirmar nova senha"
+                      value={recoveryConfirmPassword}
+                      onChange={(e) => setRecoveryConfirmPassword(e.target.value)}
+                      required
+                      disabled={recoveryLoading}
+                    />
+                  </div>
+
+                  <button type="submit" className="glass-btn primary" disabled={recoveryLoading} onMouseDown={handleRipple}>
+                    <FaKey /> {recoveryLoading ? "Redefinindo..." : "Redefinir senha"}
+                  </button>
+
+                  <div className="auth-footer">
+                    <p>
+                      Nao recebeu?{" "}
+                      <button type="button" className="auth-switch-btn" onClick={handleSendRecoveryCode} disabled={recoveryLoading}>
+                        Reenviar codigo
+                      </button>
+                    </p>
+                    <p>
+                      <button type="button" className="auth-switch-btn" onClick={goToLogin}>
+                        Voltar ao login
+                      </button>
+                    </p>
+                  </div>
+                </form>
+              )}
             </div>
           ) : !isRegistering ? (
             /* ========== LOGIN FORM ========== */
@@ -305,6 +546,11 @@ function AuthPage() {
                 </button>
 
                 <div className="auth-footer">
+                  <p>
+                    <button type="button" className="auth-switch-btn" onClick={goToPasswordRecovery}>
+                      Esqueci minha senha
+                    </button>
+                  </p>
                   <p>
                     Não tem uma conta?{" "}
                     <button type="button" className="auth-switch-btn" onClick={goToRegister}>

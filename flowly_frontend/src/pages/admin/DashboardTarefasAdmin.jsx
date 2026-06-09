@@ -5,10 +5,13 @@ import { Link, useNavigate } from "react-router-dom";
 import { formatarStatus } from "../../config/statusUtils";
 import "../../styles/pages/admin/DashboardAdmin.css";
 import Sidebar from "../../components/layout/Sidebar";
+import ConfirmDialog from "../../components/common/ConfirmDialog";
 
 function DashboardTarefasAdmin() {
   const [tarefas, setTarefas] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -26,12 +29,18 @@ function DashboardTarefasAdmin() {
     fetchTarefas();
   }, []);
 
-  const handleDelete = async (id) => {
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+
+    setDeleteLoading(true);
     try {
-      await apiClient.delete(API_ENDPOINTS.DELETE_TAREFA(id));
-      setTarefas(tarefas.filter((tarefa) => tarefa._id !== id));
+      await apiClient.delete(API_ENDPOINTS.DELETE_TAREFA(deleteTarget._id));
+      setTarefas(tarefas.filter((tarefa) => tarefa._id !== deleteTarget._id));
+      setDeleteTarget(null);
     } catch (err) {
       console.error("Erro ao excluir tarefa", err);
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -105,7 +114,7 @@ function DashboardTarefasAdmin() {
                   <button type="button" className="btn-edit" onClick={() => handleEdit(tarefa._id)}>
                     Editar
                   </button>
-                  <button type="button" className="btn-delete" onClick={() => handleDelete(tarefa._id)}>
+                  <button type="button" className="btn-delete" onClick={() => setDeleteTarget(tarefa)}>
                     Excluir
                   </button>
                 </div>
@@ -114,6 +123,15 @@ function DashboardTarefasAdmin() {
           )}
         </div>
       </main>
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Excluir tarefa?"
+        message={`A tarefa "${deleteTarget?.descricao || ""}" sera excluida permanentemente. Esta acao nao pode ser desfeita.`}
+        confirmLabel="Excluir tarefa"
+        loading={deleteLoading}
+        onConfirm={handleDelete}
+        onCancel={() => !deleteLoading && setDeleteTarget(null)}
+      />
     </div>
   );
 }

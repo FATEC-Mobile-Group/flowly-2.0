@@ -68,8 +68,9 @@ export const authUtils = {
     localStorage.setItem(LOCAL_STORAGE_KEYS.TOKEN, token);
     localStorage.setItem(LOCAL_STORAGE_KEYS.USER_TYPE, user.tipo);
     localStorage.setItem(LOCAL_STORAGE_KEYS.USER_NAME, user.nome);
-    if (user.id) {
-      localStorage.setItem(LOCAL_STORAGE_KEYS.USER_ID, user.id);
+    const userId = user.id || user._id;
+    if (userId) {
+      localStorage.setItem(LOCAL_STORAGE_KEYS.USER_ID, userId);
     }
     if (user.fotoPerfil) {
       localStorage.setItem(LOCAL_STORAGE_KEYS.USER_PHOTO, user.fotoPerfil);

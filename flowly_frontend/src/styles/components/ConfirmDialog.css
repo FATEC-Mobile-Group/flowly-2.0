@@ -1,0 +1,101 @@
+.confirm-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10040;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--overlay-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.confirm-dialog {
+  width: min(440px, 100%);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  background: var(--dropdown-bg);
+  box-shadow: var(--glass-shadow);
+  color: var(--text-primary);
+  padding: 22px;
+}
+
+.confirm-dialog-header {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.confirm-dialog-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: #ffb3c6;
+  background: rgba(255, 51, 102, 0.18);
+  border: 1px solid rgba(255, 51, 102, 0.34);
+  font-weight: 900;
+}
+
+.confirm-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 1.2rem;
+  line-height: 1.25;
+}
+
+.confirm-dialog p {
+  margin: 0;
+  color: var(--text-desc);
+  line-height: 1.45;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.confirm-dialog-actions button {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.confirm-dialog-actions button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.confirm-dialog-cancel {
+  border: 1px solid var(--border-color);
+  background: var(--surface-bg);
+  color: var(--text-primary);
+}
+
+.confirm-dialog-cancel:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.confirm-dialog-confirm {
+  border: 1px solid rgba(255, 51, 102, 0.42);
+  background: rgba(255, 51, 102, 0.22);
+  color: #ffb3c6;
+}
+
+.confirm-dialog-confirm:hover:not(:disabled) {
+  background: rgba(255, 51, 102, 0.36);
+  color: #ffffff;
+}
+
+[data-theme="light"] .confirm-dialog-confirm {
+  border-color: rgba(211, 47, 47, 0.24);
+  background: rgba(211, 47, 47, 0.08);
+  color: #c62828;
+}
