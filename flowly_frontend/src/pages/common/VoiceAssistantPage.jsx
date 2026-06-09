@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FaMicrophone, FaMicrophoneSlash, FaPaperPlane, FaPowerOff, FaVolumeUp } from 'react-icons/fa';
+import { FaPaperPlane, FaPowerOff, FaVolumeUp } from 'react-icons/fa';
 import Sidebar from '../../components/layout/Sidebar';
 import { API_ENDPOINTS } from '../../config/config';
 import { authUtils } from '../../config/authUtils';
@@ -16,12 +16,65 @@ const initialMessages = [
   },
 ];
 
+const GeminiStar = ({ status, listening }) => {
+  let gradientId = 'gradientStandby';
+  if (listening) {
+    gradientId = 'gradientListening';
+  } else if (status === 'processing') {
+    gradientId = 'gradientProcessing';
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" className="voice-star-svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="gradientStandby" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#6366F1" />
+          <stop offset="50%" stopColor="#A855F7" />
+          <stop offset="100%" stopColor="#EC4899" />
+        </linearGradient>
+
+        <linearGradient id="gradientListening" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#06B6D4" />
+          <stop offset="50%" stopColor="#10B981" />
+          <stop offset="100%" stopColor="#34D399" />
+        </linearGradient>
+
+        <linearGradient id="gradientProcessing" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#FBBF24" />
+          <stop offset="50%" stopColor="#F97316" />
+          <stop offset="100%" stopColor="#EF4444" />
+        </linearGradient>
+
+        <linearGradient id="gradientRainbow" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#ff007f" />
+          <stop offset="20%" stopColor="#7f00ff" />
+          <stop offset="40%" stopColor="#007fff" />
+          <stop offset="60%" stopColor="#00ff7f" />
+          <stop offset="80%" stopColor="#ffbf00" />
+          <stop offset="100%" stopColor="#ff007f" />
+        </linearGradient>
+      </defs>
+      <path
+        className="star-path-base"
+        d="M12 0 Q12 12 24 12 Q12 12 12 24 Q12 12 0 12 Q12 12 12 0"
+        fill={`url(#${gradientId})`}
+      />
+      <path
+        className="star-path-hover"
+        d="M12 0 Q12 12 24 12 Q12 12 12 24 Q12 12 0 12 Q12 12 12 0"
+        fill="url(#gradientRainbow)"
+      />
+    </svg>
+  );
+};
+
 function VoiceAssistantPage() {
   const [messages, setMessages] = useState(initialMessages);
   const [draft, setDraft] = useState('');
   const [listening, setListening] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [status, setStatus] = useState('standby');
+  const [rainbowActive, setRainbowActive] = useState(false);
   const recognitionRef = useRef(null);
   const transcriptRef = useRef('');
   const messagesEndRef = useRef(null);
@@ -182,6 +235,11 @@ function VoiceAssistantPage() {
   }, [addMessage, processing, sendUtterance, supported]);
 
   const toggleListening = () => {
+    setRainbowActive(true);
+    setTimeout(() => {
+      setRainbowActive(false);
+    }, 1200);
+
     if (listening) {
       enterStandby();
       return;
@@ -237,18 +295,14 @@ function VoiceAssistantPage() {
           <div className="voice-orb-zone">
             <button
               type="button"
-              className={`voice-orb ${listening ? 'listening' : ''}`}
+              className={`voice-star-btn ${listening ? 'listening' : ''} ${status} ${rainbowActive ? 'rainbow-burst' : ''}`}
               onClick={toggleListening}
               disabled={!supported || processing}
               aria-label={listening ? 'Parar escuta' : 'Iniciar escuta'}
               title={supported ? 'Falar com o assistente' : 'Reconhecimento de voz indisponível'}
             >
-              <span className="voice-wave wave-one" />
-              <span className="voice-wave wave-two" />
-              <span className="voice-wave wave-three" />
-              <span className="voice-orb-icon">
-                {listening ? <FaMicrophoneSlash /> : <FaMicrophone />}
-              </span>
+              <span className={`rainbow-ripple ${rainbowActive ? 'active' : ''}`} />
+              <GeminiStar status={status} listening={listening} />
             </button>
           </div>
 

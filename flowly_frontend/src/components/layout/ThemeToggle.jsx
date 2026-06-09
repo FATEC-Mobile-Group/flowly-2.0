@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useTheme } from '../../config/ThemeContext';
-import { FaCheck, FaImage, FaMoon, FaSun } from 'react-icons/fa';
+import { FaCheck, FaMoon, FaSun, FaPalette } from 'react-icons/fa';
 import '../../styles/components/ThemeToggle.css';
 
 const ThemeToggle = () => {
@@ -30,7 +30,7 @@ const ThemeToggle = () => {
         data-testid="theme-toggle"
         title="Aparência"
       >
-        <FaImage />
+        <FaPalette />
       </button>
 
       {open && (
