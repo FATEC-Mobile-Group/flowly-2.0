@@ -631,6 +631,7 @@ token/sessão, o sistema direciona o acesso para áreas de administrador ou usu�
 <p align="center">
  <img width="683" height="872" alt="fluxo" src="https://github.com/user-attachments/assets/9c8f201d-44dc-4559-9e16-fbf1aad1fe8c" />
 </p>
+
 ---
 
 # Design
