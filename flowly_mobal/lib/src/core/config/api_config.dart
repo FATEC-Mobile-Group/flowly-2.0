@@ -2,6 +2,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class ApiConfig {
+  static const String _productionBaseUrl =
+      'https://flowly-api-backend-646126851973.southamerica-east1.run.app';
+
   static const String _definedBaseUrl = String.fromEnvironment(
     'FLOWLY_API_URL',
   );
@@ -19,9 +22,13 @@ class ApiConfig {
       return _normalizeBaseUrl(envBaseUrl);
     }
 
-    return _normalizeBaseUrl(
-      kIsWeb ? 'http://localhost:5000' : 'http://10.0.2.2:5000',
-    );
+    if (kDebugMode) {
+      return _normalizeBaseUrl(
+        kIsWeb ? 'http://localhost:5000' : 'http://10.0.2.2:5000',
+      );
+    }
+
+    return _normalizeBaseUrl(_productionBaseUrl);
   }
 
   static String _normalizeBaseUrl(String value) {
