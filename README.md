@@ -877,6 +877,23 @@ O módulo `flowly_assistente` concentra o assistente HTTP/CLI, comandos por text
 
 ---
 
+# Usuários Mockados para teste até 12/06/2026
+### ADM
+
+```env
+LOGIN=chucklesadm@bwmyga.com
+SENHA=A1234567a.
+```
+
+### USER
+
+```env
+LOGIN=freddiem@bltiwd.com
+SENHA=A1234567a.
+```
+
+---
+
 # Instituição
 
 **FATEC Jahu**
