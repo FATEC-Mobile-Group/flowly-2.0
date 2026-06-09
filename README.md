@@ -397,6 +397,98 @@ GET  /api/storage/files/:encodedPath
 
 ---
 
+# Arquitetura Cloud
+```mermaid
+flowchart TB
+  %% Usuários
+  WebUser[Usuário Web / Admin]
+  MobileUser[Usuário Mobile Flutter]
+
+  %% CI/CD
+  subgraph CICD["CI/CD"]
+    GitHub[GitHub Repository]
+    GHActions[GitHub Actions]
+    DockerHub[Docker Hub]
+  end
+
+  %% Azure
+  subgraph Azure["Azure"]
+    SWA[Azure Static Web Apps<br/>React build estático]
+  end
+
+  %% Google Cloud
+  subgraph GCP["Google Cloud Platform - southamerica-east1"]
+    CloudRunAPI[Cloud Run<br/>flowly-api-backend<br/>Node.js + Express + Socket.IO]
+    CloudRunAssistant[Cloud Run / Functions Framework<br/>flowly-assistente-voz<br/>Python Assistant]
+    CloudRunFace[Cloud Run<br/>flowly_iot_face<br/>Flask + DeepFace]
+    GCS[Google Cloud Storage<br/>Uploads e anexos]
+    Vision[Google Vision API<br/>Moderação de imagens]
+  end
+
+  %% Banco externo
+  subgraph Data["Camada de Dados"]
+    MongoAtlas[MongoDB Atlas<br/>Banco Flowly]
+  end
+
+  %% Email externo
+  SMTP[SMTP Provider<br/>E-mails 2FA / recuperação]
+
+  %% Kubernetes alternativo
+  subgraph K8S["Alternativa Kubernetes versionada em /k8s"]
+    FrontDeploy[frontend-deployment<br/>1 réplica]
+    FrontSvc[frontend-service<br/>NodePort :80]
+    ApiDeploy[api-deployment<br/>2 réplicas]
+    ApiSvc[api-service<br/>ClusterIP :5000]
+    MongoDeploy[mongodb deployment<br/>1 réplica mongo:5]
+    MongoSvc[mongodb-service<br/>:27017]
+  end
+
+  %% Fluxo de deploy
+  GitHub --> GHActions
+  GHActions -->|Build React + deploy| SWA
+  GHActions -. imagens Docker documentadas .-> DockerHub
+  DockerHub -. imagens .-> CloudRunAPI
+  DockerHub -. imagens .-> CloudRunAssistant
+  DockerHub -. imagens .-> CloudRunFace
+  DockerHub -. imagens .-> FrontDeploy
+  DockerHub -. imagens .-> ApiDeploy
+
+  %% Acesso dos clientes
+  WebUser -->|HTTPS| SWA
+  MobileUser -->|HTTPS REST| CloudRunAPI
+  MobileUser -->|WebSocket Socket.IO| CloudRunAPI
+
+  %% Frontend
+  SWA -->|REST /api| CloudRunAPI
+  SWA -->|Socket.IO| CloudRunAPI
+  SWA -->|Assistente HTTP| CloudRunAssistant
+
+  %% Backend principal
+  CloudRunAPI -->|Mongoose / MONGO_URI| MongoAtlas
+  CloudRunAPI -->|Signed URLs / Storage SDK| GCS
+  CloudRunAPI -->|Safe Search / labels / OCR| Vision
+  CloudRunAPI -->|FACE_SERVICE_URL<br/>/health /embed /verify /verify-multi| CloudRunFace
+  CloudRunAPI -->|UPLOAD_MODERATION_URL opcional| CloudRunAssistant
+  CloudRunAPI -->|Nodemailer| SMTP
+
+  %% Assistente
+  CloudRunAssistant -->|FLOWLY_API_BASE_URL| CloudRunAPI
+  CloudRunAssistant -->|Analytics / insights| MongoAtlas
+
+  %% Face
+  CloudRunFace -->|Processamento facial<br/>DeepFace + TensorFlow| CloudRunFace
+
+  %% Kubernetes interno
+  FrontSvc --> FrontDeploy
+  FrontDeploy --> ApiSvc
+  ApiSvc --> ApiDeploy
+  ApiDeploy --> MongoSvc
+  MongoSvc --> MongoDeploy
+```
+
+
+---
+
 # Banco de Dados
 
 ## Coleções Principais
@@ -539,6 +631,7 @@ token/sessão, o sistema direciona o acesso para áreas de administrador ou usu�
 <p align="center">
  <img width="683" height="872" alt="fluxo" src="https://github.com/user-attachments/assets/9c8f201d-44dc-4559-9e16-fbf1aad1fe8c" />
 </p>
+
 ---
 
 # Design
@@ -878,6 +971,7 @@ O módulo `flowly_assistente` concentra o assistente HTTP/CLI, comandos por text
 ---
 
 # Usuários Mockados para teste até 12/06/2026
+## [Acesse o Flowly aqui para testes](https://nice-beach-076f39a0f.7.azurestaticapps.net)
 ### ADM
 
 ```env
