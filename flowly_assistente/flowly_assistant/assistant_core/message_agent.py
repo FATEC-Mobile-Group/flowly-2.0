@@ -7,12 +7,28 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from flowly_assistant.api_client import FlowlyAPIClient
+from flowly_assistant.api_config import configured_api_base_url
 from flowly_assistant.assistant_core.rest_assistant import assistant_from_http_body, tts_payload
 from flowly_assistant.command_parser import CommandParser
 from flowly_assistant.nlp.moderation import ModerationService
 from flowly_assistant.queues.analytics_queue import AnalyticsQueue
 from flowly_assistant.storage.analytics_repository import AnalyticsRepository
-from flowly_assistant.storage.conversation_state import ConversationStateRepository
+from flowly_assistant.storage.conversation_state import ConversationStateRepository, ScopedConversationState
+
+# channelId é o tipo de canal de entrada, nunca uma equipe (a API trata channelId com ObjectId como equipe).
+ALLOWED_CHANNEL_IDS = {"web", "voice-assistant"}
+
+
+def authenticated_user_id(api: FlowlyAPIClient) -> Optional[str]:
+    """Identidade confiável: o dono do JWT segundo a API (/users/me), nunca o userId do body."""
+    try:
+        me = api.me()
+    except Exception:
+        return None
+    if not isinstance(me, dict):
+        return None
+    user_id = str(me.get("_id") or me.get("id") or "").strip()
+    return user_id or None
 
 
 class MessageAgent:
@@ -30,18 +46,22 @@ class MessageAgent:
 
     def handle_message(self) -> Tuple[Dict[str, Any], int]:
         content = str(self.body.get("content") or self.body.get("utterance") or self.body.get("text") or "").strip()
-        user_id = str(self.body.get("userId") or self.body.get("user_id") or "").strip()
         channel_id = str(self.body.get("channelId") or self.body.get("channel_id") or "web").strip()
+        if channel_id not in ALLOWED_CHANNEL_IDS:
+            channel_id = "web"
         conversation_id = str(
             self.body.get("conversationId")
             or self.body.get("conversation_id")
-            or f"{user_id}:{channel_id}"
+            or channel_id
         )
 
         if not content:
             return self._error("missing_content", "Envie uma mensagem para eu processar.", 400)
+
+        user_id = authenticated_user_id(self.assistant.api)
         if not user_id:
-            return self._error("missing_user_id", "userId é obrigatório.", 400)
+            return self._error("unauthorized", "Autenticação inválida.", 401)
+        self.conversations = ScopedConversationState(self.conversations, user_id)
 
         moderation = self.moderation.moderate(content)
         if not moderation.allowed:
@@ -56,8 +76,9 @@ class MessageAgent:
             "id": str(uuid.uuid4()),
             "userId": user_id,
             "channelId": channel_id,
-            "teamId": self.body.get("teamId") or self.body.get("team_id"),
-            "teamName": self.body.get("teamName") or self.body.get("team_name"),
+            # Equipe só entra no evento se confirmada pela API (ver _enrich_event_team_context).
+            "teamId": None,
+            "teamName": None,
             "content": content,
             "createdAt": datetime.now(timezone.utc).isoformat(),
             "source": self.body.get("source") or "frontend",
@@ -616,8 +637,6 @@ class MessageAgent:
         )[0].strip(" :,-")
 
     def _enrich_event_team_context(self, event: Dict[str, Any], content: str) -> None:
-        if event.get("teamId") or event.get("team_id"):
-            return
         try:
             match = self.parser.match(content)
             if match is None:
@@ -628,9 +647,17 @@ class MessageAgent:
                 return
             resolver_params = {"team_id": team_ref}
             self.assistant._resolve_refs(resolver_params, self.assistant._detect_user_type() or "user")
-            event["teamId"] = resolver_params.get("team_id")
-            if resolver_params.get("_team_label"):
-                event["teamName"] = resolver_params.get("_team_label")
+            team_id = str(resolver_params.get("team_id") or "")
+            # Só aceita equipe do usuário autenticado (inclusive ObjectId digitado na mensagem).
+            my_teams = self.assistant.api.list_my_teams()
+            team = next(
+                (t for t in my_teams or [] if isinstance(t, dict) and str(t.get("_id") or "") == team_id),
+                None,
+            )
+            if team is None:
+                return
+            event["teamId"] = team_id
+            event["teamName"] = str(team.get("nome") or "").strip() or resolver_params.get("_team_label")
         except Exception:
             return
 
@@ -678,16 +705,26 @@ class MessageAgent:
         }, status
 
 
-def get_admin_insights(token: str, body: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], int]:
-    api_base_url = str(
-        (body or {}).get("api_url")
-        or (body or {}).get("api_base_url")
-        or os.getenv("FLOWLY_API_BASE_URL")
-        or "http://localhost:5000/api"
-    ).strip()
+def standby_conversation(token: str, body: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+    user_id = authenticated_user_id(FlowlyAPIClient(base_url=configured_api_base_url(), token=token))
+    if not user_id:
+        return {"ok": False, "error": "unauthorized", "reply_text": "Autenticação inválida."}, 401
 
+    conversation_id = str(body.get("conversationId") or body.get("conversation_id") or "").strip()
+    if conversation_id:
+        ScopedConversationState(ConversationStateRepository(), user_id).clear(conversation_id)
+    text = "Assistente em standby."
+    return {
+        "ok": True,
+        "status": "standby",
+        "reply_text": text,
+        "tts": {"enabled": False, "language": "pt-BR", "text": text},
+    }, 200
+
+
+def get_admin_insights(token: str, body: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], int]:
     try:
-        me = FlowlyAPIClient(base_url=api_base_url, token=token).me()
+        me = FlowlyAPIClient(base_url=configured_api_base_url(), token=token).me()
     except Exception:
         return {"ok": False, "error": "unauthorized", "reply_text": "Autenticação inválida."}, 401
 

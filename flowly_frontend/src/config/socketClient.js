@@ -1,8 +1,6 @@
 import io from 'socket.io-client';
 import { authUtils } from './authUtils';
 
-const DEFAULT_SOCKET_URL = 'https://flowly-api-backend-646126851973.southamerica-east1.run.app';
-
 const isLocalHost =
   typeof window !== 'undefined' &&
   ['localhost', '127.0.0.1'].includes(window.location.hostname);
@@ -11,10 +9,14 @@ const normalizePublicApiUrl = (url = '') =>
   url.trim().replace(/\/+$/, '').replace(/\/api$/, '');
 
 const SOCKET_URL =
-  normalizePublicApiUrl(process.env.REACT_APP_SOCKET_URL || '') ||
-  normalizePublicApiUrl(process.env.REACT_APP_API_PUBLIC_URL || '') ||
-  normalizePublicApiUrl(process.env.REACT_APP_API_URL || '') ||
-  (isLocalHost ? 'http://localhost:5000' : DEFAULT_SOCKET_URL);
+  normalizePublicApiUrl(import.meta.env.VITE_SOCKET_URL || '') ||
+  normalizePublicApiUrl(import.meta.env.VITE_API_PUBLIC_URL || '') ||
+  normalizePublicApiUrl(import.meta.env.VITE_API_URL || '') ||
+  (isLocalHost ? 'http://localhost:5000' : '');
+
+if (!SOCKET_URL) {
+  throw new Error('VITE_SOCKET_URL precisa ser configurada para o frontend de producao.');
+}
 
 export const createSocketConnection = () => {
   const token = authUtils.getToken();

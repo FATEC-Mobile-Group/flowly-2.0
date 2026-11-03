@@ -84,11 +84,7 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
       return;
     }
 
-    _chatService.enviarMensagem(
-      equipeId: widget.teamId,
-      userId: _currentUserId,
-      texto: text,
-    );
+    _chatService.enviarMensagem(equipeId: widget.teamId, texto: text);
 
     _messageController.clear();
   }

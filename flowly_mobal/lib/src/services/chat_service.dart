@@ -1,9 +1,15 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import 'package:meu_app/src/core/config/api_config.dart';
+import 'package:meu_app/src/core/constants/storage_keys.dart';
 import 'package:meu_app/src/core/network/api_client.dart';
 import 'package:meu_app/src/models/chat_message.dart';
 
 class ChatService {
+  ChatService({FlutterSecureStorage? storage})
+    : _storage = storage ?? const FlutterSecureStorage();
+
+  final FlutterSecureStorage _storage;
   io.Socket? _socket;
 
   Future<List<ChatMessage>> carregarHistorico(String equipeId) async {
@@ -22,17 +28,23 @@ class ChatService {
     }
   }
 
-  void conectar({
+  Future<void> conectar({
     required String equipeId,
     required void Function(ChatMessage message) onMessage,
-  }) {
+  }) async {
     _socket?.disconnect();
     _socket?.dispose();
+
+    final String? token = await _storage.read(key: StorageKeys.jwtToken);
+    if (token == null || token.isEmpty) {
+      return;
+    }
 
     _socket = io.io(
       ApiConfig.baseUrl,
       io.OptionBuilder()
           .setTransports(<String>['websocket'])
+          .setAuth(<String, dynamic>{'token': token})
           .disableAutoConnect()
           .enableReconnection()
           .build(),
@@ -51,14 +63,9 @@ class ChatService {
     _socket!.connect();
   }
 
-  void enviarMensagem({
-    required String equipeId,
-    required String userId,
-    required String texto,
-  }) {
+  void enviarMensagem({required String equipeId, required String texto}) {
     _socket?.emit('send_message', <String, dynamic>{
       'equipeId': equipeId,
-      'userId': userId,
       'texto': texto,
     });
   }

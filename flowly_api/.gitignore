@@ -1,7 +1,7 @@
 # Dependencies
 node_modules/
-package-lock.json
 yarn.lock
+uploads/
 
 application_default_credentials.json
 

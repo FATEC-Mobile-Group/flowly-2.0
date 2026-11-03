@@ -54,12 +54,18 @@ jest.mock('../controllers/emailController', () => ({
   enviarCodigoVerificacaoEmail: jest.fn().mockResolvedValue(true),
   validarCodigoVerificacao: jest.fn(),
   validarTokenVerificacao: jest.fn(),
+  enviarCodigoRecuperacaoSenha: jest.fn(),
+  validarCodigoRecuperacaoSenha: jest.fn(),
+  redefinirSenhaComCodigo: jest.fn(),
 }));
 
 // Importa app APÓS os mocks
 const app = require('../app');
 const User = require('../models/User');
 const argon2 = require('argon2');
+const jwt = require('jsonwebtoken');
+const config = require('../config/config');
+const { ERROR_MESSAGES } = require('../config/constants');
 
 // ==========================================
 // TESTES
@@ -78,38 +84,180 @@ describe('API Auth — Testes de Integração com Supertest', () => {
 
   describe('POST /api/auth/login', () => {
 
-    it('deve retornar 404 quando o usuário não existe', async () => {
-      // Simula que o User.findOne não encontra ninguém
-      User.findOne.mockResolvedValue(null);
-
+    it('deve rejeitar login sem senha de forma controlada', async () => {
       const response = await request(app)
         .post('/api/auth/login')
-        .send({ email: 'naoexiste@teste.com', senha: 'Qualquer@123' })
+        .send({ email: 'teste@flowly.com' })
         .expect('Content-Type', /json/)
-        .expect(404);
+        .expect(400);
 
-      expect(response.body).toHaveProperty('erro', 'Usuário não encontrado');
+      expect(response.body).toEqual({ erro: 'E-mail e senha sao obrigatorios.' });
+      expect(User.findOne).not.toHaveBeenCalled();
+      expect(argon2.verify).not.toHaveBeenCalled();
     });
 
-    it('deve retornar 401 quando a senha está incorreta', async () => {
-      // Simula usuário encontrado mas senha inválida
-      User.findOne.mockResolvedValue({
+    it('deve retornar a mesma resposta para usuário inexistente e senha incorreta', async () => {
+      const existingUser = {
         _id: 'fake_id_123',
         nome: 'Teste User',
         email: 'teste@flowly.com',
         senha: '$argon2_hash_real',
         tipo: 'user',
         verificado: true,
-      });
-      argon2.verify.mockResolvedValue(false);
+      };
+      User.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(existingUser);
+      argon2.verify.mockResolvedValueOnce(false);
 
-      const response = await request(app)
+      const unknownUserResponse = await request(app)
+        .post('/api/auth/login')
+        .send({ email: 'naoexiste@teste.com', senha: 'Qualquer@123' })
+        .expect('Content-Type', /json/)
+        .expect(401);
+
+      const wrongPasswordResponse = await request(app)
         .post('/api/auth/login')
         .send({ email: 'teste@flowly.com', senha: 'SenhaErrada@123' })
         .expect('Content-Type', /json/)
         .expect(401);
 
-      expect(response.body).toHaveProperty('erro', 'Senha inválida');
+      expect(unknownUserResponse.body).toEqual({ erro: 'Credenciais inválidas' });
+      expect(wrongPasswordResponse.body).toEqual(unknownUserResponse.body);
+      expect(argon2.verify).toHaveBeenCalledTimes(2);
+      expect(argon2.verify).toHaveBeenNthCalledWith(
+        2,
+        existingUser.senha,
+        'SenhaErrada@123'
+      );
+    });
+
+    it('deve preservar o login quando as credenciais são válidas', async () => {
+      const adminUser = {
+        _id: 'admin_id_123',
+        nome: 'Admin Teste',
+        email: 'admin@flowly.com',
+        senha: '$argon2_hash_real',
+        tipo: 'admin',
+        verificado: true,
+        fotoPerfil: '',
+      };
+      User.findOne.mockResolvedValue(adminUser);
+      argon2.verify.mockResolvedValueOnce(true);
+
+      const response = await request(app)
+        .post('/api/auth/login')
+        .send({ email: adminUser.email, senha: 'SenhaCorreta@123' })
+        .expect('Content-Type', /json/)
+        .expect(200);
+
+      expect(response.body).toEqual({
+        token: expect.any(String),
+        user: {
+          id: adminUser._id,
+          nome: adminUser.nome,
+          tipo: adminUser.tipo,
+          fotoPerfil: '',
+        },
+      });
+      expect(jwt.verify(response.body.token, config.jwt.secret)).toEqual(
+        expect.objectContaining({
+          id: adminUser._id,
+          tipo: adminUser.tipo,
+          tokenType: 'access',
+        })
+      );
+    });
+
+  });
+
+  // ------------------------------------------
+  // GET /api/auth/users
+  // ------------------------------------------
+
+  describe('GET /api/auth/users', () => {
+
+    it('deve retornar 401 quando o token não foi informado', async () => {
+      const response = await request(app)
+        .get('/api/auth/users')
+        .expect('Content-Type', /json/)
+        .expect(401);
+
+      expect(response.body).toEqual({
+        success: false,
+        error: ERROR_MESSAGES.TOKEN_NOT_PROVIDED,
+      });
+      expect(User.find).not.toHaveBeenCalled();
+    });
+
+    it('deve listar usuários para um usuário autenticado', async () => {
+      const users = [
+        { _id: 'user_1', nome: 'Usuário Um', email: 'um@flowly.com' },
+        { _id: 'user_2', nome: 'Usuário Dois', email: 'dois@flowly.com' },
+      ];
+      const select = jest.fn().mockResolvedValue(users);
+      User.find.mockReturnValue({ select });
+      const token = jwt.sign(
+        {
+          id: 'authenticated_user',
+          tipo: 'user',
+          email: 'auth@flowly.com',
+          tokenType: 'access',
+        },
+        config.jwt.secret,
+        { issuer: config.jwt.issuer, audience: config.jwt.accessAudience }
+      );
+
+      const response = await request(app)
+        .get('/api/auth/users')
+        .set('Authorization', `Bearer ${token}`)
+        .expect('Content-Type', /json/)
+        .expect(200);
+
+      expect(response.body).toEqual(users);
+      expect(User.find).toHaveBeenCalledWith({ tipo: 'user' });
+      expect(select).toHaveBeenCalledWith('nome email');
+    });
+
+    it('deve rejeitar token temporario de sessao facial como token de acesso', async () => {
+      const token = jwt.sign(
+        { id: 'authenticated_user', purpose: 'face_verify', tokenType: 'face-session' },
+        config.jwt.faceSecret,
+        { issuer: config.jwt.issuer, audience: config.jwt.faceAudience }
+      );
+
+      const response = await request(app)
+        .get('/api/auth/users')
+        .set('Authorization', `Bearer ${token}`)
+        .expect('Content-Type', /json/)
+        .expect(401);
+
+      expect(response.body).toEqual({
+        success: false,
+        error: ERROR_MESSAGES.INVALID_TOKEN,
+      });
+      expect(User.find).not.toHaveBeenCalled();
+    });
+
+  });
+
+  // ------------------------------------------
+  // GET /api/users
+  // ------------------------------------------
+
+  describe('GET /api/users', () => {
+
+    it('deve continuar retornando 401 quando o token não foi informado', async () => {
+      const response = await request(app)
+        .get('/api/users')
+        .expect('Content-Type', /json/)
+        .expect(401);
+
+      expect(response.body).toEqual({
+        success: false,
+        error: ERROR_MESSAGES.TOKEN_NOT_PROVIDED,
+      });
+      expect(User.find).not.toHaveBeenCalled();
     });
 
   });
@@ -119,6 +267,24 @@ describe('API Auth — Testes de Integração com Supertest', () => {
   // ------------------------------------------
 
   describe('POST /api/auth/registrar', () => {
+
+    it('deve retornar erro 400 quando a senha não foi informada', async () => {
+      const response = await request(app)
+        .post('/api/auth/registrar')
+        .send({
+          nome: 'Usuário Teste',
+          email: `teste${Date.now()}@flowly.com`,
+          tipo: 'user',
+          termsAccepted: true,
+        })
+        .expect('Content-Type', /json/)
+        .expect(400);
+
+      expect(response.body).toEqual({
+        erro: 'A senha é obrigatória e deve ser informada como texto.',
+      });
+      expect(argon2.hash).not.toHaveBeenCalled();
+    });
 
     it('deve retornar erro 400 quando a senha é fraca (sem caractere especial)', async () => {
       const response = await request(app)
@@ -189,6 +355,30 @@ describe('API Auth — Testes de Integração com Supertest', () => {
           termsAccepted: true,
           termsVersion: '2026-06-08',
           termsAcceptedAt: expect.any(Date),
+        })
+      );
+    });
+
+    it('deve ignorar tentativa de criar administrador pela rota publica', async () => {
+      const email = `malicioso${Date.now()}@flowly.com`;
+      const response = await request(app)
+        .post('/api/auth/registrar')
+        .send({
+          nome: 'Usuario Malicioso',
+          email,
+          senha: 'SenhaForte@123',
+          tipo: 'admin',
+          termsAccepted: true,
+          termsVersion: '2026-06-08',
+        })
+        .expect('Content-Type', /json/)
+        .expect(201);
+
+      expect(response.body).toHaveProperty('msg');
+      expect(User).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email,
+          tipo: 'user',
         })
       );
     });

@@ -1,9 +1,6 @@
 import axios from 'axios';
 import { authUtils } from './authUtils';
 
-const DEFAULT_API_PUBLIC_URL = 'https://flowly-api-backend-646126851973.southamerica-east1.run.app';
-const DEFAULT_API_BASE_URL = `${DEFAULT_API_PUBLIC_URL}/api`;
-
 const isLocalHost =
   typeof window !== 'undefined' &&
   ['localhost', '127.0.0.1'].includes(window.location.hostname);
@@ -12,13 +9,17 @@ const normalizePublicApiUrl = (url = '') =>
   url.trim().replace(/\/+$/, '').replace(/\/api$/, '');
 
 const API_BASE_URL =
-  (process.env.REACT_APP_API_URL || '').trim() ||
-  (isLocalHost ? 'http://localhost:5000/api' : DEFAULT_API_BASE_URL);
+  (import.meta.env.VITE_API_URL || '').trim() ||
+  (isLocalHost ? 'http://localhost:5000/api' : '');
+
+if (!API_BASE_URL) {
+  throw new Error('VITE_API_URL precisa ser configurada para o frontend de producao.');
+}
 
 const API_PUBLIC_URL =
-  normalizePublicApiUrl(process.env.REACT_APP_API_PUBLIC_URL || '') ||
+  normalizePublicApiUrl(import.meta.env.VITE_API_PUBLIC_URL || '') ||
   normalizePublicApiUrl(API_BASE_URL) ||
-  (isLocalHost ? 'http://localhost:5000' : DEFAULT_API_PUBLIC_URL);
+  (isLocalHost ? 'http://localhost:5000' : '');
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,

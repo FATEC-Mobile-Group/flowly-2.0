@@ -5,15 +5,15 @@ import os
 from typing import Any, Dict, Tuple
 
 import flowly_assistant.settings  # noqa: F401 - loads flowly_assistente/.env for local Functions Framework
-from flowly_assistant.assistant_core.message_agent import MessageAgent, get_admin_insights
+from flowly_assistant.assistant_core.message_agent import MessageAgent, get_admin_insights, standby_conversation
 from flowly_assistant.assistant_core.rest_assistant import assistant_from_http_body
 from flowly_assistant.nlp.upload_moderation import moderate_upload_payload
-from flowly_assistant.storage.conversation_state import ConversationStateRepository
+from flowly_assistant.security import verify_internal_secret
 
 
 def _json_response(payload: Dict[str, Any], status: int = 200) -> Tuple[str, int, Dict[str, str]]:
     headers: Dict[str, str] = {"Content-Type": "application/json; charset=utf-8"}
-    cors_origin = str(os.getenv("FLOWLY_CORS_ORIGIN", "*") or "*").strip()
+    cors_origin = str(os.getenv("FLOWLY_CORS_ORIGIN", "") or "").strip()
     if cors_origin:
         headers["Access-Control-Allow-Origin"] = cors_origin
         headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
@@ -83,18 +83,11 @@ def flowly_http(request):
 
     if request.method == "POST" and path == "/standby":
         body = _read_body(request)
-        conversation_id = str(body.get("conversationId") or body.get("conversation_id") or "").strip()
-        if conversation_id:
-            ConversationStateRepository().clear(conversation_id)
-        text = "Assistente em standby."
-        return _json_response(
-            {
-                "ok": True,
-                "status": "standby",
-                "reply_text": text,
-                "tts": {"enabled": False, "language": "pt-BR", "text": text},
-            }
-        )
+        token = _read_token(request, body)
+        if not token:
+            return _json_response({"ok": False, "error": "missing_token", "reply_text": "Token obrigatório."}, 401)
+        payload, status = standby_conversation(token, body)
+        return _json_response(payload, status)
 
     if request.method == "GET" and path == "/api/v1/admin/insights":
         body = _read_body(request)
@@ -108,7 +101,13 @@ def flowly_http(request):
         body = _read_body(request)
         expected_secret = str(os.getenv("UPLOAD_MODERATION_SECRET") or "").strip()
         provided_secret = _read_token(request, body)
-        if expected_secret and provided_secret != expected_secret:
+        secret_status = verify_internal_secret(expected_secret, provided_secret)
+        if secret_status == "not_configured":
+            return _json_response(
+                {"allowed": False, "categories": ["service_unavailable"], "reason": "Moderacao interna nao configurada."},
+                503,
+            )
+        if secret_status == "unauthorized":
             return _json_response({"allowed": False, "categories": ["unauthorized"], "reason": "Token invalido."}, 401)
         return _json_response(moderate_upload_payload(body), 200)
 

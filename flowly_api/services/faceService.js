@@ -4,6 +4,12 @@ const { normalizeFaceError } = require('../utils/faceErrorMessages');
 const FACE_SERVICE_TIMEOUT_MS = 120000;
 
 const callFaceService = async (path, body, context = 'default') => {
+  if (!config.face.serviceSecret) {
+    const error = new Error('FACE_SERVICE_SECRET nao configurado na API.');
+    error.statusCode = 503;
+    throw error;
+  }
+
   const baseUrl = config.face.serviceUrl.replace(/\/+$/, '');
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FACE_SERVICE_TIMEOUT_MS);
@@ -11,7 +17,10 @@ const callFaceService = async (path, body, context = 'default') => {
   try {
     const response = await fetch(`${baseUrl}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Flowly-Service-Secret': config.face.serviceSecret,
+      },
       body: JSON.stringify(body),
       signal: controller.signal,
     });

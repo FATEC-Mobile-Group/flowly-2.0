@@ -63,7 +63,7 @@ class _BacklogUserScreenState extends State<BacklogUserScreen> {
               setModalState(() => _isClaiming = true);
               try {
                 await _taskService.atribuirParaMim(task.id);
-                if (!mounted) {
+                if (!mounted || !context.mounted) {
                   return;
                 }
                 Navigator.of(context).pop();
@@ -83,7 +83,7 @@ class _BacklogUserScreenState extends State<BacklogUserScreen> {
                   SnackBar(content: Text('Erro ao atribuir tarefa: $error')),
                 );
               } finally {
-                if (mounted) {
+                if (mounted && context.mounted) {
                   setModalState(() => _isClaiming = false);
                 }
               }
@@ -106,39 +106,39 @@ class _BacklogUserScreenState extends State<BacklogUserScreen> {
                       const SizedBox(height: 12),
                       Text(
                         task.descricao.isEmpty ? '-' : task.descricao,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Colors.white70,
-                        ),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodyMedium?.copyWith(color: Colors.white70),
                       ),
                       const SizedBox(height: 12),
                       Text(
                         'Status: ${task.status.label}',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Colors.white,
-                        ),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodyMedium?.copyWith(color: Colors.white),
                       ),
                       const SizedBox(height: 8),
                       Text(
                         'Prioridade: ${task.prioridade.label}',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Colors.white,
-                        ),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodyMedium?.copyWith(color: Colors.white),
                       ),
                       const SizedBox(height: 8),
                       Text(
                         'Equipe: ${task.equipeNome ?? 'Não informada'}',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Colors.white,
-                        ),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodyMedium?.copyWith(color: Colors.white),
                       ),
                       const SizedBox(height: 8),
                       Text(
                         task.prazo == null
                             ? 'Entrega: -'
                             : 'Entrega: ${task.prazo!.day.toString().padLeft(2, '0')}/${task.prazo!.month.toString().padLeft(2, '0')}/${task.prazo!.year}',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Colors.white,
-                        ),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodyMedium?.copyWith(color: Colors.white),
                       ),
                       const SizedBox(height: 20),
                       SizedBox(
@@ -156,9 +156,7 @@ class _BacklogUserScreenState extends State<BacklogUserScreen> {
                                 )
                               : const Icon(Icons.assignment_ind_outlined),
                           label: Text(
-                            _isClaiming
-                                ? 'Atribuindo...'
-                                : 'Atribuir para mim',
+                            _isClaiming ? 'Atribuindo...' : 'Atribuir para mim',
                           ),
                         ),
                       ),

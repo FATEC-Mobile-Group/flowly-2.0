@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>O Flowly utiliza a câmera para realizar a verificação facial e proteger o acesso à sua conta.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>O Flowly acessa sua biblioteca de fotos para que você escolha uma imagem de perfil.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

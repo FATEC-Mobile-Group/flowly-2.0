@@ -16,13 +16,32 @@ const faceRoutes = require('./routes/faceRoutes');
 
 const app = express();
 
+const allowedOrigins = config.corsOrigin
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error('Origem nao permitida pelo CORS.'));
+  },
+};
+
 // Middleware
-app.use(cors({ origin: config.corsOrigin }));
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
+app.use(cors(corsOptions));
 app.use(express.json({ limit: config.bodySizeLimit }));
 app.use(express.urlencoded({ extended: true, limit: config.bodySizeLimit }));
-
-const path = require('path');
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Routes
 app.use('/api/auth', authRoutes);

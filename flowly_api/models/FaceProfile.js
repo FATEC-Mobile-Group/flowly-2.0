@@ -10,11 +10,16 @@ const faceProfileSchema = new mongoose.Schema(
     },
     embedding: {
       type: [Number],
-      required: true,
+      default: undefined,
     },
     embeddings: {
       type: [[Number]],
       default: undefined,
+    },
+    encryptedEmbeddings: {
+      iv: { type: String },
+      tag: { type: String },
+      ciphertext: { type: String },
     },
     model: {
       type: String,

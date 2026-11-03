@@ -5,7 +5,7 @@ import { API_ENDPOINTS } from "../../config/config";
 import { authUtils } from "../../config/authUtils";
 import {
   FaEnvelope, FaLock, FaSignInAlt, FaEye, FaEyeSlash,
-  FaUser, FaUserGraduate, FaUserPlus, FaKey
+  FaUser, FaUserPlus, FaKey
 } from "react-icons/fa";
 import LightRays from "../../components/backgrounds/LightRays";
 import CurvedLoop from "../../components/text/CurvedLoop";
@@ -83,7 +83,6 @@ function AuthPage() {
   const [regNome, setRegNome] = useState("");
   const [regEmail, setRegEmail] = useState("");
   const [regSenha, setRegSenha] = useState("");
-  const [regTipo, setRegTipo] = useState("user");
   const [regErro, setRegErro] = useState("");
   const [regLoading, setRegLoading] = useState(false);
   const [mostrarSenhaReg, setMostrarSenhaReg] = useState(false);
@@ -220,7 +219,6 @@ function AuthPage() {
         nome: regNome,
         email: regEmail,
         senha: regSenha,
-        tipo: regTipo,
         termsAccepted,
         termsVersion: TERMS_VERSION,
       });
@@ -613,19 +611,6 @@ function AuthPage() {
                   >
                     {mostrarSenhaReg ? <FaEyeSlash /> : <FaEye />}
                   </button>
-                </div>
-
-                <div className="input-group">
-                  <div className="input-icon"><FaUserGraduate /></div>
-                  <select
-                    value={regTipo}
-                    onChange={(e) => setRegTipo(e.target.value)}
-                    className="select-tipo"
-                    disabled={regLoading}
-                  >
-                    <option value="user">Colaborador</option>
-                    <option value="admin">Administrador</option>
-                  </select>
                 </div>
 
                 <label className="terms-check">

@@ -51,3 +51,23 @@ class ConversationStateRepository:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+
+class ScopedConversationState:
+    """Isola o estado por usuário autenticado: o conversationId do cliente nunca é chave global."""
+
+    def __init__(self, repository: ConversationStateRepository, owner_id: str) -> None:
+        self.repository = repository
+        self.owner_id = owner_id
+
+    def _key(self, conversation_id: str) -> str:
+        return f"{self.owner_id}:{conversation_id}"
+
+    def get(self, conversation_id: str) -> Optional[Dict[str, Any]]:
+        return self.repository.get(self._key(conversation_id))
+
+    def save(self, conversation_id: str, state: Dict[str, Any]) -> None:
+        self.repository.save(self._key(conversation_id), state)
+
+    def clear(self, conversation_id: str) -> None:
+        self.repository.clear(self._key(conversation_id))
+

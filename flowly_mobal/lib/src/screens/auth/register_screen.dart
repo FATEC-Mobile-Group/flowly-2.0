@@ -22,6 +22,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   bool _obscurePassword = true;
   bool _isSubmitting = false;
+  bool _termsAccepted = false;
 
   @override
   void dispose() {
@@ -36,6 +37,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
+    if (!_termsAccepted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Leia e aceite os Termos de Uso e a Política de Privacidade.',
+          ),
+        ),
+      );
+      return;
+    }
+
     setState(() => _isSubmitting = true);
     final messenger = ScaffoldMessenger.of(context);
 
@@ -43,6 +55,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       nome: _nameController.text.trim(),
       email: _emailController.text.trim(),
       senha: _passwordController.text,
+      termsAccepted: _termsAccepted,
     );
 
     if (!mounted) {
@@ -142,7 +155,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ValidatedTextField(
                           controller: _passwordController,
                           label: 'Senha',
-                          hint: 'Use no mínimo 6 caracteres',
+                          hint:
+                              'Mínimo de 8 caracteres, com maiúscula, número e símbolo',
                           prefixIcon: Icons.lock_outlined,
                           obscureText: _obscurePassword,
                           suffixIcon: _obscurePassword
@@ -156,13 +170,35 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             if (password.isEmpty) {
                               return 'Informe sua senha.';
                             }
-                            if (password.length < 6) {
-                              return 'Use no mínimo 6 caracteres.';
+                            if (password.length < 8) {
+                              return 'Use no mínimo 8 caracteres.';
+                            }
+                            if (!RegExp(r'[A-Z]').hasMatch(password) ||
+                                !RegExp(r'[a-z]').hasMatch(password) ||
+                                !RegExp(r'[0-9]').hasMatch(password) ||
+                                !RegExp(
+                                  r'[!@#$%^&*(),.?":{}|<>]',
+                                ).hasMatch(password)) {
+                              return 'Inclua maiúscula, minúscula, número e caractere especial.';
                             }
                             return null;
                           },
                         ),
-                        const SizedBox(height: 28),
+                        const SizedBox(height: 16),
+                        CheckboxListTile(
+                          value: _termsAccepted,
+                          onChanged: _isSubmitting
+                              ? null
+                              : (bool? value) => setState(
+                                  () => _termsAccepted = value ?? false,
+                                ),
+                          controlAffinity: ListTileControlAffinity.leading,
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text(
+                            'Li e aceito os Termos de Uso e a Política de Privacidade.',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
                         FilledButton(
                           onPressed: _isSubmitting ? null : _submit,
                           style: FilledButton.styleFrom(

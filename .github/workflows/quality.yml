@@ -1,0 +1,74 @@
+name: Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flowly_api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: flowly_api/package-lock.json
+      - run: npm ci
+      - run: npm test -- --runInBand
+      - run: npm audit --omit=dev
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flowly_frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: flowly_frontend/package-lock.json
+      - run: npm ci
+      - run: npm test -- --watchAll=false
+      - run: npm run build
+        env:
+          VITE_API_URL: http://localhost:5000/api
+          VITE_API_PUBLIC_URL: http://localhost:5000
+          VITE_SOCKET_URL: http://localhost:5000
+          VITE_ASSISTANT_URL: http://localhost:8080
+      - run: npm audit
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Assistant unit tests
+        working-directory: flowly_assistente
+        run: python -m unittest discover -s tests -v
+      - name: Face service syntax
+        working-directory: flowly_iot_face
+        run: python -m py_compile main.py
+
+  mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flowly_mobal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test

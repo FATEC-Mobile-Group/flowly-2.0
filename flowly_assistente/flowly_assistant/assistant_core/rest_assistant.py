@@ -7,6 +7,7 @@ from difflib import SequenceMatcher
 from typing import Any, Dict, Optional, Tuple
 
 from flowly_assistant.api_client import APIError, FlowlyAPIClient
+from flowly_assistant.api_config import configured_api_base_url
 from flowly_assistant.command_parser import CommandParser, Match
 
 
@@ -406,15 +407,8 @@ class RestAssistant:
 
 
 def assistant_from_http_body(body: Dict[str, Any], token: str, *, debug: bool = False) -> RestAssistant:
-    api_base_url = str(
-        body.get("api_url")
-        or body.get("api_base_url")
-        or os.getenv("FLOWLY_API_BASE_URL")
-        or os.getenv("FLOWLY_API_URL")
-        or "http://localhost:5000/api"
-    ).strip()
     return RestAssistant(
-        api_base_url=api_base_url,
+        api_base_url=configured_api_base_url(),
         token=token,
         timeout_sec=float(body.get("timeout_sec") or os.getenv("FLOWLY_API_TIMEOUT_SEC", "20")),
         debug=debug,

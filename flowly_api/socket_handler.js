@@ -7,36 +7,89 @@ const { setIo, getIo } = require('./utils/socketInstance');
 const { getSignedUrl } = require('./services/storage');
 const { moderateText } = require('./services/nlpModerationService');
 const { saveChatInsight, saveBlockedChatInsight } = require('./services/assistantInsightService');
+const config = require('./config/config');
+const { verifyAuthToken } = require('./utils/faceAuth');
+
+const socketOrigins = config.corsOrigin === '*'
+  ? '*'
+  : config.corsOrigin.split(',').map((origin) => origin.trim()).filter(Boolean);
+
+const extractSocketToken = (socket) => {
+  const authToken = socket.handshake?.auth?.token;
+  if (authToken) return authToken;
+
+  const authorization = socket.handshake?.headers?.authorization || '';
+  const [scheme, token] = authorization.split(' ');
+  return scheme?.toLowerCase() === 'bearer' ? token : null;
+};
+
+const authenticateSocket = (socket, next) => {
+  try {
+    const token = extractSocketToken(socket);
+    if (!token) throw new Error('Token não informado.');
+    socket.user = verifyAuthToken(token);
+    next();
+  } catch (_error) {
+    next(new Error('Não autorizado.'));
+  }
+};
 
 const setupSocketInteractions = (server) => {
   const io = new Server(server, {
     cors: {
-      origin: '*', // To be restricted to frontend URL in production
+      origin: socketOrigins,
       methods: ['GET', 'POST']
     }
   });
 
   setIo(io);
 
+  io.use(authenticateSocket);
+
   io.on('connection', (socket) => {
     console.log('Novo cliente WebSocket conectado:', socket.id);
 
-    socket.on('join_user', (userId) => {
+    socket.on('join_user', () => {
+      const userId = String(socket.user.id);
       socket.join(`user_${userId}`);
       console.log(`Socket ${socket.id} entrou na sala user_${userId}`);
     });
 
     // Quando o usuário abrir o chat da equipe, el entra na 'sala' da equipe
-    socket.on('join_equipe', (equipeId) => {
-      socket.join(`equipe_${equipeId}`);
-      console.log(`Socket ${socket.id} entrou na sala equipe_${equipeId}`);
+    socket.on('join_equipe', async (equipeId) => {
+      try {
+        const userId = socket.user.id;
+        const equipe = await Equipe.findOne({
+          _id: equipeId,
+          $or: [{ membros: userId }, { createdBy: userId }],
+        }).select('_id');
+
+        if (!equipe) {
+          socket.emit('team_access_denied', { equipeId });
+          return;
+        }
+
+        socket.join(`equipe_${equipeId}`);
+        console.log(`Socket ${socket.id} entrou na sala equipe_${equipeId}`);
+      } catch (_error) {
+        socket.emit('team_access_denied', { equipeId });
+      }
     });
 
     // Ouvir mensagens enviadas
     socket.on('send_message', async (data) => {
       try {
-        const { equipeId, userId, texto } = data;
+        const { equipeId, texto } = data || {};
+        const userId = socket.user.id;
         const cleanText = String(texto || '').trim();
+
+        if (!cleanText || cleanText.length > 4000) {
+          socket.emit('message_blocked', {
+            reason: 'invalid_content',
+            message: 'A mensagem deve conter entre 1 e 4000 caracteres.',
+          });
+          return;
+        }
 
         const equipe = await Equipe.findOne({
           _id: equipeId,
@@ -148,5 +201,6 @@ const setupSocketInteractions = (server) => {
 };
 
 setupSocketInteractions.getIo = () => getIo();
+setupSocketInteractions.authenticateSocket = authenticateSocket;
 
 module.exports = setupSocketInteractions;

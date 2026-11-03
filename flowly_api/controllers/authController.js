@@ -10,10 +10,23 @@ const {
 } = require('../utils/faceAuth');
 
 const CURRENT_TERMS_VERSION = '2026-06-08';
+const INVALID_CREDENTIALS_MESSAGE = 'Credenciais inválidas';
+const DUMMY_PASSWORD_HASH =
+  '$argon2id$v=19$m=65536,t=3,p=4$2JAO6WHH7k+2wbl9rEUa1A$+XbUA9FrGJtcU3dEFgQOQ4E1fhNs8kr5YMpGzF6oVmc';
 
 exports.registrar = async (req, res) => {
   try {
-    const { nome, email, senha, tipo, termsAccepted, termsVersion } = req.body;
+    const { nome, email, senha, termsAccepted, termsVersion } = req.body;
+
+    if (typeof nome !== 'string' || !nome.trim()) {
+      return res.status(400).json({ erro: 'Nome e obrigatorio.' });
+    }
+
+    if (typeof email !== 'string' || !email.trim()) {
+      return res.status(400).json({ erro: 'E-mail e obrigatorio.' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
 
     const passwordValidationResult = validatePassword(senha);
 
@@ -30,10 +43,11 @@ exports.registrar = async (req, res) => {
     const hash = await argon2.hash(senha);
     
     const novoUsuario = new User({
-      nome,
-      email,
+      nome: nome.trim(),
+      email: normalizedEmail,
       senha: hash,
-      tipo,
+      // O tipo de uma conta criada pela rota pública nunca é controlado pelo cliente.
+      tipo: 'user',
       termsAccepted: true,
       termsAcceptedAt: new Date(),
       termsVersion: termsVersion || CURRENT_TERMS_VERSION,
@@ -43,7 +57,7 @@ exports.registrar = async (req, res) => {
 
     // Enviar código de verificação por email após registro bem-sucedido
     try {
-      await enviarCodigoVerificacaoEmail(email);
+      await enviarCodigoVerificacaoEmail(normalizedEmail);
     } catch (emailErr) {
       console.warn('Aviso: código de verificação não foi enviado:', emailErr.message);
       // Não falha o registro se o email não for enviado, apenas registra o aviso
@@ -51,7 +65,7 @@ exports.registrar = async (req, res) => {
 
     res.status(201).json({ 
       msg: 'Usuário registrado com sucesso! Verifique o e-mail para receber o código de verificação.',
-      redirectTo: `/verificar-2fa?email=${encodeURIComponent(email)}`
+      redirectTo: `/verificar-2fa?email=${encodeURIComponent(normalizedEmail)}`
     });
   } catch (err) {
     res.status(400).json({ erro: 'Erro ao registrar', detalhe: err.message });
@@ -61,17 +75,31 @@ exports.registrar = async (req, res) => {
 exports.login = async (req, res) => {
   try {
     const { email, senha } = req.body;
-    const user = await User.findOne({ email });
 
-    if (!user) return res.status(404).json({ erro: 'Usuário não encontrado' });
+    if (
+      typeof email !== 'string' ||
+      !email.trim() ||
+      typeof senha !== 'string' ||
+      !senha
+    ) {
+      return res.status(400).json({ erro: 'E-mail e senha sao obrigatorios.' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      await argon2.verify(DUMMY_PASSWORD_HASH, senha);
+      return res.status(401).json({ erro: INVALID_CREDENTIALS_MESSAGE });
+    }
 
     const senhaValida = await argon2.verify(user.senha, senha);
-    if (!senhaValida) return res.status(401).json({ erro: 'Senha inválida' });
+    if (!senhaValida) return res.status(401).json({ erro: INVALID_CREDENTIALS_MESSAGE });
 
     if (user.verificado === false) {
       return res.status(403).json({ 
         erro: 'Usuário não verificado',
-        redirectTo: `/verificar-2fa?email=${encodeURIComponent(email)}`
+        redirectTo: `/verificar-2fa?email=${encodeURIComponent(normalizedEmail)}`
       });
     }
 

@@ -1,6 +1,14 @@
 const AssistantInsight = require('../models/AssistantInsight');
 const Equipe = require('../models/Equipe');
 const User = require('../models/User');
+const crypto = require('crypto');
+
+const secretsMatch = (expected, received) => {
+  const expectedBuffer = Buffer.from(expected);
+  const receivedBuffer = Buffer.from(String(received || ''));
+  return expectedBuffer.length === receivedBuffer.length &&
+    crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+};
 
 const CHAT_INSIGHTS_DAYS = 7;
 const BEHAVIOR_ALERT_DAYS = 14;
@@ -335,7 +343,11 @@ const ingestAssistantInsight = async (req, res) => {
   const expectedSecret = process.env.ASSISTANT_ANALYTICS_SECRET || '';
   const receivedSecret = req.headers['x-assistant-secret'];
 
-  if (expectedSecret && receivedSecret !== expectedSecret) {
+  if (!expectedSecret) {
+    return res.status(503).json({ success: false, error: 'Servico interno nao configurado' });
+  }
+
+  if (!secretsMatch(expectedSecret, receivedSecret)) {
     return res.status(401).json({ success: false, error: 'Segredo interno inválido' });
   }
 

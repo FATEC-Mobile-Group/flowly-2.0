@@ -42,6 +42,7 @@ class _FaceAuthScreenState extends State<FaceAuthScreen> {
       source: ImageSource.camera,
       preferredCameraDevice: CameraDevice.front,
       imageQuality: 85,
+      maxWidth: 640,
     );
 
     if (photo == null || !mounted) {

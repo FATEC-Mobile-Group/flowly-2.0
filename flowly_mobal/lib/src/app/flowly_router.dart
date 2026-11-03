@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:go_router/go_router.dart';
 import 'package:meu_app/src/core/constants/storage_keys.dart';
+import 'package:meu_app/src/core/network/api_client.dart';
 import 'package:meu_app/src/screens/auth/login_screen.dart';
 import 'package:meu_app/src/screens/auth/register_screen.dart';
 import 'package:meu_app/src/screens/auth/verify_email_screen.dart';
@@ -24,6 +25,7 @@ const FlutterSecureStorage _storage = FlutterSecureStorage();
 
 final GoRouter flowlyRouter = GoRouter(
   initialLocation: '/login',
+  refreshListenable: ApiClient.sessionCleared,
   redirect: (BuildContext context, GoRouterState state) async {
     final String? token = await _storage.read(key: StorageKeys.jwtToken);
     final bool isLoggedIn = token != null && token.isNotEmpty;

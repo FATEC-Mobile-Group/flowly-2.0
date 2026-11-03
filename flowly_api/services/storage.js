@@ -39,29 +39,32 @@ const getSignedUrl = async (filePath = '') => {
   const objectPath = getObjectPath(filePath);
   if (!objectPath) return '';
 
-  if (objectPath.startsWith('uploads/')) {
-    return `/${objectPath}`;
-  }
-
   if (objectPath.startsWith('http')) {
     return objectPath;
   }
 
   const encodedPath = Buffer.from(objectPath, 'utf8').toString('base64url');
   const accessToken = jwt.sign(
-    { filePath: objectPath, type: 'storage-file' },
-    config.jwt.secret,
-    { expiresIn: FILE_ACCESS_TOKEN_EXPIRATION },
+    { filePath: objectPath, tokenType: 'storage-file' },
+    config.jwt.fileSecret,
+    {
+      expiresIn: FILE_ACCESS_TOKEN_EXPIRATION,
+      issuer: config.jwt.issuer,
+      audience: config.jwt.fileAudience,
+    },
   );
 
   return `/api/storage/files/${encodedPath}?token=${accessToken}`;
 };
 
 const verifyFileAccessToken = (token = '', encodedPath = '') => {
-  const payload = jwt.verify(token, config.jwt.secret);
+  const payload = jwt.verify(token, config.jwt.fileSecret, {
+    issuer: config.jwt.issuer,
+    audience: config.jwt.fileAudience,
+  });
   const objectPath = Buffer.from(encodedPath, 'base64url').toString('utf8');
 
-  if (payload.type !== 'storage-file' || payload.filePath !== objectPath) {
+  if (payload.tokenType !== 'storage-file' || payload.filePath !== objectPath) {
     throw new Error('Token de arquivo invalido');
   }
 

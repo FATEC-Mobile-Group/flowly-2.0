@@ -1,4 +1,5 @@
 const { cosineDistance } = require('./faceDistance');
+const { decryptEmbeddings } = require('./faceEmbeddingCrypto');
 
 function toPlainEmbedding(embedding) {
   if (!Array.isArray(embedding)) {
@@ -15,6 +16,10 @@ function toPlainEmbeddings(embeddings) {
 function getStoredEmbeddings(profile) {
   if (!profile) {
     return [];
+  }
+
+  if (profile.encryptedEmbeddings?.ciphertext) {
+    return decryptEmbeddings(profile.encryptedEmbeddings);
   }
 
   if (Array.isArray(profile.embeddings) && profile.embeddings.length > 0) {

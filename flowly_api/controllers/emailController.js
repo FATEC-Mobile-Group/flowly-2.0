@@ -7,6 +7,22 @@ const sendEmail = require("../utils/sendEmail.js");
 const validatePassword = require("../utils/validatePassword.js");
 const { buildUserPayload, issueAuthToken } = require("../utils/faceAuth.js");
 
+const GENERIC_EMAIL_CODE_MESSAGE =
+  "Se o email estiver cadastrado, um codigo sera enviado.";
+const INVALID_VERIFICATION_CODE_MESSAGE =
+  "Codigo de verificacao invalido ou expirado.";
+const INVALID_RESET_CODE_MESSAGE =
+  "Codigo de recuperacao invalido ou expirado.";
+const hashSecret = (value) =>
+  crypto.createHash("sha256").update(String(value)).digest("hex");
+const generateCode = () => crypto.randomInt(100000, 1000000).toString();
+const isUserNotFoundError = (error) =>
+  String(error?.message || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .includes("usuario nao encontrado");
+
 exports.convidarMembro = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -125,7 +141,7 @@ const _enviarCodigoVerificacaoEmail = async (email) => {
   }
 
   // Gerar código de 6 dígitos
-  const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+  const codigo = generateCode();
   
   // Gerar token único para link de confirmação
   const token = crypto.randomBytes(32).toString('hex');
@@ -136,8 +152,8 @@ const _enviarCodigoVerificacaoEmail = async (email) => {
   // Criar novo token de verificação
   const twoFactorToken = new TwoFactorToken({
     userId: user._id,
-    codigo,
-    token,
+    codigo: hashSecret(codigo),
+    token: hashSecret(token),
     purpose: 'email_verification'
   });
 
@@ -193,15 +209,20 @@ const _enviarCodigoVerificacaoEmail = async (email) => {
  * Rota HTTP para enviar código de verificação
  */
 exports.enviarCodigoVerificacao = async (req, res) => {
-  try {
-    const { email } = req.body;
-    const result = await _enviarCodigoVerificacaoEmail(email);
-    res.status(200).json(result);
-  } catch (err) {
-    console.error('Erro ao enviar código de verificação:', err.message);
-    const statusCode = err.message.includes('não encontrado') ? 404 : 400;
-    res.status(statusCode).json({ message: err.message });
+  const { email } = req.body;
+  if (typeof email !== 'string' || !email.trim()) {
+    return res.status(400).json({ message: "Email e obrigatorio." });
   }
+
+  try {
+    await _enviarCodigoVerificacaoEmail(email.trim().toLowerCase());
+  } catch (err) {
+    if (!isUserNotFoundError(err)) {
+      console.error('Erro ao enviar código de verificação:', err.message);
+    }
+  }
+
+  return res.status(200).json({ message: GENERIC_EMAIL_CODE_MESSAGE });
 };
 
 /**
@@ -221,14 +242,14 @@ exports.validarCodigoVerificacao = async (req, res) => {
     if (!resolvedUserId && email) {
       const user = await User.findOne({ email });
       if (!user) {
-        return res.status(404).json({ message: "Usuário não encontrado." });
+        return res.status(401).json({ message: INVALID_VERIFICATION_CODE_MESSAGE });
       }
       resolvedUserId = user._id;
     }
 
     const twoFactorToken = await TwoFactorToken.findOne({ 
       userId: resolvedUserId, 
-      codigo,
+      codigo: hashSecret(codigo),
       purpose: { $in: ['email_verification', null] },
       validado: false 
     });
@@ -240,7 +261,7 @@ exports.validarCodigoVerificacao = async (req, res) => {
         { $inc: { tentativas: 1 } }
       );
       
-      return res.status(401).json({ message: "Código de verificação inválido ou expirado." });
+      return res.status(401).json({ message: INVALID_VERIFICATION_CODE_MESSAGE });
     }
 
     // Checar limite de tentativas
@@ -286,7 +307,7 @@ exports.validarTokenVerificacao = async (req, res) => {
     }
 
     const twoFactorToken = await TwoFactorToken.findOne({ 
-      token,
+      token: hashSecret(token),
       purpose: { $in: ['email_verification', null] },
       validado: false 
     });
@@ -332,15 +353,15 @@ const _enviarCodigoRecuperacaoSenha = async (email) => {
     throw new Error("Usuario nao encontrado.");
   }
 
-  const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+  const codigo = generateCode();
   const token = crypto.randomBytes(32).toString('hex');
 
   await TwoFactorToken.deleteMany({ userId: user._id, purpose: 'password_reset' });
 
   await new TwoFactorToken({
     userId: user._id,
-    codigo,
-    token,
+    codigo: hashSecret(codigo),
+    token: hashSecret(token),
     purpose: 'password_reset'
   }).save();
 
@@ -376,15 +397,20 @@ const _enviarCodigoRecuperacaoSenha = async (email) => {
 };
 
 exports.enviarCodigoRecuperacaoSenha = async (req, res) => {
-  try {
-    const { email } = req.body;
-    const result = await _enviarCodigoRecuperacaoSenha(email);
-    res.status(200).json(result);
-  } catch (err) {
-    console.error('Erro ao enviar codigo de recuperacao:', err.message);
-    const statusCode = err.message.includes('nao encontrado') ? 404 : 400;
-    res.status(statusCode).json({ message: err.message });
+  const { email } = req.body;
+  if (typeof email !== 'string' || !email.trim()) {
+    return res.status(400).json({ message: "Email e obrigatorio." });
   }
+
+  try {
+    await _enviarCodigoRecuperacaoSenha(email.trim().toLowerCase());
+  } catch (err) {
+    if (!isUserNotFoundError(err)) {
+      console.error('Erro ao enviar codigo de recuperacao:', err.message);
+    }
+  }
+
+  return res.status(200).json({ message: GENERIC_EMAIL_CODE_MESSAGE });
 };
 
 exports.validarCodigoRecuperacaoSenha = async (req, res) => {
@@ -397,12 +423,12 @@ exports.validarCodigoRecuperacaoSenha = async (req, res) => {
 
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(404).json({ message: "Usuario nao encontrado." });
+      return res.status(401).json({ message: INVALID_RESET_CODE_MESSAGE });
     }
 
     const resetToken = await TwoFactorToken.findOne({
       userId: user._id,
-      codigo,
+      codigo: hashSecret(codigo),
       purpose: 'password_reset',
       validado: false
     });
@@ -413,7 +439,7 @@ exports.validarCodigoRecuperacaoSenha = async (req, res) => {
         { $inc: { tentativas: 1 } }
       );
 
-      return res.status(401).json({ message: "Codigo de recuperacao invalido ou expirado." });
+      return res.status(401).json({ message: INVALID_RESET_CODE_MESSAGE });
     }
 
     if (resetToken.tentativas >= 5) {
@@ -446,18 +472,18 @@ exports.redefinirSenhaComCodigo = async (req, res) => {
 
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(404).json({ message: "Usuario nao encontrado." });
+      return res.status(401).json({ message: INVALID_RESET_CODE_MESSAGE });
     }
 
     const resetToken = await TwoFactorToken.findOne({
       userId: user._id,
-      codigo,
+      codigo: hashSecret(codigo),
       purpose: 'password_reset',
       validado: true
     });
 
     if (!resetToken) {
-      return res.status(401).json({ message: "Valide o codigo de recuperacao antes de redefinir a senha." });
+      return res.status(401).json({ message: INVALID_RESET_CODE_MESSAGE });
     }
 
     user.senha = await argon2.hash(novaSenha);

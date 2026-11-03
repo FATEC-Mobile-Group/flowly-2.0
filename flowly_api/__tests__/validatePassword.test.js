@@ -47,6 +47,24 @@ describe('validatePassword — Validação de Senha', () => {
     expect(resultado).toBe('A senha deve ter pelo menos 8 caracteres.');
   });
 
+  it('deve rejeitar senha undefined com mensagem controlada', () => {
+    const resultado = validatePassword(undefined);
+    expect(resultado).toBe('A senha é obrigatória e deve ser informada como texto.');
+  });
+
+  it('deve rejeitar senha null com mensagem controlada', () => {
+    const resultado = validatePassword(null);
+    expect(resultado).toBe('A senha é obrigatória e deve ser informada como texto.');
+  });
+
+  it.each([12345678, true, {}])(
+    'deve rejeitar valor não textual (%p) com mensagem controlada',
+    (password) => {
+      const resultado = validatePassword(password);
+      expect(resultado).toBe('A senha é obrigatória e deve ser informada como texto.');
+    }
+  );
+
   // ==========================================
   // CENÁRIOS DE ERRO — Complexidade
   // ==========================================

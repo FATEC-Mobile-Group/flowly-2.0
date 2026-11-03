@@ -22,6 +22,13 @@ NEGATION_TOKENS = {
     "esquece",
 }
 
+# exit só quando a frase inteira é o comando (evita "pensei em sair mais cedo" -> exit)
+EXIT_RE = re.compile(
+    r"^(?:pode |por favor )?"
+    r"(?:(?:sair|encerrar)(?: (?:d?o )?assistente)?|(?:parar|fechar) assistente)"
+    r"(?: por favor)?$"
+)
+
 
 @dataclass
 class Match:
@@ -35,6 +42,18 @@ def _normalize(text: str) -> str:
     text = re.sub(r"[\t\n\r]+", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text
+
+
+def _words(text: str) -> list:
+    return re.findall(r"\w+", text)
+
+
+def _has_negation(text: str) -> bool:
+    return any(tok in NEGATION_TOKENS for tok in _words(text))
+
+
+def _contains_phrase(text: str, phrases: Tuple[str, ...]) -> bool:
+    return any(re.search(rf"(?<!\w){re.escape(p)}(?!\w)", text) for p in phrases)
 
 
 def _ratio(a: str, b: str) -> int:
@@ -179,20 +198,24 @@ class CommandParser:
         if not text:
             return None
 
+        # false-positive guard: negation (antes dos atalhos, que disparam ações de escrita)
+        if _has_negation(text):
+            return None
+
         # hard-priority: exit
-        if any(tok in text for tok in ["sair", "encerrar", "parar assistente", "fechar assistente"]):
+        if EXIT_RE.fullmatch(" ".join(_words(text))):
             cmd = next(c for c in self.commands if c.key == "exit")
             return Match(command=cmd, score=100, params={})
 
-        if any(tok in text for tok in ["criar tarefa", "nova tarefa", "adicionar tarefa"]):
+        if _contains_phrase(text, ("criar tarefa", "nova tarefa", "adicionar tarefa")):
             cmd = next(c for c in self.commands if c.key == "create_task")
             return Match(command=cmd, score=100, params=self._extract_params(cmd, raw))
 
-        if any(tok in text for tok in ["criar equipe", "nova equipe", "adicionar equipe"]):
+        if _contains_phrase(text, ("criar equipe", "nova equipe", "adicionar equipe")):
             cmd = next(c for c in self.commands if c.key == "create_team")
             return Match(command=cmd, score=100, params=self._extract_params(cmd, raw))
 
-        if any(tok in text for tok in ["pegar tarefa", "assumir tarefa", "atribuir tarefa para mim", "atribuir para mim"]):
+        if _contains_phrase(text, ("pegar tarefa", "assumir tarefa", "atribuir tarefa para mim", "atribuir para mim")):
             cmd = next(c for c in self.commands if c.key == "assign_to_me")
             return Match(command=cmd, score=100, params=self._extract_params(cmd, raw))
 
@@ -223,10 +246,6 @@ class CommandParser:
 
         cmd, score, _plain, _extra_neg = best
         if score < self.threshold:
-            return None
-
-        # false-positive guard: negation
-        if any(tok in text.split() for tok in NEGATION_TOKENS):
             return None
 
         params = self._extract_params(cmd, raw)

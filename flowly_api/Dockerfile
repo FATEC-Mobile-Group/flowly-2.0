@@ -1,5 +1,5 @@
 # Usa a imagem oficial do Node.js versão 18 como base
-FROM node:18
+FROM node:22-slim
 
 # Define o diretório de trabalho dentro do container como /app
 # Todos os comandos subsequentes (como copiar arquivos ou instalar dependências)
@@ -11,7 +11,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Instala as dependências do projeto via npm
-RUN npm install
+RUN npm ci --omit=dev
 
 # Copia todo o restante dos arquivos da aplicação para dentro do container
 COPY . .

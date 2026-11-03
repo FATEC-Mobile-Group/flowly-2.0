@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import createSocketConnection from '../../config/socketClient';
 import apiClient, { getFullApiUrl } from '../../config/apiClient';
 import Sidebar from '../../components/layout/Sidebar';
-import { authUtils } from '../../config/authUtils';
 import { API_ENDPOINTS } from '../../config/config';
 import '../../styles/pages/common/ChatsPage.css';
 
@@ -29,7 +28,6 @@ const ChatsPage = () => {
 
   const socketRef = useRef(null);
   const endRef = useRef(null);
-  const userId = authUtils.getUserId();
 
   const getInitials = (name = 'Usuario') =>
     name
@@ -135,7 +133,6 @@ const ChatsPage = () => {
 
     socketRef.current.emit('send_message', {
       equipeId: selectedEquipe,
-      userId,
       texto,
     });
 

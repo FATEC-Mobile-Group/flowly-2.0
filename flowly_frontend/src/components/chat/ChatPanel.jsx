@@ -107,7 +107,6 @@ const ChatPanel = () => {
 
     socket.emit('send_message', {
       equipeId: selectedEquipe,
-      userId,
       texto: novaMensagem,
     });
 

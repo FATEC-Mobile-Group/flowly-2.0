@@ -326,7 +326,7 @@ exports.toggleSubtarefa = async (req, res) => {
 // USER: view their own tasks
 exports.minhasTarefas = async (req, res) => {
   try {
-    const filtro = await montarFiltroTarefasAcessiveis(req);
+    const filtro = await montarFiltroTarefasAcessiveis(req, { user: req.user.id });
     if (!filtro) {
       return res.json([]);
     }

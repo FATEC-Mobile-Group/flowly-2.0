@@ -21,7 +21,7 @@ async function findDuplicateFace(
   const profiles = await FaceProfile.find({
     enrolled: true,
     userId: { $ne: normalizeUserId(excludeUserId) },
-  }).select('userId embedding embeddings model');
+  }).select('userId embedding embeddings encryptedEmbeddings model');
 
   let closestMatch = null;
 

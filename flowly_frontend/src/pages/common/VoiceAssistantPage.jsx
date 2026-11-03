@@ -128,7 +128,10 @@ function VoiceAssistantPage() {
     try {
       await fetch(API_ENDPOINTS.ASSISTANT_STANDBY, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authUtils.getToken()}`,
+        },
         body: JSON.stringify({ conversationId: conversationIdRef.current }),
       });
     } catch (error) {

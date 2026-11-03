@@ -4,6 +4,8 @@ Expõe endpoints para extrair embeddings e comparar rostos via DeepFace.
 """
 
 import base64
+import binascii
+import hmac
 import logging
 import os
 import tempfile
@@ -20,7 +22,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app)
+allowed_origin = os.getenv("FACE_CORS_ORIGIN", "").strip()
+if allowed_origin:
+    CORS(app, origins=[origin.strip() for origin in allowed_origin.split(",") if origin.strip()])
+
+MAX_IMAGE_BYTES = int(os.getenv("FACE_MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
+app.config["MAX_CONTENT_LENGTH"] = int(
+    os.getenv("FACE_MAX_REQUEST_BYTES", str(15 * 1024 * 1024))
+)
+SERVICE_SECRET = os.getenv("FACE_SERVICE_SECRET", "")
 
 MODEL = os.getenv("FACE_MODEL", "VGG-Face")
 DETECTOR = os.getenv("FACE_DETECTOR", "opencv")
@@ -35,7 +45,13 @@ def decode_image_to_path(image_base64: str) -> str:
     if "," in payload:
         payload = payload.split(",", 1)[1]
 
-    raw = base64.b64decode(payload)
+    try:
+        raw = base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("Imagem em base64 invalida") from exc
+
+    if not raw or len(raw) > MAX_IMAGE_BYTES:
+        raise ValueError("Imagem vazia ou acima do limite permitido")
     tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
     tmp.write(raw)
     tmp.close()
@@ -127,7 +143,25 @@ def extract_embedding(image_path: str) -> list[float]:
     )
     if not results:
         raise ValueError("Nenhum rosto detectado na imagem.")
+    if len(results) > 1:
+        raise ValueError("Multiple faces detected")
     return results[0]["embedding"]
+
+
+@app.before_request
+def authenticate_internal_request():
+    if request.path == "/health":
+        return None
+
+    if not SERVICE_SECRET:
+        logger.error("FACE_SERVICE_SECRET nao configurado")
+        return jsonify({"erro": "Servico facial indisponivel."}), 503
+
+    supplied_secret = request.headers.get("X-Flowly-Service-Secret", "")
+    if not hmac.compare_digest(supplied_secret, SERVICE_SECRET):
+        return jsonify({"erro": "Nao autorizado."}), 401
+
+    return None
 
 
 @app.get("/health")
@@ -152,8 +186,9 @@ def embed():
     if not image_base64:
         return jsonify({"erro": "image_base64 é obrigatório."}), 400
 
-    image_path = decode_image_to_path(image_base64)
+    image_path = None
     try:
+        image_path = decode_image_to_path(image_base64)
         embedding = extract_embedding(image_path)
         return jsonify(
             {
@@ -165,13 +200,14 @@ def embed():
     except Exception as exc:
         return jsonify({"face_detected": False, "erro": format_face_error(exc)}), 400
     finally:
-        if os.path.exists(image_path):
+        if image_path and os.path.exists(image_path):
             os.unlink(image_path)
 
 
 def verify_against_references(references, image_base64, threshold):
-    image_path = decode_image_to_path(image_base64)
+    image_path = None
     try:
+        image_path = decode_image_to_path(image_base64)
         probe_embedding = extract_embedding(image_path)
         probe = np.array(probe_embedding, dtype=np.float64)
 
@@ -198,7 +234,7 @@ def verify_against_references(references, image_base64, threshold):
             {"match": False, "face_detected": False, "erro": format_face_error(exc)}
         ), 400
     finally:
-        if os.path.exists(image_path):
+        if image_path and os.path.exists(image_path):
             os.unlink(image_path)
 
 

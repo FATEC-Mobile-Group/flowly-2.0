@@ -45,8 +45,8 @@ class NotificationService {
     _socket?.disconnect();
     _socket?.dispose();
 
-    final String? userId = await _storage.read(key: StorageKeys.userId);
-    if (userId == null || userId.isEmpty) {
+    final String? token = await _storage.read(key: StorageKeys.jwtToken);
+    if (token == null || token.isEmpty) {
       return;
     }
 
@@ -54,18 +54,21 @@ class NotificationService {
       ApiConfig.baseUrl,
       io.OptionBuilder()
           .setTransports(<String>['websocket'])
+          .setAuth(<String, dynamic>{'token': token})
           .disableAutoConnect()
           .enableReconnection()
           .build(),
     );
 
     _socket!.onConnect((_) {
-      _socket!.emit('join_user', userId);
+      _socket!.emit('join_user');
     });
 
     _socket!.on('notification_created', (dynamic data) {
       if (data is Map) {
-        onNotification(NotificationItem.fromJson(Map<String, dynamic>.from(data)));
+        onNotification(
+          NotificationItem.fromJson(Map<String, dynamic>.from(data)),
+        );
       }
     });
 

@@ -1,20 +1,25 @@
-const DEFAULT_API_BASE_URL = 'https://flowly-api-backend-646126851973.southamerica-east1.run.app/api';
-
 const isLocalHost =
   typeof window !== 'undefined' &&
   ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
 const API_BASE_URL =
-  (process.env.REACT_APP_API_URL || '').trim() ||
-  (isLocalHost ? 'http://localhost:5000/api' : DEFAULT_API_BASE_URL);
+  (import.meta.env.VITE_API_URL || '').trim() ||
+  (isLocalHost ? 'http://localhost:5000/api' : '');
 
-const DEFAULT_ASSISTANT_URL = 'https://flowly-assistente-voz-646126851973.southamerica-east1.run.app';
-const ASSISTANT_ENV_URL = (process.env.REACT_APP_ASSISTANT_URL || '').trim().replace(/\/+$/, '');
+if (!API_BASE_URL) {
+  throw new Error('VITE_API_URL precisa ser configurada para o frontend de producao.');
+}
+
+const ASSISTANT_ENV_URL = (import.meta.env.VITE_ASSISTANT_URL || '').trim().replace(/\/+$/, '');
 const ASSISTANT_BASE_URL =
   (isLocalHost && (!ASSISTANT_ENV_URL || ASSISTANT_ENV_URL === 'http://localhost:5000')
     ? 'http://localhost:8080'
     : ASSISTANT_ENV_URL) ||
-  (isLocalHost ? 'http://localhost:8080' : DEFAULT_ASSISTANT_URL);
+  (isLocalHost ? 'http://localhost:8080' : '');
+
+if (!ASSISTANT_BASE_URL) {
+  throw new Error('VITE_ASSISTANT_URL precisa ser configurada para o frontend de producao.');
+}
 
 export const API_ENDPOINTS = {
   LOGIN: `${API_BASE_URL}/auth/login`,

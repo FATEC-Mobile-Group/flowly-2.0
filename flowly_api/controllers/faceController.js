@@ -7,8 +7,12 @@ const {
   verifyFaceSessionToken,
 } = require('../utils/faceAuth');
 const { normalizeFaceError } = require('../utils/faceErrorMessages');
-const { assertUniqueFaceEnrollment } = require('../utils/faceEnrollmentGuard');
+const {
+  assertUniqueFaceEnrollment,
+  isSamePersonFaceUpdate,
+} = require('../utils/faceEnrollmentGuard');
 const { toPlainEmbeddings, getStoredEmbeddings } = require('../utils/faceEmbeddings');
+const { encryptEmbeddings } = require('../utils/faceEmbeddingCrypto');
 
 const completeLoginResponse = async (user) => ({
   token: issueAuthToken(user),
@@ -23,12 +27,14 @@ const saveFaceProfile = async (userId, embeddingsInput, model = 'VGG-Face') => {
   const profile = await FaceProfile.findOneAndUpdate(
     { userId },
     {
-      userId,
-      embedding: embeddings[0],
-      embeddings,
-      model,
-      enrolled: true,
-      enrolledAt: new Date(),
+      $set: {
+        userId,
+        encryptedEmbeddings: encryptEmbeddings(embeddings),
+        model,
+        enrolled: true,
+        enrolledAt: new Date(),
+      },
+      $unset: { embedding: '', embeddings: '' },
     },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
@@ -172,6 +178,12 @@ exports.enrollFromProfile = async (req, res) => {
     }
 
     const embeddingList = extracted.embeddings.map((item) => item.embedding);
+    if (existingProfile && !isSamePersonFaceUpdate(existingProfile, embeddingList)) {
+      const error = new Error('A nova captura nao corresponde ao perfil facial atual.');
+      error.statusCode = 403;
+      error.code = 'FACE_UPDATE_MISMATCH';
+      throw error;
+    }
     await assertUniqueFaceEnrollment(user._id, embeddingList, { existingProfile });
     await saveFaceProfile(user._id, embeddingList, extracted.embeddings[0].model);
 

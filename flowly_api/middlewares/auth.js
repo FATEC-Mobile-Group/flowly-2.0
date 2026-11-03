@@ -1,6 +1,5 @@
-const jwt = require('jsonwebtoken');
-const config = require('../config/config');
 const { HTTP_STATUS, ERROR_MESSAGES } = require('../config/constants');
+const { verifyAuthToken } = require('../utils/faceAuth');
 
 /**
  * Middleware para autenticação via JWT
@@ -18,10 +17,7 @@ const authMiddleware = (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, config.jwt.secret);
-    if (!decoded.id && decoded.userId) {
-      decoded.id = decoded.userId;
-    }
+    const decoded = verifyAuthToken(token);
     req.user = decoded; // { id, tipo, email, nome }
     next();
   } catch (err) {

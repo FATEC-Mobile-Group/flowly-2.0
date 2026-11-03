@@ -1,7 +1,16 @@
+import 'package:dio/dio.dart';
 import 'package:meu_app/src/core/network/api_client.dart';
 import 'package:meu_app/src/models/auth_result.dart';
 
 class FaceService {
+  // Requisições com imagem aguardam o serviço facial (cold start do modelo),
+  // que a API permite até 120 s; as demais seguem o timeout global do ApiClient.
+  static const Duration faceProcessingTimeout = Duration(seconds: 90);
+
+  static final Options _faceProcessingOptions = Options(
+    receiveTimeout: faceProcessingTimeout,
+  );
+
   Future<AuthResult> enrollWithSession({
     required String faceSessionToken,
     required String imageBase64,
@@ -50,6 +59,7 @@ class FaceService {
       await ApiClient.instance.dio.post<Map<String, dynamic>>(
         '/api/face/enroll-profile',
         data: <String, String>{'imageBase64': imageBase64},
+        options: _faceProcessingOptions,
       );
       return const AuthResult(
         success: true,
@@ -80,6 +90,7 @@ class FaceService {
       final response = await ApiClient.instance.dio.post<Map<String, dynamic>>(
         endpoint,
         data: payload,
+        options: imageBase64 != null ? _faceProcessingOptions : null,
       );
 
       final Map<String, dynamic> data = response.data ?? <String, dynamic>{};

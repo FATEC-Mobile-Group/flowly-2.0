@@ -46,6 +46,7 @@ class _FaceProfileScreenState extends State<FaceProfileScreen> {
       source: ImageSource.camera,
       preferredCameraDevice: CameraDevice.front,
       imageQuality: 85,
+      maxWidth: 640,
     );
 
     if (photo == null || !mounted) {

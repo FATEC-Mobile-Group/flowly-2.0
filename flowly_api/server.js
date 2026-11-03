@@ -4,6 +4,11 @@ const mongoose = require('mongoose');
 const config = require('./config/config');
 const setupSocketInteractions = require('./socket_handler');
 
+const configurationWarnings = config.validateRuntime();
+configurationWarnings.forEach((warning) => {
+  console.warn(`[config] ${warning}`);
+});
+
 const server = http.createServer(app);
 setupSocketInteractions(server);
 

@@ -105,15 +105,17 @@ class AuthService {
     required String nome,
     required String email,
     required String senha,
+    required bool termsAccepted,
   }) async {
     try {
       final response = await ApiClient.instance.dio.post<Map<String, dynamic>>(
         '/api/auth/registrar',
-        data: <String, String>{
+        data: <String, dynamic>{
           'nome': nome,
           'email': email,
           'senha': senha,
-          'tipo': 'user',
+          'termsAccepted': termsAccepted,
+          'termsVersion': '2026-06-08',
         },
       );
 
@@ -245,10 +247,7 @@ class AuthService {
     if (name != null && name.isNotEmpty) {
       await _storage.write(key: StorageKeys.userName, value: name);
     }
-    await _storage.write(
-      key: StorageKeys.userPhoto,
-      value: fotoPerfil ?? '',
-    );
+    await _storage.write(key: StorageKeys.userPhoto, value: fotoPerfil ?? '');
   }
 
   Future<void> logout() async {

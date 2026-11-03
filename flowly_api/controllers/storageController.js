@@ -1,5 +1,19 @@
 const bucket = require('../services/storage');
 const { verifyFileAccessToken } = require('../services/storage');
+const path = require('path');
+
+const uploadsRoot = path.resolve(__dirname, '..', 'uploads');
+
+const resolveLocalUpload = (filePath) => {
+  const relativePath = filePath.slice('uploads/'.length);
+  const absolutePath = path.resolve(uploadsRoot, relativePath);
+
+  if (!absolutePath.startsWith(`${uploadsRoot}${path.sep}`)) {
+    throw new Error('Caminho de arquivo local invalido');
+  }
+
+  return absolutePath;
+};
 
 exports.downloadFile = async (req, res) => {
   try {
@@ -11,6 +25,19 @@ exports.downloadFile = async (req, res) => {
     }
 
     const filePath = verifyFileAccessToken(token, encodedPath);
+
+    if (filePath.startsWith('uploads/')) {
+      const absolutePath = resolveLocalUpload(filePath);
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      return res.sendFile(absolutePath, (error) => {
+        if (!error || res.headersSent) return;
+        const status = error.code === 'ENOENT' ? 404 : 500;
+        res.status(status).json({
+          erro: status === 404 ? 'Arquivo nao encontrado' : 'Erro ao ler arquivo',
+        });
+      });
+    }
+
     const file = bucket.file(filePath);
     const [exists] = await file.exists();
 

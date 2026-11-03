@@ -10,8 +10,10 @@ const buildUserPayload = async (user) => ({
 });
 
 const issueAuthToken = (user) =>
-  jwt.sign({ id: user._id, tipo: user.tipo }, config.jwt.secret, {
+  jwt.sign({ id: user._id, tipo: user.tipo, tokenType: 'access' }, config.jwt.secret, {
     expiresIn: config.jwt.expiresIn || '1d',
+    issuer: config.jwt.issuer,
+    audience: config.jwt.accessAudience,
   });
 
 const issueFaceSessionToken = (userId, purpose) => {
@@ -20,14 +22,48 @@ const issueFaceSessionToken = (userId, purpose) => {
       ? config.face.enrollSessionExpiresIn
       : config.face.sessionExpiresIn;
 
-  return jwt.sign({ id: userId, purpose }, config.jwt.secret, { expiresIn });
+  return jwt.sign(
+    { id: userId, purpose, tokenType: 'face-session' },
+    config.jwt.faceSecret,
+    {
+      expiresIn,
+      issuer: config.jwt.issuer,
+      audience: config.jwt.faceAudience,
+    }
+  );
 };
 
 const verifyFaceSessionToken = (token, expectedPurpose) => {
-  const decoded = jwt.verify(token, config.jwt.secret);
+  const decoded = jwt.verify(token, config.jwt.faceSecret, {
+    issuer: config.jwt.issuer,
+    audience: config.jwt.faceAudience,
+  });
 
-  if (!decoded?.id || decoded.purpose !== expectedPurpose) {
+  if (
+    !decoded?.id ||
+    decoded.tokenType !== 'face-session' ||
+    decoded.purpose !== expectedPurpose
+  ) {
     const error = new Error('Token de sessão facial inválido.');
+    error.statusCode = 401;
+    throw error;
+  }
+
+  return decoded;
+};
+
+const verifyAuthToken = (token) => {
+  const decoded = jwt.verify(token, config.jwt.secret, {
+    issuer: config.jwt.issuer,
+    audience: config.jwt.accessAudience,
+  });
+
+  if (
+    !decoded?.id ||
+    decoded.tokenType !== 'access' ||
+    !['admin', 'user'].includes(decoded.tipo)
+  ) {
+    const error = new Error('Token de acesso inválido.');
     error.statusCode = 401;
     throw error;
   }
@@ -40,4 +76,5 @@ module.exports = {
   issueAuthToken,
   issueFaceSessionToken,
   verifyFaceSessionToken,
+  verifyAuthToken,
 };

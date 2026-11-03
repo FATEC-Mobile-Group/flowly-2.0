@@ -11,7 +11,7 @@ const {
 } = require('../controllers/assistantInsightController.js');
 
 // [GET] /api/admin/metricas
-router.get("/metricas", verificarToken, async (req, res) => {
+router.get("/metricas", verificarToken, isAdmin, async (req, res) => {
   try {
     const totalEquipes = await Equipe.countDocuments();
     const totalUsers = await Usuario.countDocuments({ tipo: "user" });

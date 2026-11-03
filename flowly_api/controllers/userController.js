@@ -4,6 +4,9 @@ const upload = require('../middlewares/upload');
 const path = require('path');
 const bucket = require('../services/storage');
 const { getSignedUrl } = require('../services/storage');
+const validatePassword = require('../utils/validatePassword');
+
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const assinarFotoPerfil = async (user) => {
   const userObject = typeof user.toObject === 'function' ? user.toObject() : user;
@@ -32,12 +35,13 @@ exports.searchUsers = async (req, res) => {
       return res.json([]);
     }
 
-    const searchQuery = q.trim();
+    const searchQuery = q.trim().slice(0, 100);
+    const escapedSearchQuery = escapeRegex(searchQuery);
     const users = await User.find({
       tipo: { $in: ['admin', 'user'] },
       $or: [
-        { nome: { $regex: searchQuery, $options: 'i' } },
-        { email: { $regex: searchQuery, $options: 'i' } },
+        { nome: { $regex: escapedSearchQuery, $options: 'i' } },
+        { email: { $regex: escapedSearchQuery, $options: 'i' } },
       ],
     })
       .select('_id nome email fotoPerfil tipo')
@@ -163,12 +167,13 @@ exports.atualizarSenha = async (req, res) => {
   try {
     const { senhaAtual, novaSenha } = req.body;
 
-    if (!senhaAtual || !novaSenha) {
+    if (typeof senhaAtual !== 'string' || !senhaAtual || novaSenha === undefined) {
       return res.status(400).json({ erro: 'Senha atual e nova senha sao obrigatorias' });
     }
 
-    if (novaSenha.length < 6) {
-      return res.status(400).json({ erro: 'Nova senha deve ter ao menos 6 caracteres' });
+    const passwordValidationResult = validatePassword(novaSenha);
+    if (passwordValidationResult !== true) {
+      return res.status(400).json({ erro: passwordValidationResult });
     }
 
     const user = await User.findById(req.user.id);
