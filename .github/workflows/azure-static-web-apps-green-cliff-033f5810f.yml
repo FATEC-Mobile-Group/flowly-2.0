@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+
   pull_request:
     types: [opened, synchronize, reopened, closed]
     branches:
@@ -16,33 +17,20 @@ jobs:
     name: Build and Deploy Job
 
     permissions:
-      id-token: write
       contents: read
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
           lfs: false
 
-      - name: Install OIDC Client from Core Package
-        run: npm install @actions/core@1.6.0 @actions/http-client
-
-      - name: Get Id Token
-        uses: actions/github-script@v6
-        id: idtoken
-        with:
-          script: |
-            const coredemo = require('@actions/core')
-            return await coredemo.getIDToken()
-          result-encoding: string
-
       - name: Validar variaveis do frontend
         run: |
-          test -n "${VITE_API_URL}" || (echo "VITE_API_URL nao foi configurado" && exit 1)
-          test -n "${VITE_API_PUBLIC_URL}" || (echo "VITE_API_PUBLIC_URL nao foi configurado" && exit 1)
-          test -n "${VITE_SOCKET_URL}" || (echo "VITE_SOCKET_URL nao foi configurado" && exit 1)
-          test -n "${VITE_ASSISTANT_URL}" || (echo "VITE_ASSISTANT_URL nao foi configurado" && exit 1)
+          test -n "$VITE_API_URL" || (echo "VITE_API_URL nao configurado" && exit 1)
+          test -n "$VITE_API_PUBLIC_URL" || (echo "VITE_API_PUBLIC_URL nao configurado" && exit 1)
+          test -n "$VITE_SOCKET_URL" || (echo "VITE_SOCKET_URL nao configurado" && exit 1)
+          test -n "$VITE_ASSISTANT_URL" || (echo "VITE_ASSISTANT_URL nao configurado" && exit 1)
         env:
           VITE_API_URL: ${{ secrets.REACT_APP_API_URL }}
           VITE_API_PUBLIC_URL: ${{ secrets.REACT_APP_API_PUBLIC_URL }}
@@ -61,14 +49,11 @@ jobs:
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_GREEN_CLIFF_033F5810F }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          action: "upload"
+          action: upload
 
           app_location: "./flowly_frontend"
-          api_location: ""
           output_location: "dist"
           app_build_command: "CI=false npm run build"
-
-          github_id_token: ${{ steps.idtoken.outputs.result }}
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
@@ -77,8 +62,7 @@ jobs:
 
     steps:
       - name: Close Pull Request
-        id: closepullrequest
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_GREEN_CLIFF_033F5810F }}
-          action: "close"
+          action: close
