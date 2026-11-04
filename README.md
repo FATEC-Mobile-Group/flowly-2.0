@@ -1,4 +1,4 @@
-> ***Projeto Interdisciplinar 1S2026***<br>
+> ***Projeto Interdisciplinar 1S2026***<br> 
 > **6º Semestre de DSM**<br>
 > **Instituição:** FATEC Jahu / Centro Paula Souza<br>
 > **Curso:** Desenvolvimento de Software Multiplataforma<br>
