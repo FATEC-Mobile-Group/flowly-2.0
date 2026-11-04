@@ -1,3 +1,4 @@
+
 name: Azure Static Web Apps CI/CD
 
 on:
@@ -14,29 +15,67 @@ jobs:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
     runs-on: ubuntu-latest
     name: Build and Deploy Job
+
+    permissions:
+      id-token: write
+      contents: read
+
     steps:
       - uses: actions/checkout@v3
         with:
           submodules: true
           lfs: false
+
+      - name: Install OIDC Client from Core Package
+        run: npm install @actions/core@1.6.0 @actions/http-client
+
+      - name: Get Id Token
+        uses: actions/github-script@v6
+        id: idtoken
+        with:
+          script: |
+            const coredemo = require('@actions/core')
+            return await coredemo.getIDToken()
+          result-encoding: string
+
+      - name: Validar variaveis do frontend
+        run: |
+          test -n "${VITE_API_URL}" || (echo "VITE_API_URL nao foi configurado" && exit 1)
+          test -n "${VITE_API_PUBLIC_URL}" || (echo "VITE_API_PUBLIC_URL nao foi configurado" && exit 1)
+          test -n "${VITE_SOCKET_URL}" || (echo "VITE_SOCKET_URL nao foi configurado" && exit 1)
+          test -n "${VITE_ASSISTANT_URL}" || (echo "VITE_ASSISTANT_URL nao foi configurado" && exit 1)
+        env:
+          VITE_API_URL: ${{ secrets.REACT_APP_API_URL }}
+          VITE_API_PUBLIC_URL: ${{ secrets.REACT_APP_API_PUBLIC_URL }}
+          VITE_SOCKET_URL: ${{ secrets.REACT_APP_SOCKET_URL }}
+          VITE_ASSISTANT_URL: ${{ secrets.REACT_APP_ASSISTANT_URL }}
+
       - name: Build And Deploy
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
+        env:
+          CI: false
+          VITE_API_URL: ${{ secrets.REACT_APP_API_URL }}
+          VITE_API_PUBLIC_URL: ${{ secrets.REACT_APP_API_PUBLIC_URL }}
+          VITE_SOCKET_URL: ${{ secrets.REACT_APP_SOCKET_URL }}
+          VITE_ASSISTANT_URL: ${{ secrets.REACT_APP_ASSISTANT_URL }}
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_GREEN_CLIFF_033F5810F }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }} # Used for Github integrations (i.e. PR comments)
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: "upload"
-          ###### Repository/Build Configurations - These values can be configured to match your app requirements. ######
-          # For more information regarding Static Web App workflow configurations, please visit: https://aka.ms/swaworkflowconfig
-          app_location: "./flowly_frontend" # App source code path
-          api_location: "" # Api source code path - optional
-          output_location: "build" # Built app content directory - optional
-          ###### End of Repository/Build Configurations ######
+
+          app_location: "./flowly_frontend"
+          api_location: ""
+          output_location: "dist"
+          app_build_command: "CI=false npm run build"
+
+          github_id_token: ${{ steps.idtoken.outputs.result }}
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
     runs-on: ubuntu-latest
     name: Close Pull Request Job
+
     steps:
       - name: Close Pull Request
         id: closepullrequest
