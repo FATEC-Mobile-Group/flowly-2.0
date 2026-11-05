@@ -6,42 +6,57 @@ on:
       - main
 
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - closed
     branches:
       - main
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   build_and_deploy_job:
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
+    if: >
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.event.action != 'closed')
+
     runs-on: ubuntu-latest
     name: Build and Deploy Job
 
-    permissions:
-      contents: read
-
     steps:
-      - uses: actions/checkout@v4
+      # 1. Baixar o código
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           submodules: true
           lfs: false
 
-      - name: Validar variaveis do frontend
-        run: |
-          test -n "$VITE_API_URL" || (echo "VITE_API_URL nao configurado" && exit 1)
-          test -n "$VITE_API_PUBLIC_URL" || (echo "VITE_API_PUBLIC_URL nao configurado" && exit 1)
-          test -n "$VITE_SOCKET_URL" || (echo "VITE_SOCKET_URL nao configurado" && exit 1)
-          test -n "$VITE_ASSISTANT_URL" || (echo "VITE_ASSISTANT_URL nao configurado" && exit 1)
+      # 2. Validar variáveis do frontend
+      - name: Validar variáveis do frontend
         env:
           VITE_API_URL: ${{ secrets.REACT_APP_API_URL }}
           VITE_API_PUBLIC_URL: ${{ secrets.REACT_APP_API_PUBLIC_URL }}
           VITE_SOCKET_URL: ${{ secrets.REACT_APP_SOCKET_URL }}
           VITE_ASSISTANT_URL: ${{ secrets.REACT_APP_ASSISTANT_URL }}
+        run: |
+          test -n "$VITE_API_URL" || (echo "VITE_API_URL não configurado" && exit 1)
+          test -n "$VITE_API_PUBLIC_URL" || (echo "VITE_API_PUBLIC_URL não configurado" && exit 1)
+          test -n "$VITE_SOCKET_URL" || (echo "VITE_SOCKET_URL não configurado" && exit 1)
+          test -n "$VITE_ASSISTANT_URL" || (echo "VITE_ASSISTANT_URL não configurado" && exit 1)
 
+          echo "Todas as variáveis foram configuradas."
+
+      # 3. Build e publicação na Azure
       - name: Build And Deploy
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
         env:
-          CI: false
+          CI: "false"
           VITE_API_URL: ${{ secrets.REACT_APP_API_URL }}
           VITE_API_PUBLIC_URL: ${{ secrets.REACT_APP_API_PUBLIC_URL }}
           VITE_SOCKET_URL: ${{ secrets.REACT_APP_SOCKET_URL }}
@@ -51,12 +66,20 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: upload
 
-          app_location: "./flowly_frontend"
+          # Frontend localizado na raiz
+          app_location: "."
+
+          # Diretório gerado pelo Vite
           output_location: "dist"
-          app_build_command: "CI=false npm run build"
+
+          # Comando de compilação
+          app_build_command: "npm run build"
 
   close_pull_request_job:
-    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed'
+
     runs-on: ubuntu-latest
     name: Close Pull Request Job
 
