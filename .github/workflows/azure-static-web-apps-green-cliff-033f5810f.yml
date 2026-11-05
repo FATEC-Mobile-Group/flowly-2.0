@@ -66,13 +66,8 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: upload
 
-          # Frontend localizado na raiz
-          app_location: "."
-
-          # Diretório gerado pelo Vite
+          app_location: "./flowly_frontend"
           output_location: "dist"
-
-          # Comando de compilação
           app_build_command: "npm run build"
 
   close_pull_request_job:
