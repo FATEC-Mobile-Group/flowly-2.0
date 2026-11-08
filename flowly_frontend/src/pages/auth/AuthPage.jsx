@@ -160,7 +160,7 @@ function AuthPage() {
       const res = await apiClient.post(API_ENDPOINTS.LOGIN, {
         email: loginEmail,
         senha: loginSenha,
-      });
+      }, { skipAuthToken: true });
 
       if (res.data.requiresFaceVerification) {
         setFaceStep("verify");
@@ -264,7 +264,7 @@ function AuthPage() {
       const res = await apiClient.post(API_ENDPOINTS.VALIDATE_PASSWORD_RESET_CODE, {
         email: recoveryEmail,
         codigo: recoveryCode,
-      });
+      }, { skipAuthToken: true });
 
       setRecoveryStep("reset");
       setRecoveryStatus({
@@ -297,7 +297,7 @@ function AuthPage() {
         email: recoveryEmail,
         codigo: recoveryCode,
         novaSenha: recoveryPassword,
-      });
+      }, { skipAuthToken: true });
 
       setLoginEmail(recoveryEmail);
       setLoginSenha("");

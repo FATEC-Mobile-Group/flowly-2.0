@@ -16,12 +16,13 @@ function TarefasAdmin() {
   const [userSelecionado, setUserSelecionado] = useState("");
   const [mensagem, setMensagem] = useState("");
   const [tipoMensagem, setTipoMensagem] = useState("sucesso");
-  const [modoEdicao, setModoEdicao] = useState(false);
   const [idTarefaEditando, setIdTarefaEditando] = useState(null);
   const [tempoEstimado, setTempoEstimado] = useState("");
   const [urgencia, setUrgencia] = useState("baixa");
   const location = useLocation();
   const { id } = useParams();
+  // O modo vem da rota: falhar ao carregar a tarefa nunca pode transformar edicao em criacao.
+  const modoEdicao = Boolean(id);
 
   useEffect(() => {
     buscarEquipes();
@@ -32,10 +33,9 @@ function TarefasAdmin() {
 
     const carregarTarefa = async () => {
       try {
-        const res = await apiClient.get(API_ENDPOINTS.TAREFAS_BY_ID(id));
+        const res = await apiClient.get(`${API_ENDPOINTS.TAREFAS_BY_ID(id)}/detalhes`);
 
-        const tarefa = res.data;
-        setModoEdicao(true);
+        const { tarefa } = res.data;
         setIdTarefaEditando(tarefa._id);
         setDescricao(tarefa.descricao || "");
         setDetalhes(tarefa.detalhes || "");
@@ -50,6 +50,8 @@ function TarefasAdmin() {
         }
       } catch (err) {
         console.error("Erro ao carregar tarefa para edição:", err);
+        setTipoMensagem("erro");
+        setMensagem("Não foi possível carregar a tarefa para edição. Volte à lista de tarefas e tente novamente.");
       }
     };
 
@@ -85,19 +87,6 @@ function TarefasAdmin() {
     }
   };
 
-  const cancelarEdicao = () => {
-    setModoEdicao(false);
-    setIdTarefaEditando(null);
-    setDescricao("");
-    setDetalhes("");
-    setDataEntrega("");
-    setEquipeSelecionada("");
-    setUserSelecionado("");
-    setTempoEstimado("");
-    setUrgencia("baixa");
-    setUsers([]);
-  };
-
   const atualizarTarefa = async () => {
     try {
       await apiClient.put(
@@ -116,7 +105,6 @@ function TarefasAdmin() {
       setTipoMensagem("sucesso");
       setMensagem("Tarefa atualizada com sucesso!");
       setTimeout(() => setMensagem(""), 3000);
-      cancelarEdicao();
     } catch (err) {
       console.error("Erro ao atualizar tarefa:", err);
     }
@@ -124,6 +112,9 @@ function TarefasAdmin() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    // Sem a tarefa carregada nao ha o que salvar, e a rota de edicao nunca faz POST.
+    if (modoEdicao && !idTarefaEditando) return;
 
     const hoje = new Date();
     const dataSelecionada = new Date(dataEntrega);
@@ -250,7 +241,9 @@ function TarefasAdmin() {
             ))}
           </select>
 
-          <button type="submit">{modoEdicao ? "Salvar Alterações" : "Criar Tarefa"}</button>
+          <button type="submit" disabled={modoEdicao && !idTarefaEditando}>
+            {modoEdicao ? "Salvar Alterações" : "Criar Tarefa"}
+          </button>
 
           {mensagem && <div className={`mensagem ${tipoMensagem}`}>{mensagem}</div>}
         </form>

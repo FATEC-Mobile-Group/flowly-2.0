@@ -64,7 +64,7 @@ function Verify() {
         setLoading(true);
         setStatus({ type: "", message: "" });
         try {
-          const res = await apiClient.get(`${API_ENDPOINTS.VALIDATE_2FA_TOKEN}?token=${encodeURIComponent(tokenFromUrl)}`);
+          const res = await apiClient.get(`${API_ENDPOINTS.VALIDATE_2FA_TOKEN}?token=${encodeURIComponent(tokenFromUrl)}`, { skipAuthToken: true });
           await redirectAfterVerification(res);
           if (res.data.user) {
             return;
@@ -120,7 +120,7 @@ function Verify() {
     setStatus({ type: "", message: "" });
 
     try {
-      const res = await apiClient.post(API_ENDPOINTS.VALIDATE_2FA_CODE, { userId, email, codigo });
+      const res = await apiClient.post(API_ENDPOINTS.VALIDATE_2FA_CODE, { userId, email, codigo }, { skipAuthToken: true });
       if (res.data.user) {
         setStatus({ type: "success", message: 'VerificaÃ§Ã£o bem-sucedida! Redirecionando...' });
         setTimeout(() => {

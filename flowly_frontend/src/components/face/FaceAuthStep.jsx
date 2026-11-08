@@ -35,7 +35,7 @@ function FaceAuthStep({
     try {
       const res = await apiClient.post(API_ENDPOINTS.FACE_SKIP_ENROLLMENT, {
         faceSessionToken,
-      });
+      }, { skipAuthToken: true });
       finishLogin(res.data);
     } catch (err) {
       setErro(err.response?.data?.erro || 'Erro ao pular cadastro facial.');
@@ -67,7 +67,10 @@ function FaceAuthStep({
         ? { faceSessionToken, imageBase64: capturePayload }
         : { faceSessionToken, imagesBase64: capturePayload };
 
-      const res = await apiClient.post(endpoint, body, { timeout: FACE_API_TIMEOUT_MS });
+      const res = await apiClient.post(endpoint, body, {
+        timeout: FACE_API_TIMEOUT_MS,
+        skipAuthToken: true,
+      });
 
       finishLogin(res.data);
     } catch (err) {
