@@ -1,12 +1,30 @@
+const crypto = require('crypto');
+
 const buckets = new Map();
 
 const normalizeEmail = (value) =>
   typeof value === 'string' ? value.trim().toLowerCase() : '';
 
+// O e-mail vem do cliente e pode ter megabytes: na chave fica so um digest de tamanho fixo.
+const hashEmail = (value) =>
+  crypto.createHash('sha256').update(normalizeEmail(value)).digest('hex');
+
+// O Map segue a ordem de insercao e as janelas tem a mesma duracao, entao as entradas mais
+// antigas expiram primeiro. Para na primeira ainda valida, sem percorrer o Map inteiro.
+const removeExpiredBuckets = (now) => {
+  for (const [key, bucket] of buckets) {
+    if (bucket.resetAt > now) {
+      break;
+    }
+    buckets.delete(key);
+  }
+};
+
 const createRateLimiter = ({ max, windowMs, keyByEmail = false, buildKey }) => (req, res, next) => {
   const now = Date.now();
+  removeExpiredBuckets(now);
   const identity = keyByEmail
-    ? `${req.ip}:${normalizeEmail(req.body?.email)}`
+    ? `${req.ip}:${hashEmail(req.body?.email)}`
     : req.ip;
   const key = buildKey ? buildKey(req) : `${req.baseUrl}${req.path}:${identity}`;
   const current = buckets.get(key);
