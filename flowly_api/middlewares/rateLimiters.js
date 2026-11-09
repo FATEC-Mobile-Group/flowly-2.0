@@ -3,12 +3,12 @@ const buckets = new Map();
 const normalizeEmail = (value) =>
   typeof value === 'string' ? value.trim().toLowerCase() : '';
 
-const createRateLimiter = ({ max, windowMs, keyByEmail = false }) => (req, res, next) => {
+const createRateLimiter = ({ max, windowMs, keyByEmail = false, buildKey }) => (req, res, next) => {
   const now = Date.now();
   const identity = keyByEmail
     ? `${req.ip}:${normalizeEmail(req.body?.email)}`
     : req.ip;
-  const key = `${req.baseUrl}${req.path}:${identity}`;
+  const key = buildKey ? buildKey(req) : `${req.baseUrl}${req.path}:${identity}`;
   const current = buckets.get(key);
 
   if (!current || current.resetAt <= now) {
@@ -39,4 +39,10 @@ module.exports = {
   registerLimiter: createRateLimiter({ max: 10, windowMs: fifteenMinutes }),
   emailCodeLimiter: createRateLimiter({ max: 5, windowMs: fifteenMinutes, keyByEmail: true }),
   codeValidationLimiter: createRateLimiter({ max: 10, windowMs: fifteenMinutes, keyByEmail: true }),
+  // Prova da senha atual com JWT: um contador por conta para todas as rotas. Usar depois do auth.
+  sensitivePasswordActionLimiter: createRateLimiter({
+    max: 5,
+    windowMs: fifteenMinutes,
+    buildKey: (req) => `current-password:${req.user.id}`,
+  }),
 };

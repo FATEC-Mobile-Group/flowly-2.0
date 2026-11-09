@@ -12,6 +12,12 @@ jest.mock('../models/User', () => ({
   findById: jest.fn(),
 }));
 
+// O limite de tentativas tem teste proprio: sensitivePassword.rateLimit.test.js.
+jest.mock('../middlewares/rateLimiters', () => ({
+  ...jest.requireActual('../middlewares/rateLimiters'),
+  sensitivePasswordActionLimiter: (_req, _res, next) => next(),
+}));
+
 const config = require('../config/config');
 const User = require('../models/User');
 const { issueFaceSessionToken } = require('../utils/faceAuth');
