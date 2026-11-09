@@ -33,20 +33,34 @@ const issueFaceSessionToken = (userId, purpose) => {
   );
 };
 
+const invalidFaceSessionError = () => {
+  const error = new Error('Sessão de verificação facial inválida ou expirada. Faça login novamente.');
+  error.statusCode = 401;
+  return error;
+};
+
 const verifyFaceSessionToken = (token, expectedPurpose) => {
-  const decoded = jwt.verify(token, config.jwt.faceSecret, {
-    issuer: config.jwt.issuer,
-    audience: config.jwt.faceAudience,
-  });
+  let decoded;
+
+  try {
+    decoded = jwt.verify(token, config.jwt.faceSecret, {
+      issuer: config.jwt.issuer,
+      audience: config.jwt.faceAudience,
+    });
+  } catch (err) {
+    // Detalhes da biblioteca JWT nao chegam ao cliente; outro erro segue como falha interna.
+    if (err instanceof jwt.JsonWebTokenError) {
+      throw invalidFaceSessionError();
+    }
+    throw err;
+  }
 
   if (
     !decoded?.id ||
     decoded.tokenType !== 'face-session' ||
     decoded.purpose !== expectedPurpose
   ) {
-    const error = new Error('Token de sessão facial inválido.');
-    error.statusCode = 401;
-    throw error;
+    throw invalidFaceSessionError();
   }
 
   return decoded;

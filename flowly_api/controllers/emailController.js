@@ -16,6 +16,8 @@ const INVALID_RESET_CODE_MESSAGE =
 const hashSecret = (value) =>
   crypto.createHash("sha256").update(String(value)).digest("hex");
 const generateCode = () => crypto.randomInt(100000, 1000000).toString();
+const normalizeEmail = (email) =>
+  typeof email === "string" ? email.trim().toLowerCase() : email;
 const isUserNotFoundError = (error) =>
   String(error?.message || "")
     .normalize("NFD")
@@ -215,7 +217,7 @@ exports.enviarCodigoVerificacao = async (req, res) => {
   }
 
   try {
-    await _enviarCodigoVerificacaoEmail(email.trim().toLowerCase());
+    await _enviarCodigoVerificacaoEmail(normalizeEmail(email));
   } catch (err) {
     if (!isUserNotFoundError(err)) {
       console.error('Erro ao enviar código de verificação:', err.message);
@@ -240,7 +242,7 @@ exports.validarCodigoVerificacao = async (req, res) => {
 
     let resolvedUserId = userId;
     if (!resolvedUserId && email) {
-      const user = await User.findOne({ email });
+      const user = await User.findOne({ email: normalizeEmail(email) });
       if (!user) {
         return res.status(401).json({ message: INVALID_VERIFICATION_CODE_MESSAGE });
       }
@@ -403,7 +405,7 @@ exports.enviarCodigoRecuperacaoSenha = async (req, res) => {
   }
 
   try {
-    await _enviarCodigoRecuperacaoSenha(email.trim().toLowerCase());
+    await _enviarCodigoRecuperacaoSenha(normalizeEmail(email));
   } catch (err) {
     if (!isUserNotFoundError(err)) {
       console.error('Erro ao enviar codigo de recuperacao:', err.message);
@@ -421,7 +423,7 @@ exports.validarCodigoRecuperacaoSenha = async (req, res) => {
       return res.status(400).json({ message: "Email e codigo sao obrigatorios." });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: normalizeEmail(email) });
     if (!user) {
       return res.status(401).json({ message: INVALID_RESET_CODE_MESSAGE });
     }
@@ -470,7 +472,7 @@ exports.redefinirSenhaComCodigo = async (req, res) => {
       return res.status(400).json({ message: passwordValidationResult });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: normalizeEmail(email) });
     if (!user) {
       return res.status(401).json({ message: INVALID_RESET_CODE_MESSAGE });
     }
