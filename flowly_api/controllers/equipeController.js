@@ -59,6 +59,11 @@ const formatarNomeEquipe = (nome) => {
 
 const nomeEquipeValido = (nome) => typeof nome === 'string' && nome.trim() !== '';
 
+// Cada membro precisa ser um id em texto: objeto, lista ou numero nao viram id por conversao.
+const listaDeMembrosValida = (membros) =>
+  Array.isArray(membros) &&
+  membros.every((id) => typeof id === 'string' && mongoose.isValidObjectId(id.trim()));
+
 const garantirCriadorComoMembro = (userId) => Equipe.updateMany(
   { createdBy: userId, membros: { $ne: userId } },
   { $addToSet: { membros: userId } }
@@ -143,32 +148,35 @@ exports.editarEquipe = async (req, res) => {
       return res.status(400).json({ erro: 'O nome da equipe é obrigatório' });
     }
 
-    await garantirCriadorComoMembro(req.user.id);
-
-    const membrosArray = Array.isArray(membros) ? membros : [];
-    const membrosUnicos = [...new Set(membrosArray.map((id) => String(id).trim()))].filter(Boolean);
-
-    const membrosInvalidos = membrosUnicos.filter((id) => !mongoose.isValidObjectId(id));
-    if (membrosInvalidos.length > 0) {
+    // membros ausente preserva a lista atual; [] explicito deixa so o criador.
+    const atualizarMembros = membros !== undefined;
+    if (atualizarMembros && !listaDeMembrosValida(membros)) {
       return res.status(400).json({ erro: 'Existem membros com identificadores inválidos' });
     }
+
+    await garantirCriadorComoMembro(req.user.id);
 
     const equipeAtual = await Equipe.findOne({ _id: req.params.id, membros: req.user.id }).select('createdBy');
     if (!equipeAtual) {
       return res.status(404).json({ erro: 'Equipe não encontrada' });
     }
 
-    const membrosSemCriador = membrosUnicos.filter((id) => String(id) !== String(equipeAtual.createdBy || req.user.id));
-    const usuarios = await User.find({ _id: { $in: membrosSemCriador }, tipo: 'user' }).select('_id');
-    if (usuarios.length !== membrosSemCriador.length) {
-      return res.status(400).json({ erro: 'Alguns membros não são usuarios válidos' });
-    }
+    const dadosAtualizacao = { nome: formatarNomeEquipe(nome) };
 
-    const membrosComCriador = [...new Set([...membrosSemCriador, String(equipeAtual.createdBy || req.user.id)])];
+    if (atualizarMembros) {
+      const membrosUnicos = [...new Set(membros.map((id) => id.trim()))];
+      const membrosSemCriador = membrosUnicos.filter((id) => String(id) !== String(equipeAtual.createdBy || req.user.id));
+      const usuarios = await User.find({ _id: { $in: membrosSemCriador }, tipo: 'user' }).select('_id');
+      if (usuarios.length !== membrosSemCriador.length) {
+        return res.status(400).json({ erro: 'Alguns membros não são usuarios válidos' });
+      }
+
+      dadosAtualizacao.membros = [...new Set([...membrosSemCriador, String(equipeAtual.createdBy || req.user.id)])];
+    }
 
     const equipeAtualizada = await Equipe.findByIdAndUpdate(
       req.params.id,
-      { nome: formatarNomeEquipe(nome), membros: membrosComCriador },
+      dadosAtualizacao,
       { new: true }
     ).populate('membros', 'nome email fotoPerfil');
 
