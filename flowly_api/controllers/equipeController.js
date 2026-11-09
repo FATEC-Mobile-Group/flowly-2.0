@@ -57,6 +57,8 @@ const formatarNomeEquipe = (nome) => {
     .join(' ');
 };
 
+const nomeEquipeValido = (nome) => typeof nome === 'string' && nome.trim() !== '';
+
 const garantirCriadorComoMembro = (userId) => Equipe.updateMany(
   { createdBy: userId, membros: { $ne: userId } },
   { $addToSet: { membros: userId } }
@@ -67,7 +69,7 @@ exports.criarEquipe = async (req, res) => {
     const { nome, membros } = req.body;
 
     // Validação do nome da equipe
-    if (!nome || nome.trim() === "") {
+    if (!nomeEquipeValido(nome)) {
       return res.status(400).json({ erro: "O nome da equipe é obrigatório" });
     }
 
@@ -96,7 +98,8 @@ exports.criarEquipe = async (req, res) => {
     const equipePopulada = await Equipe.findById(novaEquipe._id).populate('membros', 'nome email fotoPerfil');
     res.status(201).json(await assinarFotosMembrosEquipe(equipePopulada));
   } catch (err) {
-    res.status(500).json({ erro: "Erro ao criar equipe", detalhe: err.message });
+    console.error('Erro ao criar equipe:', err);
+    res.status(500).json({ erro: "Erro ao criar equipe" });
   }
 };
 
@@ -133,8 +136,14 @@ exports.obterEquipe = async (req, res) => {
 
 exports.editarEquipe = async (req, res) => {
   try {
-    await garantirCriadorComoMembro(req.user.id);
     const { nome, membros } = req.body;
+
+    // Sem nome valido, a atualizacao abaixo gravaria nome vazio e removeria os membros.
+    if (!nomeEquipeValido(nome)) {
+      return res.status(400).json({ erro: 'O nome da equipe é obrigatório' });
+    }
+
+    await garantirCriadorComoMembro(req.user.id);
 
     const membrosArray = Array.isArray(membros) ? membros : [];
     const membrosUnicos = [...new Set(membrosArray.map((id) => String(id).trim()))].filter(Boolean);
@@ -169,8 +178,8 @@ exports.editarEquipe = async (req, res) => {
 
     res.json(await assinarFotosMembrosEquipe(equipeAtualizada));
   } catch (err) {
-    console.error('Erro ao editar equipe:', err.message);
-    res.status(500).json({ erro: 'Erro ao editar equipe', detalhe: err.message });
+    console.error('Erro ao editar equipe:', err);
+    res.status(500).json({ erro: 'Erro ao editar equipe' });
   }
 };
 

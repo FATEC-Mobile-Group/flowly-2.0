@@ -13,7 +13,7 @@ router.use(auth);
 router.get('/search', isAdmin, userController.searchUsers);
 router.get('/', isAdmin, userController.listarUsers);
 router.get('/me', userController.me);
-router.put('/me', upload.single('fotoPerfil'), moderateUpload('profile_image'), userController.atualizarPerfil);
+router.put('/me', ensureObjectBody, upload.single('fotoPerfil'), moderateUpload('profile_image'), userController.atualizarPerfil);
 router.put('/me/password', ensureObjectBody, sensitivePasswordActionLimiter, userController.atualizarSenha);
 
 module.exports = router;

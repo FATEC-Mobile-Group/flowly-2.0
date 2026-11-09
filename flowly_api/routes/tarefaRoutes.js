@@ -4,19 +4,20 @@ const auth = require('../middlewares/auth');
 const upload = require('../middlewares/upload');
 const moderateUpload = require('../middlewares/moderateUpload');
 const { isAdmin, isUser } = require('../middlewares/roles');
+const ensureObjectBody = require('../middlewares/ensureObjectBody');
 const tarefaController = require('../controllers/tarefaController');
 
 // Todas as rotas requerem autenticação
 router.use(auth);
 
 // ADMIN: criar tarefa
-router.post('/', isAdmin, tarefaController.criarTarefa);
+router.post('/', isAdmin, ensureObjectBody, tarefaController.criarTarefa);
 
 // ADMIN: listar todas as tarefas ou por user
 router.get('/', isAdmin, tarefaController.listarTarefas);
 
 // ADMIN: editar qualquer tarefa
-router.put('/:id', isAdmin, tarefaController.editarTarefa);
+router.put('/:id', isAdmin, ensureObjectBody, tarefaController.editarTarefa);
 
 // ADMIN: excluir tarefa
 router.delete('/:id', isAdmin, tarefaController.excluirTarefa);
@@ -34,19 +35,19 @@ router.put('/:id/atribuir-para-mim', isUser, tarefaController.atribuirParaMim);
 router.get('/:id/detalhes', tarefaController.detalhesTarefa);
 
 // ALL: adicionar comentário
-router.post('/:id/comentarios', tarefaController.adicionarComentario);
+router.post('/:id/comentarios', ensureObjectBody, tarefaController.adicionarComentario);
 
 // ALL: adicionar e alterar subtarefa
-router.post('/:id/subtarefas', tarefaController.adicionarSubtarefa);
+router.post('/:id/subtarefas', ensureObjectBody, tarefaController.adicionarSubtarefa);
 router.put('/:id/subtarefas/:subId', tarefaController.toggleSubtarefa);
 
 // ALL: Upload de anexo (suporta multipart/form-data)
 router.post('/:id/anexos', upload.single('file'), moderateUpload('task_attachment'), tarefaController.adicionarAnexo);
 
 // USER: atualizar status da tarefa
-router.put('/:id/status', isUser, tarefaController.atualizarStatusUser);
+router.put('/:id/status', isUser, ensureObjectBody, tarefaController.atualizarStatusUser);
 
 // USER: controlar cronômetro
-router.put('/:id/cronometro', isUser, tarefaController.controlarCronometro);
+router.put('/:id/cronometro', isUser, ensureObjectBody, tarefaController.controlarCronometro);
 
 module.exports = router;

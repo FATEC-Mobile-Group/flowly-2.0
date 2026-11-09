@@ -85,7 +85,8 @@ exports.convidarMembro = async (req, res) => {
       res.status(404).json({ message: "Usuário com esse email não encontrado." });
     }
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error('Erro ao enviar convite:', err);
+    res.status(500).json({ message: "Erro ao enviar convite." });
   }
 };
 

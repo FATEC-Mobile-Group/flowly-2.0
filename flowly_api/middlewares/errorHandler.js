@@ -38,6 +38,14 @@ const errorHandler = (err, req, res, next) => {
 
   console.error(`[ERROR] ${statusCode} - ${message}`, err);
 
+  // Erro de servidor: a mensagem e o stack ficam so no log.
+  if (statusCode >= HTTP_STATUS.INTERNAL_SERVER_ERROR) {
+    return res.status(statusCode).json({
+      success: false,
+      error: ERROR_MESSAGES.INTERNAL_ERROR,
+    });
+  }
+
   res.status(statusCode).json({
     success: false,
     error: message,
