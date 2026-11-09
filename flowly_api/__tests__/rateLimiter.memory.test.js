@@ -85,7 +85,7 @@ const call = (limiter, { ip = '203.0.113.1', baseUrl = '/api/auth', path = '/log
       return this;
     },
   };
-  limiter({ ip, baseUrl, path, user, body: body ?? (email === undefined ? {} : { email }) }, res, () => {
+  limiter({ ip, baseUrl, path, route: { path }, user, body: body ?? (email === undefined ? {} : { email }) }, res, () => {
     res.passed = true;
   });
   return res;
@@ -183,7 +183,7 @@ describe('D50: buckets do rate limiter', () => {
       test('a chave mantem rota e IP, com o e-mail reduzido a um digest', () => {
         call(limiters.loginLimiter, { email: 'usuario@exemplo.com' });
 
-        expect(keys()[0]).toMatch(/^\/api\/auth\/login:203\.0\.113\.1:[a-f0-9]{64}$/);
+        expect(keys()[0]).toMatch(/^login:\/login:203\.0\.113\.1:[a-f0-9]{64}$/);
       });
 
       test.each([

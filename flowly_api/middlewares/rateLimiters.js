@@ -20,13 +20,14 @@ const removeExpiredBuckets = (now) => {
   }
 };
 
-const createRateLimiter = ({ max, windowMs, keyByEmail = false, buildKey }) => (req, res, next) => {
+const createRateLimiter = ({ scope, max, windowMs, keyByEmail = false, buildKey }) => (req, res, next) => {
   const now = Date.now();
   removeExpiredBuckets(now);
   const identity = keyByEmail
     ? `${req.ip}:${hashEmail(req.body?.email)}`
     : req.ip;
-  const key = buildKey ? buildKey(req) : `${req.baseUrl}${req.path}:${identity}`;
+  // req.route.path e o caminho declarado na rota, nao a URL recebida: LOGIN e login/ nao abrem outro contador.
+  const key = buildKey ? buildKey(req) : `${scope}:${req.route.path}:${identity}`;
   const current = buckets.get(key);
 
   if (!current || current.resetAt <= now) {
@@ -53,10 +54,10 @@ const createRateLimiter = ({ max, windowMs, keyByEmail = false, buildKey }) => (
 const fifteenMinutes = 15 * 60 * 1000;
 
 module.exports = {
-  loginLimiter: createRateLimiter({ max: 10, windowMs: fifteenMinutes, keyByEmail: true }),
-  registerLimiter: createRateLimiter({ max: 10, windowMs: fifteenMinutes }),
-  emailCodeLimiter: createRateLimiter({ max: 5, windowMs: fifteenMinutes, keyByEmail: true }),
-  codeValidationLimiter: createRateLimiter({ max: 10, windowMs: fifteenMinutes, keyByEmail: true }),
+  loginLimiter: createRateLimiter({ scope: 'login', max: 10, windowMs: fifteenMinutes, keyByEmail: true }),
+  registerLimiter: createRateLimiter({ scope: 'register', max: 10, windowMs: fifteenMinutes }),
+  emailCodeLimiter: createRateLimiter({ scope: 'email-code-send', max: 5, windowMs: fifteenMinutes, keyByEmail: true }),
+  codeValidationLimiter: createRateLimiter({ scope: 'code-validation', max: 10, windowMs: fifteenMinutes, keyByEmail: true }),
   // Prova da senha atual com JWT: um contador por conta para todas as rotas. Usar depois do auth.
   sensitivePasswordActionLimiter: createRateLimiter({
     max: 5,
