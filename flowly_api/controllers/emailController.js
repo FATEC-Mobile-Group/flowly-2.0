@@ -18,6 +18,7 @@ const hashSecret = (value) =>
 const generateCode = () => crypto.randomInt(100000, 1000000).toString();
 const normalizeEmail = (email) =>
   typeof email === "string" ? email.trim().toLowerCase() : email;
+const OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
 const isUserNotFoundError = (error) =>
   String(error?.message || "")
     .normalize("NFD")
@@ -240,6 +241,13 @@ exports.validarCodigoVerificacao = async (req, res) => {
       return res.status(400).json({ message: "Email ou UserId e código são obrigatórios." });
     }
 
+    // Valor nao textual viraria operador do MongoDB nas consultas abaixo.
+    const invalidUserId = userId && (typeof userId !== "string" || !OBJECT_ID_PATTERN.test(userId));
+    const invalidEmail = email && typeof email !== "string";
+    if (invalidUserId || invalidEmail || typeof codigo !== "string") {
+      return res.status(401).json({ message: INVALID_VERIFICATION_CODE_MESSAGE });
+    }
+
     let resolvedUserId = userId;
     if (!resolvedUserId && email) {
       const user = await User.findOne({ email: normalizeEmail(email) });
@@ -276,8 +284,12 @@ exports.validarCodigoVerificacao = async (req, res) => {
     twoFactorToken.validado = true;
     await twoFactorToken.save();
 
-    const user = await User.findById(resolvedUserId);
-    if (user && !user.verificado) {
+    // A identidade vem do token encontrado, nunca do valor enviado pelo cliente.
+    const user = await User.findById(twoFactorToken.userId);
+    if (!user) {
+      return res.status(401).json({ message: INVALID_VERIFICATION_CODE_MESSAGE });
+    }
+    if (!user.verificado) {
       user.verificado = true;
       await user.save();
     }
@@ -291,7 +303,7 @@ exports.validarCodigoVerificacao = async (req, res) => {
       token,
       user: userPayload,
       redirect: user.tipo === 'admin' ? '/admin' : '/dashboard',
-      userId: resolvedUserId
+      userId: user._id
     });
 
   } catch (err) {
