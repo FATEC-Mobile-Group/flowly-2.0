@@ -352,13 +352,20 @@ exports.skipEnrollment = async (req, res) => {
 exports.health = async (_req, res) => {
   try {
     const faceHealth = await faceService.checkHealth();
-    res.json({ api: 'ok', faceService: faceHealth });
+
+    // Rota publica: modelo, detector e limiares ficam so no servico interno.
+    if (faceHealth?.status === 'ok') {
+      return res.json({ api: 'ok', faceService: { status: 'ok' } });
+    }
+
+    console.warn('Servico facial respondeu ao health sem status ok.');
   } catch (err) {
-    res.status(503).json({
-      api: 'ok',
-      faceService: null,
-      erro: 'Serviço facial indisponível.',
-      detalhe: err.message,
-    });
+    console.warn('Health do servico facial falhou:', err.cause?.message || err.message);
   }
+
+  return res.status(503).json({
+    api: 'ok',
+    faceService: { status: 'unavailable' },
+    erro: 'Serviço facial indisponível.',
+  });
 };
