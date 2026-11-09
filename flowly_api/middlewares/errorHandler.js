@@ -5,6 +5,14 @@ const multer = require('multer');
  * Middleware centralizado para tratamento de erros
  */
 const errorHandler = (err, req, res, next) => {
+  // A mensagem do parser repete trechos do corpo, e o erro carrega o corpo inteiro: nada disso sai nem vai para o log.
+  if (err.type === 'entity.parse.failed') {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: 'JSON inválido.',
+    });
+  }
+
   if (err instanceof multer.MulterError) {
     const statusCode = err.code === 'LIMIT_FILE_SIZE'
       ? HTTP_STATUS.PAYLOAD_TOO_LARGE || 413

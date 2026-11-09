@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const auth = require('../middlewares/auth');
+const ensureObjectBody = require('../middlewares/ensureObjectBody');
 const faceController = require('../controllers/faceController');
 const { faceVerifyLimiter, sensitivePasswordActionLimiter } = require('../middlewares/rateLimiters');
 
-router.use(faceController.ensureObjectBody);
+router.use(ensureObjectBody);
 
 router.get('/health', faceController.health);
 

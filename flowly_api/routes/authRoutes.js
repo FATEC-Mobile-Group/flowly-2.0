@@ -3,12 +3,15 @@ const router = express.Router();
 const authController = require('../controllers/authController.js');
 const emailController = require('../controllers/emailController.js');
 const auth = require('../middlewares/auth');
+const ensureObjectBody = require('../middlewares/ensureObjectBody');
 const {
   loginLimiter,
   registerLimiter,
   emailCodeLimiter,
   codeValidationLimiter,
 } = require('../middlewares/rateLimiters');
+
+router.use(ensureObjectBody);
 
 router.post('/registrar', registerLimiter, authController.registrar);
 router.post('/login', loginLimiter, authController.login);

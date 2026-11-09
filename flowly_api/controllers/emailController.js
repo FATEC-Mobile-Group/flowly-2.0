@@ -317,7 +317,7 @@ exports.validarCodigoVerificacao = async (req, res) => {
 
   } catch (err) {
     console.error('Erro ao validar código:', err.message);
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: "Erro ao validar código." });
   }
 };
 
@@ -370,7 +370,7 @@ exports.validarTokenVerificacao = async (req, res) => {
 
   } catch (err) {
     console.error('Erro ao validar token:', err.message);
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: "Erro ao validar token." });
   }
 };
 
@@ -489,7 +489,7 @@ exports.validarCodigoRecuperacaoSenha = async (req, res) => {
     res.status(200).json({ message: "Codigo validado com sucesso. Informe sua nova senha." });
   } catch (err) {
     console.error('Erro ao validar codigo de recuperacao:', err.message);
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: "Erro ao validar codigo de recuperacao." });
   }
 };
 
@@ -534,6 +534,6 @@ exports.redefinirSenhaComCodigo = async (req, res) => {
     res.status(200).json({ message: "Senha redefinida com sucesso. Faca login com a nova senha." });
   } catch (err) {
     console.error('Erro ao redefinir senha:', err.message);
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: "Erro ao redefinir senha." });
   }
 };
