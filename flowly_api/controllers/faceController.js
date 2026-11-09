@@ -4,6 +4,7 @@ const FaceProfile = require('../models/FaceProfile');
 const faceService = require('../services/faceService');
 const {
   buildUserPayload,
+  invalidFaceSessionError,
   issueAuthToken,
   verifyFaceSessionToken,
 } = require('../utils/faceAuth');
@@ -20,13 +21,13 @@ const completeLoginResponse = async (user) => ({
   user: await buildUserPayload(user),
 });
 
-const saveFaceProfile = async (userId, embeddingsInput, model = 'VGG-Face') => {
+const saveFaceProfile = async (userId, embeddingsInput, model = 'VGG-Face', filter = { userId }) => {
   const embeddings = Array.isArray(embeddingsInput[0])
     ? embeddingsInput
     : [embeddingsInput];
 
   const profile = await FaceProfile.findOneAndUpdate(
-    { userId },
+    filter,
     {
       $set: {
         userId,
@@ -41,6 +42,43 @@ const saveFaceProfile = async (userId, embeddingsInput, model = 'VGG-Face') => {
   );
 
   return profile;
+};
+
+// Primeiro cadastro nunca substitui: com perfil ativo, o indice unico de userId recusa o upsert.
+const saveFirstFaceProfile = async (userId, embeddings, model) => {
+  try {
+    return await saveFaceProfile(userId, embeddings, model, { userId, enrolled: { $ne: true } });
+  } catch (err) {
+    if (err.code === 11000) {
+      throw invalidFaceSessionError();
+    }
+    throw err;
+  }
+};
+
+// A oferta de primeiro cadastro termina uma unica vez: cadastrando ou pulando.
+const assertFaceOfferPending = async (user) => {
+  const pending =
+    user.faceEnrollmentOffered === true &&
+    user.faceEnrollmentSkipped !== true &&
+    user.faceEnrollmentOfferConcluded !== true &&
+    !(await FaceProfile.findOne({ userId: user._id, enrolled: true }));
+
+  if (!pending) {
+    throw invalidFaceSessionError();
+  }
+};
+
+// Update condicional: entre chamadas simultaneas, so uma conclui a oferta.
+const concludeFaceOffer = async (userId, changes = {}) => {
+  const concluded = await User.findOneAndUpdate(
+    { _id: userId, faceEnrollmentOfferConcluded: { $ne: true } },
+    { $set: { faceEnrollmentOfferConcluded: true, ...changes } }
+  );
+
+  if (!concluded) {
+    throw invalidFaceSessionError();
+  }
 };
 
 const extractEmbeddingsFromImages = async (imagesBase64, context) => {
@@ -136,6 +174,8 @@ exports.enrollWithSession = async (req, res) => {
       return res.status(404).json({ erro: 'Usuário não encontrado.' });
     }
 
+    await assertFaceOfferPending(user);
+
     const extracted = await extractEmbeddingsFromImages(imagesBase64, 'enroll');
     if (!extracted.ok) {
       return res.status(400).json({ erro: extracted.erro });
@@ -143,7 +183,9 @@ exports.enrollWithSession = async (req, res) => {
 
     const embeddingList = extracted.embeddings.map((item) => item.embedding);
     await assertUniqueFaceEnrollment(user._id, embeddingList);
-    await saveFaceProfile(user._id, embeddingList, extracted.embeddings[0].model);
+    // Depois das validacoes: foto ruim ou rosto duplicado nao gastam a oferta.
+    await concludeFaceOffer(user._id);
+    await saveFirstFaceProfile(user._id, embeddingList, extracted.embeddings[0].model);
 
     res.json({
       msg: 'Verificação facial cadastrada com sucesso.',
@@ -279,9 +321,8 @@ exports.skipEnrollment = async (req, res) => {
       return res.status(404).json({ erro: 'Usuário não encontrado.' });
     }
 
-    user.faceEnrollmentSkipped = true;
-    user.faceEnrollmentOffered = true;
-    await user.save();
+    await assertFaceOfferPending(user);
+    await concludeFaceOffer(user._id, { faceEnrollmentSkipped: true });
 
     res.json({
       msg: 'Cadastro facial ignorado. Você pode cadastrar depois no perfil.',

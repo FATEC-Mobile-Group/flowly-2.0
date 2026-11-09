@@ -9,6 +9,7 @@ jest.mock('@google-cloud/storage', () => ({
 
 jest.mock('../models/User', () => ({
   findById: jest.fn(),
+  findOneAndUpdate: jest.fn(),
 }));
 
 jest.mock('../models/FaceProfile', () => ({
@@ -62,7 +63,11 @@ const signFaceToken = (purpose, { payload = {}, secret = config.jwt.faceSecret, 
     ...options,
   });
 
-const post = ({ route, body }, token) => request(app).post(route).send(body(token));
+// /verify exige perfil; /enroll e /skip-enrollment so valem enquanto nao existe perfil.
+const post = (endpoint, token) => {
+  FaceProfile.findOne.mockResolvedValue(endpoint === VERIFY ? { embeddings: [[0.1, 0.2]] } : null);
+  return request(app).post(endpoint.route).send(endpoint.body(token));
+};
 
 const INVALID_TOKENS = [
   ['malformado', () => 'token-invalido'],
@@ -120,10 +125,11 @@ describe('faceSessionToken nas rotas faciais', () => {
       nome: 'Usuario Teste',
       tipo: 'user',
       fotoPerfil: '',
-      save: jest.fn().mockResolvedValue(),
+      faceEnrollmentOffered: true,
+      faceEnrollmentSkipped: false,
     };
     User.findById.mockResolvedValue(user);
-    FaceProfile.findOne.mockResolvedValue({ embeddings: [[0.1, 0.2]] });
+    User.findOneAndUpdate.mockImplementation(async (_filter, update) => Object.assign(user, update.$set));
     FaceProfile.findOneAndUpdate.mockResolvedValue({});
   });
 
@@ -262,7 +268,7 @@ describe('faceSessionToken nas rotas faciais', () => {
       expect(res.body.token).toEqual(expect.any(String));
       expect(user.faceEnrollmentSkipped).toBe(true);
       expect(user.faceEnrollmentOffered).toBe(true);
-      expect(user.save).toHaveBeenCalledTimes(1);
+      expect(User.findOneAndUpdate).toHaveBeenCalledTimes(1);
     });
   });
 });

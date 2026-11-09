@@ -62,6 +62,11 @@ jest.mock('../models/User', () => {
   }
   User.findOne = jest.fn(async (filter) => mockDb.users.find((user) => mockFilter(user, filter)) || null);
   User.findById = jest.fn(async (id) => mockDb.users.find((user) => String(user._id) === String(id)) || null);
+  // Update condicional que conclui a oferta facial.
+  User.findOneAndUpdate = jest.fn(async ({ _id }, update) => {
+    const user = mockDb.users.find((item) => String(item._id) === String(_id));
+    return user && !user.faceEnrollmentOfferConcluded ? Object.assign(user, update.$set) : null;
+  });
   return User;
 });
 

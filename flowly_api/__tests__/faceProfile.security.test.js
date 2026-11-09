@@ -60,6 +60,11 @@ jest.mock('../models/User', () => {
     findOne: jest.fn(async ({ email }) => mockDb.users.find((user) => user.email === email) || null),
     findById: jest.fn((id) => mockQuery(mockDb.users.find((user) => String(user._id) === String(id)) || null)),
     find: jest.fn(() => mockQuery(mockDb.users)),
+    // Update condicional que conclui a oferta facial.
+    findOneAndUpdate: jest.fn(async ({ _id }, update) => {
+      const user = mockDb.users.find((item) => String(item._id) === String(_id));
+      return user && !user.faceEnrollmentOfferConcluded ? Object.assign(user, update.$set) : null;
+    }),
   };
 });
 

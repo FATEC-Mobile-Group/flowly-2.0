@@ -87,6 +87,7 @@ const verifyAuthToken = (token) => {
 
 module.exports = {
   buildUserPayload,
+  invalidFaceSessionError,
   issueAuthToken,
   issueFaceSessionToken,
   verifyFaceSessionToken,

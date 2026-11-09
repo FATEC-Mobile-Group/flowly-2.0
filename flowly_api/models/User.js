@@ -9,6 +9,7 @@ const userSchema = new mongoose.Schema({
   fotoPerfil: { type: String, default: '' },
   faceEnrollmentOffered: { type: Boolean, default: false },
   faceEnrollmentSkipped: { type: Boolean, default: false },
+  faceEnrollmentOfferConcluded: { type: Boolean, default: false },
   termsAccepted: { type: Boolean, default: false },
   termsAcceptedAt: { type: Date },
   termsVersion: { type: String, default: '' },
