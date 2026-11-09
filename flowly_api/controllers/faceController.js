@@ -1,3 +1,4 @@
+const argon2 = require('argon2');
 const User = require('../models/User');
 const FaceProfile = require('../models/FaceProfile');
 const faceService = require('../services/faceService');
@@ -164,10 +165,23 @@ exports.enrollFromProfile = async (req, res) => {
       });
     }
 
+    const { senhaAtual } = req.body;
+
+    if (typeof senhaAtual !== 'string' || !senhaAtual) {
+      return res.status(400).json({ erro: 'Senha atual é obrigatória.' });
+    }
+
     const user = await User.findById(req.user.id);
 
     if (!user) {
       return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    }
+
+    // O JWT sozinho nao autoriza vincular um rosto. 400 para nao encerrar a sessao no cliente.
+    const senhaValida = await argon2.verify(user.senha, senhaAtual);
+
+    if (!senhaValida) {
+      return res.status(400).json({ erro: 'Senha atual incorreta.' });
     }
 
     const existingProfile = await FaceProfile.findOne({ userId: user._id, enrolled: true });

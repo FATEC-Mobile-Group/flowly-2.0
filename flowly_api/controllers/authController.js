@@ -103,13 +103,7 @@ exports.login = async (req, res) => {
       });
     }
 
-    if (user.tipo === 'admin') {
-      return res.json({
-        token: issueAuthToken(user),
-        user: await buildUserPayload(user),
-      });
-    }
-
+    // Perfil facial ativo vale para qualquer tipo de conta.
     const faceProfile = await FaceProfile.findOne({ userId: user._id, enrolled: true });
 
     if (faceProfile) {
@@ -117,6 +111,13 @@ exports.login = async (req, res) => {
       return res.json({
         requiresFaceVerification: true,
         faceSessionToken,
+        user: await buildUserPayload(user),
+      });
+    }
+
+    if (user.tipo === 'admin') {
+      return res.json({
+        token: issueAuthToken(user),
         user: await buildUserPayload(user),
       });
     }

@@ -8,6 +8,7 @@ import '../../styles/components/FaceAuthStep.css';
 
 function FaceProfileEnroll({ enrolled, onEnrolled }) {
   const [capturePayload, setCapturePayload] = useState([]);
+  const [senhaAtual, setSenhaAtual] = useState('');
   const [loading, setLoading] = useState(false);
   const [mensagem, setMensagem] = useState('');
   const [erro, setErro] = useState('');
@@ -27,7 +28,7 @@ function FaceProfileEnroll({ enrolled, onEnrolled }) {
     try {
       await apiClient.post(
         API_ENDPOINTS.FACE_ENROLL_PROFILE,
-        { imagesBase64: capturePayload },
+        { imagesBase64: capturePayload, senhaAtual },
         { timeout: FACE_API_TIMEOUT_MS }
       );
       setMensagem('Verificação facial cadastrada com sucesso.');
@@ -38,6 +39,7 @@ function FaceProfileEnroll({ enrolled, onEnrolled }) {
     } catch (err) {
       setErro(getFaceErrorMessage(err, 'profile'));
     } finally {
+      setSenhaAtual('');
       setLoading(false);
     }
   };
@@ -68,7 +70,19 @@ function FaceProfileEnroll({ enrolled, onEnrolled }) {
         processingLabel="Salvando rosto..."
       />
 
-      <button type="button" onClick={handleSubmit} disabled={loading || !hasRequiredCapture}>
+      <div className="perfil-form">
+        <label htmlFor="face-senha-atual">Senha atual</label>
+        <input
+          id="face-senha-atual"
+          type="password"
+          autoComplete="current-password"
+          value={senhaAtual}
+          onChange={(event) => setSenhaAtual(event.target.value)}
+          disabled={loading}
+        />
+      </div>
+
+      <button type="button" onClick={handleSubmit} disabled={loading || !hasRequiredCapture || !senhaAtual}>
         {loading ? (
           <FaceLoadingSpinner label="Salvando..." />
         ) : (

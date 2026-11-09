@@ -79,7 +79,10 @@ void main() {
       faceSessionToken: 'session',
       imageBase64: 'data:image/jpeg;base64,AAAA',
     );
-    await service.enrollFromProfile(imageBase64: 'data:image/jpeg;base64,AAAA');
+    await service.enrollFromProfile(
+      imageBase64: 'data:image/jpeg;base64,AAAA',
+      senhaAtual: 'SenhaOriginal@1',
+    );
 
     expect(adapter.requests.map((RequestOptions r) => r.path), <String>[
       '/api/face/enroll',
@@ -94,6 +97,23 @@ void main() {
       );
       expect(request.connectTimeout, globalTimeout, reason: request.path);
     }
+  });
+
+  test('cadastro pelo perfil envia a senha atual somente no corpo', () async {
+    final FaceService service = FaceService();
+
+    await service.enrollFromProfile(
+      imageBase64: 'data:image/jpeg;base64,AAAA',
+      senhaAtual: 'SenhaOriginal@1',
+    );
+
+    final RequestOptions request = adapter.requests.single;
+    expect(request.data, <String, String>{
+      'imageBase64': 'data:image/jpeg;base64,AAAA',
+      'senhaAtual': 'SenhaOriginal@1',
+    });
+    expect(request.uri.toString(), isNot(contains('SenhaOriginal')));
+    expect(request.headers.toString(), isNot(contains('SenhaOriginal')));
   });
 
   test('requisições faciais sem imagem mantêm o timeout global', () async {

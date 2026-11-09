@@ -42,6 +42,11 @@ jest.mock('../models/User', () => {
   return UserConstructor;
 });
 
+// Mock do perfil facial: o login consulta o perfil de qualquer tipo de conta (conta sem rosto aqui)
+jest.mock('../models/FaceProfile', () => ({
+  findOne: jest.fn().mockResolvedValue(null),
+}));
+
 // Mock do argon2 (hashing de senha)
 jest.mock('argon2', () => ({
   hash: jest.fn().mockResolvedValue('$argon2_hash_simulado'),

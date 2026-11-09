@@ -699,19 +699,25 @@ describe('verificacao de e-mail nao funciona como login em conta ja verificada',
       expect(mockDb.tokens).toHaveLength(0);
     });
 
-    test.each([
-      ['sem rosto', EMAIL_ADMIN, false],
-      ['com rosto', EMAIL_ADMIN_FACE, true],
-    ])('login de admin %s preserva o comportamento atual', async (_label, email, withFace) => {
-      const user = withFace
-        ? accountWithFace(email, { tipo: 'admin' })
-        : verifiedAccount(email, { tipo: 'admin' });
+    test('login de admin sem rosto preserva o comportamento atual', async () => {
+      const user = verifiedAccount(EMAIL_ADMIN, { tipo: 'admin' });
 
-      const res = await login(email);
+      const res = await login(EMAIL_ADMIN);
 
       expect(res.status).toBe(200);
       expect(res.body.faceSessionToken).toBeUndefined();
       expectAccessTokenOf(res, user);
+    });
+
+    test('login de admin com rosto exige o rosto (D29)', async () => {
+      const user = accountWithFace(EMAIL_ADMIN_FACE, { tipo: 'admin' });
+
+      const logged = await login(EMAIL_ADMIN_FACE);
+
+      expect(logged.status).toBe(200);
+      expect(logged.body.requiresFaceVerification).toBe(true);
+      expect(logged.body.token).toBeUndefined();
+      expectAccessTokenOf(await verifyFace(logged.body.faceSessionToken, mockGoodFace), user);
     });
   });
 
