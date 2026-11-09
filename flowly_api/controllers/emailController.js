@@ -143,6 +143,11 @@ const _enviarCodigoVerificacaoEmail = async (email) => {
     throw new Error("Usuário não encontrado.");
   }
 
+  // Conta verificada entra pelo login: o codigo de verificacao so conclui o cadastro.
+  if (user.verificado !== false) {
+    return null;
+  }
+
   // Gerar código de 6 dígitos
   const codigo = generateCode();
   
@@ -274,25 +279,29 @@ exports.validarCodigoVerificacao = async (req, res) => {
       return res.status(401).json({ message: INVALID_VERIFICATION_CODE_MESSAGE });
     }
 
+    // A identidade vem do token encontrado, nunca do valor enviado pelo cliente.
+    const user = await User.findById(twoFactorToken.userId);
+
+    // Token de conta ja verificada nao gera sessao. E marcado como usado, nao apagado,
+    // porque uma validacao concorrente ainda pode precisar salvar o mesmo registro.
+    if (!user || user.verificado !== false) {
+      await TwoFactorToken.updateOne({ _id: twoFactorToken._id }, { $set: { validado: true } });
+      return res.status(401).json({ message: INVALID_VERIFICATION_CODE_MESSAGE });
+    }
+
     // Checar limite de tentativas
     if (twoFactorToken.tentativas >= 5) {
       await TwoFactorToken.deleteOne({ _id: twoFactorToken._id });
       return res.status(429).json({ message: "Muitas tentativas. Solicite um novo código." });
     }
 
+    // A conta vem primeiro: se salvar falhar, o token continua valido para nova tentativa.
+    user.verificado = true;
+    await user.save();
+
     // Marcar como validado
     twoFactorToken.validado = true;
     await twoFactorToken.save();
-
-    // A identidade vem do token encontrado, nunca do valor enviado pelo cliente.
-    const user = await User.findById(twoFactorToken.userId);
-    if (!user) {
-      return res.status(401).json({ message: INVALID_VERIFICATION_CODE_MESSAGE });
-    }
-    if (!user.verificado) {
-      user.verificado = true;
-      await user.save();
-    }
 
     // Gerar JWT ou sessão aqui
     const token = issueAuthToken(user);
@@ -330,16 +339,24 @@ exports.validarTokenVerificacao = async (req, res) => {
       return res.status(401).json({ message: "Token inválido ou expirado." });
     }
 
+    const user = await User.findById(twoFactorToken.userId);
+
+    // Token de conta ja verificada nao gera sessao. E marcado como usado, nao apagado,
+    // porque uma validacao concorrente ainda pode precisar salvar o mesmo registro.
+    if (!user || user.verificado !== false) {
+      await TwoFactorToken.updateOne({ _id: twoFactorToken._id }, { $set: { validado: true } });
+      return res.status(401).json({ message: "Token inválido ou expirado." });
+    }
+
+    // A conta vem primeiro: se salvar falhar, o token continua valido para nova tentativa.
+    user.verificado = true;
+    await user.save();
+
     // Marcar como validado
     twoFactorToken.validado = true;
     await twoFactorToken.save();
 
     // Gerar JWT ou sessão aqui
-    const user = await User.findById(twoFactorToken.userId);
-    if (user && user.verificado === false) {
-      user.verificado = true;
-      await user.save();
-    }
     const jwtToken = issueAuthToken(user);
     const userPayload = await buildUserPayload(user);
 
