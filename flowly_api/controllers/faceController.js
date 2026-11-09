@@ -309,7 +309,6 @@ exports.verifyWithSession = async (req, res) => {
     if (!verifyResult.match) {
       return res.status(401).json({
         erro: 'Rosto não reconhecido. Tente capturar outra foto com o rosto bem visível.',
-        distance: verifyResult.distance,
       });
     }
 
