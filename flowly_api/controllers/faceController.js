@@ -103,16 +103,29 @@ const extractEmbeddingsFromImages = async (imagesBase64, context) => {
   return { ok: true, embeddings };
 };
 
+const isImage = (value) => typeof value === 'string' && value.length > 0;
+
 const resolveEnrollmentImages = (body) => {
   if (Array.isArray(body.imagesBase64) && body.imagesBase64.length > 0) {
-    return body.imagesBase64;
+    return body.imagesBase64.every(isImage) ? body.imagesBase64 : [];
   }
 
-  if (body.imageBase64) {
-    return [body.imageBase64];
+  return isImage(body.imageBase64) ? [body.imageBase64] : [];
+};
+
+const FACE_SERVICE_FAILURES = {
+  503: 'Serviço facial indisponível.',
+  504: 'Serviço facial não respondeu a tempo.',
+};
+
+// 4xx sao respostas previstas. Erro de servidor nao repassa mensagem nem detalhe: a causa fica no log.
+const buildFaceErrorBody = (err, context, fallback) => {
+  if (err.statusCode < 500) {
+    return { erro: normalizeFaceError(err.message, context), detalhe: err.details };
   }
 
-  return [];
+  console.error(`Erro em rota facial (${context}):`, err);
+  return { erro: FACE_SERVICE_FAILURES[err.statusCode] || fallback };
 };
 
 const buildEnrollErrorResponse = (err, context) => {
@@ -128,11 +141,17 @@ const buildEnrollErrorResponse = (err, context) => {
 
   return {
     status: err.statusCode || 500,
-    body: {
-      erro: normalizeFaceError(err.message, context) || 'Erro ao cadastrar rosto.',
-      detalhe: err.details,
-    },
+    body: buildFaceErrorBody(err, context, 'Erro ao cadastrar rosto.'),
   };
+};
+
+// Sem corpo JSON req.body fica indefinido: campo ausente responde 400, nao TypeError.
+exports.ensureObjectBody = (req, _res, next) => {
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+    req.body = {};
+  }
+
+  next();
 };
 
 exports.getStatus = async (req, res) => {
@@ -152,7 +171,8 @@ exports.getStatus = async (req, res) => {
       offered: Boolean(user.faceEnrollmentOffered),
     });
   } catch (err) {
-    res.status(500).json({ erro: 'Erro ao consultar status facial.', detalhe: err.message });
+    console.error('Erro em rota facial (status):', err);
+    res.status(500).json({ erro: 'Erro ao consultar status facial.' });
   }
 };
 
@@ -255,10 +275,7 @@ exports.enrollFromProfile = async (req, res) => {
 
 const sendVerifyError = (res, err) => {
   const status = err.statusCode || 500;
-  res.status(status).json({
-    erro: normalizeFaceError(err.message, 'verify') || 'Erro na verificação facial.',
-    detalhe: err.details,
-  });
+  res.status(status).json(buildFaceErrorBody(err, 'verify', 'Erro na verificação facial.'));
 };
 
 // Roda antes do limiter: pedido incompleto responde 400 e sessao invalida 401, nunca 429.
@@ -266,7 +283,7 @@ exports.requireFaceVerifySession = (req, res, next) => {
   try {
     const { faceSessionToken, imageBase64 } = req.body;
 
-    if (!faceSessionToken || !imageBase64) {
+    if (!faceSessionToken || !isImage(imageBase64)) {
       return res.status(400).json({ erro: 'faceSessionToken e imageBase64 são obrigatórios.' });
     }
 
@@ -345,7 +362,7 @@ exports.skipEnrollment = async (req, res) => {
     });
   } catch (err) {
     const status = err.statusCode || 500;
-    res.status(status).json({ erro: err.message || 'Erro ao ignorar cadastro facial.' });
+    res.status(status).json(buildFaceErrorBody(err, 'enroll', 'Erro ao ignorar cadastro facial.'));
   }
 };
 

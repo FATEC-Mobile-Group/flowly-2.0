@@ -4,6 +4,8 @@ const auth = require('../middlewares/auth');
 const faceController = require('../controllers/faceController');
 const { faceVerifyLimiter, sensitivePasswordActionLimiter } = require('../middlewares/rateLimiters');
 
+router.use(faceController.ensureObjectBody);
+
 router.get('/health', faceController.health);
 
 router.post('/enroll', faceController.enrollWithSession);

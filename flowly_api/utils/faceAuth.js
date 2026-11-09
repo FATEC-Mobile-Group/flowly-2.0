@@ -40,6 +40,10 @@ const invalidFaceSessionError = () => {
 };
 
 const verifyFaceSessionToken = (token, expectedPurpose) => {
+  if (typeof token !== 'string') {
+    throw invalidFaceSessionError();
+  }
+
   let decoded;
 
   try {
