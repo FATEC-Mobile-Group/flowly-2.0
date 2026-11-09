@@ -435,6 +435,11 @@ exports.validarCodigoRecuperacaoSenha = async (req, res) => {
       return res.status(400).json({ message: "Email e codigo sao obrigatorios." });
     }
 
+    // Valor nao textual viraria filtro do MongoDB ou seria convertido em codigo por hashSecret.
+    if (typeof email !== "string" || typeof codigo !== "string") {
+      return res.status(401).json({ message: INVALID_RESET_CODE_MESSAGE });
+    }
+
     const user = await User.findOne({ email: normalizeEmail(email) });
     if (!user) {
       return res.status(401).json({ message: INVALID_RESET_CODE_MESSAGE });
@@ -482,6 +487,11 @@ exports.redefinirSenhaComCodigo = async (req, res) => {
     const passwordValidationResult = validatePassword(novaSenha);
     if (passwordValidationResult !== true) {
       return res.status(400).json({ message: passwordValidationResult });
+    }
+
+    // Valor nao textual viraria filtro do MongoDB ou seria convertido em codigo por hashSecret.
+    if (typeof email !== "string" || typeof codigo !== "string") {
+      return res.status(401).json({ message: INVALID_RESET_CODE_MESSAGE });
     }
 
     const user = await User.findOne({ email: normalizeEmail(email) });
