@@ -17,6 +17,12 @@ jest.mock('../models/FaceProfile', () => ({
   findOneAndUpdate: jest.fn(),
 }));
 
+// O limite de tentativas tem teste proprio: faceVerify.rateLimit.test.js.
+jest.mock('../middlewares/rateLimiters', () => ({
+  ...jest.requireActual('../middlewares/rateLimiters'),
+  faceVerifyLimiter: (_req, _res, next) => next(),
+}));
+
 jest.mock('../utils/faceEnrollmentGuard', () => ({
   assertUniqueFaceEnrollment: jest.fn().mockResolvedValue(),
   isSamePersonFaceUpdate: jest.fn().mockReturnValue(true),

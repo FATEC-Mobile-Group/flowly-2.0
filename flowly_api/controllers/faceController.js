@@ -253,7 +253,16 @@ exports.enrollFromProfile = async (req, res) => {
   }
 };
 
-exports.verifyWithSession = async (req, res) => {
+const sendVerifyError = (res, err) => {
+  const status = err.statusCode || 500;
+  res.status(status).json({
+    erro: normalizeFaceError(err.message, 'verify') || 'Erro na verificação facial.',
+    detalhe: err.details,
+  });
+};
+
+// Roda antes do limiter: pedido incompleto responde 400 e sessao invalida 401, nunca 429.
+exports.requireFaceVerifySession = (req, res, next) => {
   try {
     const { faceSessionToken, imageBase64 } = req.body;
 
@@ -261,7 +270,18 @@ exports.verifyWithSession = async (req, res) => {
       return res.status(400).json({ erro: 'faceSessionToken e imageBase64 são obrigatórios.' });
     }
 
-    const decoded = verifyFaceSessionToken(faceSessionToken, 'face_verify');
+    req.faceSession = verifyFaceSessionToken(faceSessionToken, 'face_verify');
+  } catch (err) {
+    return sendVerifyError(res, err);
+  }
+
+  return next();
+};
+
+exports.verifyWithSession = async (req, res) => {
+  try {
+    const { imageBase64 } = req.body;
+    const decoded = req.faceSession;
     const user = await User.findById(decoded.id);
     const profile = await FaceProfile.findOne({ userId: decoded.id, enrolled: true });
 
@@ -298,11 +318,7 @@ exports.verifyWithSession = async (req, res) => {
       ...(await completeLoginResponse(user)),
     });
   } catch (err) {
-    const status = err.statusCode || 500;
-    res.status(status).json({
-      erro: normalizeFaceError(err.message, 'verify') || 'Erro na verificação facial.',
-      detalhe: err.details,
-    });
+    sendVerifyError(res, err);
   }
 };
 

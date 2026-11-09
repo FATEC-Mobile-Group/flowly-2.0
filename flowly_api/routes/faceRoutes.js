@@ -2,12 +2,12 @@ const express = require('express');
 const router = express.Router();
 const auth = require('../middlewares/auth');
 const faceController = require('../controllers/faceController');
-const { sensitivePasswordActionLimiter } = require('../middlewares/rateLimiters');
+const { faceVerifyLimiter, sensitivePasswordActionLimiter } = require('../middlewares/rateLimiters');
 
 router.get('/health', faceController.health);
 
 router.post('/enroll', faceController.enrollWithSession);
-router.post('/verify', faceController.verifyWithSession);
+router.post('/verify', faceController.requireFaceVerifySession, faceVerifyLimiter, faceController.verifyWithSession);
 router.post('/skip-enrollment', faceController.skipEnrollment);
 
 router.get('/status', auth, faceController.getStatus);

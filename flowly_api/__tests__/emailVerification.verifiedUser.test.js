@@ -21,6 +21,7 @@ jest.mock('../middlewares/rateLimiters', () => {
     emailCodeLimiter: passThrough,
     codeValidationLimiter: passThrough,
     sensitivePasswordActionLimiter: passThrough,
+    faceVerifyLimiter: passThrough,
   };
 });
 

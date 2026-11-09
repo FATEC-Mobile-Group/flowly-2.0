@@ -5,9 +5,10 @@ const buckets = new Map();
 const normalizeEmail = (value) =>
   typeof value === 'string' ? value.trim().toLowerCase() : '';
 
+const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
+
 // O e-mail vem do cliente e pode ter megabytes: na chave fica so um digest de tamanho fixo.
-const hashEmail = (value) =>
-  crypto.createHash('sha256').update(normalizeEmail(value)).digest('hex');
+const hashEmail = (value) => sha256(normalizeEmail(value));
 
 // O Map segue a ordem de insercao e as janelas tem a mesma duracao, entao as entradas mais
 // antigas expiram primeiro. Para na primeira ainda valida, sem percorrer o Map inteiro.
@@ -63,5 +64,11 @@ module.exports = {
     max: 5,
     windowMs: fifteenMinutes,
     buildKey: (req) => `current-password:${req.user.id}`,
+  }),
+  // Cada login abre uma sessao com contador proprio. Usar depois de validar o token: invalido nunca chega aqui.
+  faceVerifyLimiter: createRateLimiter({
+    max: 5,
+    windowMs: fifteenMinutes,
+    buildKey: (req) => `face-verify:${sha256(req.body.faceSessionToken)}`,
   }),
 };
