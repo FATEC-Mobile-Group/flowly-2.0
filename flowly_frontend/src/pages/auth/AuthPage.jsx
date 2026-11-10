@@ -59,8 +59,13 @@ function AuthPage() {
       btn.classList.remove("rippling");
     }, 1200);
   }, []);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // O modo vem da URL: /register e cadastro, o resto e login (acesso direto, F5 e voltar do navegador).
+  const isRegistering = location.pathname.toLowerCase().replace(/\/+$/, "") === "/register";
+
   // Carousel state
-  const [isRegistering, setIsRegistering] = useState(false);
   const [slideDirection, setSlideDirection] = useState("");
 
   // Login state
@@ -94,16 +99,12 @@ function AuthPage() {
   const [faceSessionToken, setFaceSessionToken] = useState("");
   const [pendingUser, setPendingUser] = useState(null);
 
-  const navigate = useNavigate();
-  const location = useLocation();
-
   useEffect(() => {
     const query = new URLSearchParams(location.search);
     const fromRegister = query.get("fromRegister");
     const email = query.get("email");
 
     if (fromRegister === "1" && email) {
-      setIsRegistering(false);
       setLoginEmail(email);
       navigate(`/verificar-2fa?email=${encodeURIComponent(email)}`, { replace: true });
     }
@@ -114,7 +115,7 @@ function AuthPage() {
     setRecoveringPassword(false);
     setSlideDirection("slide-left");
     setTimeout(() => {
-      setIsRegistering(true);
+      navigate("/register");
       setSlideDirection("enter-right");
     }, 350);
   };
@@ -123,7 +124,8 @@ function AuthPage() {
   const goToLogin = () => {
     setSlideDirection("slide-right");
     setTimeout(() => {
-      setIsRegistering(false);
+      // Da recuperacao de senha ja se esta em /; so o cadastro precisa trocar a URL.
+      if (isRegistering) navigate("/");
       setRecoveringPassword(false);
       setSlideDirection("enter-left");
     }, 350);
