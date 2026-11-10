@@ -105,6 +105,10 @@ const extractEmbeddingsFromImages = async (imagesBase64, context) => {
 
 const isImage = (value) => typeof value === 'string' && value.length > 0;
 
+// Web envia 2 capturas e mobile 1: cada imagem e uma chamada ao servico facial e uma referencia no login.
+const MAX_ENROLLMENT_IMAGES = 2;
+const TOO_MANY_IMAGES = { erro: 'Quantidade de imagens excede o limite permitido.' };
+
 const resolveEnrollmentImages = (body) => {
   if (Array.isArray(body.imagesBase64) && body.imagesBase64.length > 0) {
     return body.imagesBase64.every(isImage) ? body.imagesBase64 : [];
@@ -178,6 +182,10 @@ exports.enrollWithSession = async (req, res) => {
       });
     }
 
+    if (imagesBase64.length > MAX_ENROLLMENT_IMAGES) {
+      return res.status(400).json(TOO_MANY_IMAGES);
+    }
+
     const decoded = verifyFaceSessionToken(faceSessionToken, 'face_enroll');
     const user = await User.findById(decoded.id);
 
@@ -216,6 +224,10 @@ exports.enrollFromProfile = async (req, res) => {
       return res.status(400).json({
         erro: 'imageBase64 ou imagesBase64 é obrigatório.',
       });
+    }
+
+    if (imagesBase64.length > MAX_ENROLLMENT_IMAGES) {
+      return res.status(400).json(TOO_MANY_IMAGES);
     }
 
     const { senhaAtual } = req.body;
