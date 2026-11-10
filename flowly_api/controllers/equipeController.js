@@ -206,7 +206,8 @@ exports.excluirEquipe = async (req, res) => {
 exports.getMembrosDaEquipe = async (req, res) => {
   try {
     await garantirCriadorComoMembro(req.user.id);
-    const equipe = await Equipe.findOne({ _id: req.params.id, membros: req.user.id }).populate("membros", "nome fotoPerfil");
+    // tipo permite aos clientes nao oferecer admin como responsavel de tarefa, que a API rejeita.
+    const equipe = await Equipe.findOne({ _id: req.params.id, membros: req.user.id }).populate("membros", "nome fotoPerfil tipo");
     if (!equipe) return res.status(404).json({ erro: "Equipe não encontrada" });
     const equipeAssinada = await assinarFotosMembrosEquipe(equipe);
     res.json(equipeAssinada.membros);

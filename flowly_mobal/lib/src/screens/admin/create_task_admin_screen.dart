@@ -87,7 +87,9 @@ class _CreateTaskAdminScreenState extends State<CreateTaskAdminScreen> {
   }
 
   Future<void> _loadMembers(String teamId) async {
-    final members = await _teamService.obterMembrosEquipe(teamId);
+    final members = responsaveisElegiveis(
+      await _teamService.obterMembrosEquipe(teamId),
+    );
     if (!mounted) return;
     setState(() {
       _members = members;

@@ -6,6 +6,9 @@ import "../../styles/pages/admin/DashboardAdmin.css";
 import "../../styles/pages/admin/TarefasAdmin.css";
 import Sidebar from "../../components/layout/Sidebar";
 
+// A API so aceita conta tipo 'user' como responsavel; membro sem tipo (API antiga) continua listado.
+const podeSerResponsavel = (membro) => membro?.tipo !== "admin";
+
 function TarefasAdmin() {
   const [descricao, setDescricao] = useState("");
   const [detalhes, setDetalhes] = useState("");
@@ -14,6 +17,7 @@ function TarefasAdmin() {
   const [users, setUsers] = useState([]);
   const [equipeSelecionada, setEquipeSelecionada] = useState("");
   const [userSelecionado, setUserSelecionado] = useState("");
+  const [responsavelAtual, setResponsavelAtual] = useState(null);
   const [mensagem, setMensagem] = useState("");
   const [tipoMensagem, setTipoMensagem] = useState("sucesso");
   const [idTarefaEditando, setIdTarefaEditando] = useState(null);
@@ -42,6 +46,7 @@ function TarefasAdmin() {
         setDataEntrega(tarefa.dataEntrega ? tarefa.dataEntrega.split("T")[0] : "");
         setEquipeSelecionada(tarefa.equipe?._id || "");
         setUserSelecionado(tarefa.user?._id || "");
+        setResponsavelAtual(tarefa.user || null);
         setTempoEstimado(tarefa.tempoEstimado || "");
         setUrgencia(tarefa.urgencia || "baixa");
 
@@ -70,7 +75,7 @@ function TarefasAdmin() {
   const buscarMembersDaEquipe = async (equipeId) => {
     try {
       const res = await apiClient.get(API_ENDPOINTS.EQUIPE_MEMBROS(equipeId));
-      setUsers(res.data);
+      setUsers(res.data.filter(podeSerResponsavel));
     } catch (err) {
       console.error("Erro ao buscar membros da equipe:", err);
     }
@@ -85,6 +90,11 @@ function TarefasAdmin() {
     } else {
       setUsers([]);
     }
+  };
+
+  const mostrarErroAoSalvar = (err) => {
+    setTipoMensagem("erro");
+    setMensagem(err.response?.data?.erro || "Não foi possível salvar a tarefa.");
   };
 
   const atualizarTarefa = async () => {
@@ -107,6 +117,7 @@ function TarefasAdmin() {
       setTimeout(() => setMensagem(""), 3000);
     } catch (err) {
       console.error("Erro ao atualizar tarefa:", err);
+      mostrarErroAoSalvar(err);
     }
   };
 
@@ -160,8 +171,15 @@ function TarefasAdmin() {
       }
     } catch (err) {
       console.error("Erro ao salvar tarefa:", err);
+      mostrarErroAoSalvar(err);
     }
   };
+
+  // Responsavel legado fora da lista (ex.: admin) aparece so como valor atual, nunca como nova escolha.
+  const responsavelForaDaLista =
+    responsavelAtual &&
+    userSelecionado === responsavelAtual._id &&
+    !users.some((user) => user._id === userSelecionado);
 
   return (
     <div className="admin-page">
@@ -239,6 +257,11 @@ function TarefasAdmin() {
                 {user.nome}
               </option>
             ))}
+            {responsavelForaDaLista && (
+              <option value={responsavelAtual._id} disabled>
+                {responsavelAtual.nome}
+              </option>
+            )}
           </select>
 
           <button type="submit" disabled={modoEdicao && !idTarefaEditando}>

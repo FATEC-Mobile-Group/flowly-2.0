@@ -45,12 +45,14 @@ class TeamMember {
   final String role;
   final String? nome;
   final String? email;
+  final String? tipo;
 
   const TeamMember({
     required this.userId,
     required this.role,
     this.nome,
     this.email,
+    this.tipo,
   });
 
   factory TeamMember.fromJson(Map<String, dynamic> json) {
@@ -64,6 +66,7 @@ class TeamMember {
       role: (json['role'] ?? 'membro').toString(),
       nome: (json['nome'] ?? (userData is Map<String, dynamic> ? userData['nome'] : null)) as String?,
       email: (json['email'] ?? (userData is Map<String, dynamic> ? userData['email'] : null)) as String?,
+      tipo: (json['tipo'] ?? (userData is Map<String, dynamic> ? userData['tipo'] : null)) as String?,
     );
   }
 
@@ -72,5 +75,10 @@ class TeamMember {
     'role': role,
     'nome': nome,
     'email': email,
+    'tipo': tipo,
   };
 }
+
+/// A API so aceita conta tipo 'user' como responsavel de tarefa; membro sem tipo (API antiga) continua.
+List<TeamMember> responsaveisElegiveis(Iterable<TeamMember> membros) =>
+    membros.where((TeamMember membro) => membro.tipo != 'admin').toList();
