@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { publicRoutes, adminRoutes, userRoutes } from "./config/routes";
 import { authUtils } from "./config/authUtils";
+import { USER_TYPES } from "./config/config";
 import { ThemeProvider } from "./config/ThemeContext";
 import createSocketConnection from "./config/socketClient";
 import ThemeToggle from "./components/layout/ThemeToggle";
@@ -84,7 +85,8 @@ function AppContent() {
         <ColorBendsBackground />
         <ThemeToggle />
         {element}
-        <FloatingTimer />
+        {/* O timer usa /tarefas/minhas, exclusivo de user; admin nao tem tarefas e receberia 403. */}
+        {userType === USER_TYPES.USER && <FloatingTimer />}
       </>
     );
   };
