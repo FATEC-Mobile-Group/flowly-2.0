@@ -3,6 +3,7 @@ const router = express.Router();
 const authController = require('../controllers/authController.js');
 const emailController = require('../controllers/emailController.js');
 const auth = require('../middlewares/auth');
+const { isAdmin } = require('../middlewares/roles');
 const ensureObjectBody = require('../middlewares/ensureObjectBody');
 const {
   loginLimiter,
@@ -15,7 +16,7 @@ router.use(ensureObjectBody);
 
 router.post('/registrar', registerLimiter, authController.registrar);
 router.post('/login', loginLimiter, authController.login);
-router.get('/users', auth, authController.listarUsers);
+router.get('/users', auth, isAdmin, authController.listarUsers);
 
 // Rotas de autenticação em dois fatores
 router.post('/2fa/enviar-codigo', emailCodeLimiter, emailController.enviarCodigoVerificacao);

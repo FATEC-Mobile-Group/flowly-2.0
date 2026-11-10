@@ -195,7 +195,24 @@ describe('API Auth — Testes de Integração com Supertest', () => {
       expect(User.find).not.toHaveBeenCalled();
     });
 
-    it('deve listar usuários para um usuário autenticado', async () => {
+    it('deve rejeitar usuário comum sem consultar usuários (D09)', async () => {
+      const token = jwt.sign(
+        { id: 'authenticated_user', tipo: 'user', email: 'auth@flowly.com', tokenType: 'access' },
+        config.jwt.secret,
+        { issuer: config.jwt.issuer, audience: config.jwt.accessAudience }
+      );
+
+      const response = await request(app)
+        .get('/api/auth/users')
+        .set('Authorization', `Bearer ${token}`)
+        .expect('Content-Type', /json/)
+        .expect(403);
+
+      expect(response.body).toEqual({ success: false, error: ERROR_MESSAGES.ADMIN_ONLY });
+      expect(User.find).not.toHaveBeenCalled();
+    });
+
+    it('deve listar usuários para um administrador', async () => {
       const users = [
         { _id: 'user_1', nome: 'Usuário Um', email: 'um@flowly.com' },
         { _id: 'user_2', nome: 'Usuário Dois', email: 'dois@flowly.com' },
@@ -205,7 +222,7 @@ describe('API Auth — Testes de Integração com Supertest', () => {
       const token = jwt.sign(
         {
           id: 'authenticated_user',
-          tipo: 'user',
+          tipo: 'admin',
           email: 'auth@flowly.com',
           tokenType: 'access',
         },
