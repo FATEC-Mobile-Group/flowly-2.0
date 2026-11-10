@@ -11,6 +11,15 @@ import ColorBendsBackground from "./components/layout/ColorBendsBackground";
 import MessageToastContainer from "./components/notifications/MessageToastContainer";
 import "./styles/common/App.css";
 
+// Home de cada papel. Sem sessao, ou com papel desconhecido, vai para o login (rota publica, sem loop).
+const homeDoUsuario = () => {
+  if (!authUtils.isAuthenticated()) return "/";
+  const userType = authUtils.getUserType();
+  if (userType === USER_TYPES.ADMIN) return "/admin";
+  if (userType === USER_TYPES.USER) return "/dashboard";
+  return "/";
+};
+
 function App() {
   return (
     <ThemeProvider>
@@ -76,8 +85,9 @@ function AppContent() {
       return <Navigate to="/" replace />;
     }
 
+    // Papel errado mantem a sessao e leva para a home do papel real.
     if (requiredRole && userType !== requiredRole) {
-      return <Navigate to="/" replace />;
+      return <Navigate to={homeDoUsuario()} replace />;
     }
 
     return (
@@ -129,7 +139,7 @@ function AppContent() {
         ))}
 
         {/* Rota padrão para URLs não encontradas */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to={homeDoUsuario()} replace />} />
       </Routes>
     </>
   );
