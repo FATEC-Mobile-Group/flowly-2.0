@@ -9,10 +9,20 @@ import Sidebar from "../../components/layout/Sidebar";
 // A API so aceita conta tipo 'user' como responsavel; membro sem tipo (API antiga) continua listado.
 const podeSerResponsavel = (membro) => membro?.tipo !== "admin";
 
+// Data civil local de hoje em YYYY-MM-DD. O input date tambem entrega YYYY-MM-DD, e esse formato
+// compara como texto na ordem do calendario; new Date('YYYY-MM-DD') seria meia-noite UTC.
+const hojeLocal = () => {
+  const agora = new Date();
+  const mes = String(agora.getMonth() + 1).padStart(2, "0");
+  const dia = String(agora.getDate()).padStart(2, "0");
+  return `${agora.getFullYear()}-${mes}-${dia}`;
+};
+
 function TarefasAdmin() {
   const [descricao, setDescricao] = useState("");
   const [detalhes, setDetalhes] = useState("");
   const [dataEntrega, setDataEntrega] = useState("");
+  const [dataEntregaOriginal, setDataEntregaOriginal] = useState("");
   const [equipes, setEquipes] = useState([]);
   const [users, setUsers] = useState([]);
   const [equipeSelecionada, setEquipeSelecionada] = useState("");
@@ -43,7 +53,9 @@ function TarefasAdmin() {
         setIdTarefaEditando(tarefa._id);
         setDescricao(tarefa.descricao || "");
         setDetalhes(tarefa.detalhes || "");
-        setDataEntrega(tarefa.dataEntrega ? tarefa.dataEntrega.split("T")[0] : "");
+        const dataCarregada = tarefa.dataEntrega ? tarefa.dataEntrega.split("T")[0] : "";
+        setDataEntrega(dataCarregada);
+        setDataEntregaOriginal(dataCarregada);
         setEquipeSelecionada(tarefa.equipe?._id || "");
         setUserSelecionado(tarefa.user?._id || "");
         setResponsavelAtual(tarefa.user || null);
@@ -127,12 +139,10 @@ function TarefasAdmin() {
     // Sem a tarefa carregada nao ha o que salvar, e a rota de edicao nunca faz POST.
     if (modoEdicao && !idTarefaEditando) return;
 
-    const hoje = new Date();
-    const dataSelecionada = new Date(dataEntrega);
-    hoje.setHours(0, 0, 0, 0);
-    dataSelecionada.setHours(0, 0, 0, 0);
+    // Na edicao, a data que ja estava salva continua valida mesmo atrasada; so uma data nova e conferida.
+    const dataAlterada = !modoEdicao || dataEntrega !== dataEntregaOriginal;
 
-    if (dataSelecionada < hoje) {
+    if (dataEntrega && dataAlterada && dataEntrega < hojeLocal()) {
       setTipoMensagem("erro");
       setMensagem("A data de entrega não pode ser anterior à data de hoje.");
       setTimeout(() => setMensagem(""), 3000);
