@@ -2,6 +2,7 @@
  * Definição centralizada de rotas da aplicação
  */
 
+import { Navigate } from 'react-router-dom';
 import AuthPage from '../pages/auth/AuthPage';
 import Verify from '../pages/auth/Verify';
 import DashboardAdmin from '../pages/admin/DashboardAdmin';
@@ -31,6 +32,11 @@ export const publicRoutes = [
   {
     path: '/register',
     element: <AuthPage />,
+  },
+  {
+    // Alias: e-mails antigos de "Criar Conta" apontam para /registrar.
+    path: '/registrar',
+    element: <Navigate to="/register" replace />,
   },
   {
     path: '/verificar-2fa',

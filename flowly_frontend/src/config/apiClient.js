@@ -26,10 +26,20 @@ const apiClient = axios.create({
   timeout: 30000,
 });
 
+const LOGIN_ROUTE = '/';
+
+// So o 401 de uma requisicao que levou o JWT ainda guardado indica sessao invalida.
+// Login, 2FA, face pre-login e requisicoes de um token antigo seguem como erro comum.
+const sentCurrentToken = (config) => {
+  const token = authUtils.getToken();
+  return Boolean(token) && config?.headers?.Authorization === `Bearer ${token}`;
+};
+
 apiClient.interceptors.request.use(
   (config) => {
     const token = authUtils.getToken();
-    if (token) {
+    // skipAuthToken: fluxos pre-login nao usam o JWT, mesmo que haja um token antigo guardado.
+    if (token && !config.skipAuthToken) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
@@ -40,10 +50,10 @@ apiClient.interceptors.request.use(
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && sentCurrentToken(error.config)) {
       authUtils.clearAuthData();
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+      if (window.location.pathname !== LOGIN_ROUTE) {
+        window.location.href = LOGIN_ROUTE;
       }
     }
     return Promise.reject(error);

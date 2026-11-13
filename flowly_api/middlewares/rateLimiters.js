@@ -1,14 +1,34 @@
+const crypto = require('crypto');
+
 const buckets = new Map();
 
 const normalizeEmail = (value) =>
   typeof value === 'string' ? value.trim().toLowerCase() : '';
 
-const createRateLimiter = ({ max, windowMs, keyByEmail = false }) => (req, res, next) => {
+const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
+
+// O e-mail vem do cliente e pode ter megabytes: na chave fica so um digest de tamanho fixo.
+const hashEmail = (value) => sha256(normalizeEmail(value));
+
+// O Map segue a ordem de insercao e as janelas tem a mesma duracao, entao as entradas mais
+// antigas expiram primeiro. Para na primeira ainda valida, sem percorrer o Map inteiro.
+const removeExpiredBuckets = (now) => {
+  for (const [key, bucket] of buckets) {
+    if (bucket.resetAt > now) {
+      break;
+    }
+    buckets.delete(key);
+  }
+};
+
+const createRateLimiter = ({ scope, max, windowMs, keyByEmail = false, buildKey }) => (req, res, next) => {
   const now = Date.now();
+  removeExpiredBuckets(now);
   const identity = keyByEmail
-    ? `${req.ip}:${normalizeEmail(req.body?.email)}`
+    ? `${req.ip}:${hashEmail(req.body?.email)}`
     : req.ip;
-  const key = `${req.baseUrl}${req.path}:${identity}`;
+  // req.route.path e o caminho declarado na rota, nao a URL recebida: LOGIN e login/ nao abrem outro contador.
+  const key = buildKey ? buildKey(req) : `${scope}:${req.route.path}:${identity}`;
   const current = buckets.get(key);
 
   if (!current || current.resetAt <= now) {
@@ -35,8 +55,20 @@ const createRateLimiter = ({ max, windowMs, keyByEmail = false }) => (req, res, 
 const fifteenMinutes = 15 * 60 * 1000;
 
 module.exports = {
-  loginLimiter: createRateLimiter({ max: 10, windowMs: fifteenMinutes, keyByEmail: true }),
-  registerLimiter: createRateLimiter({ max: 10, windowMs: fifteenMinutes }),
-  emailCodeLimiter: createRateLimiter({ max: 5, windowMs: fifteenMinutes, keyByEmail: true }),
-  codeValidationLimiter: createRateLimiter({ max: 10, windowMs: fifteenMinutes, keyByEmail: true }),
+  loginLimiter: createRateLimiter({ scope: 'login', max: 10, windowMs: fifteenMinutes, keyByEmail: true }),
+  registerLimiter: createRateLimiter({ scope: 'register', max: 10, windowMs: fifteenMinutes }),
+  emailCodeLimiter: createRateLimiter({ scope: 'email-code-send', max: 5, windowMs: fifteenMinutes, keyByEmail: true }),
+  codeValidationLimiter: createRateLimiter({ scope: 'code-validation', max: 10, windowMs: fifteenMinutes, keyByEmail: true }),
+  // Prova da senha atual com JWT: um contador por conta para todas as rotas. Usar depois do auth.
+  sensitivePasswordActionLimiter: createRateLimiter({
+    max: 5,
+    windowMs: fifteenMinutes,
+    buildKey: (req) => `current-password:${req.user.id}`,
+  }),
+  // Cada login abre uma sessao com contador proprio. Usar depois de validar o token: invalido nunca chega aqui.
+  faceVerifyLimiter: createRateLimiter({
+    max: 5,
+    windowMs: fifteenMinutes,
+    buildKey: (req) => `face-verify:${sha256(req.body.faceSessionToken)}`,
+  }),
 };

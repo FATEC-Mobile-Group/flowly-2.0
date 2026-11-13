@@ -1,8 +1,10 @@
+const argon2 = require('argon2');
 const User = require('../models/User');
 const FaceProfile = require('../models/FaceProfile');
 const faceService = require('../services/faceService');
 const {
   buildUserPayload,
+  invalidFaceSessionError,
   issueAuthToken,
   verifyFaceSessionToken,
 } = require('../utils/faceAuth');
@@ -19,13 +21,13 @@ const completeLoginResponse = async (user) => ({
   user: await buildUserPayload(user),
 });
 
-const saveFaceProfile = async (userId, embeddingsInput, model = 'VGG-Face') => {
+const saveFaceProfile = async (userId, embeddingsInput, model = 'VGG-Face', filter = { userId }) => {
   const embeddings = Array.isArray(embeddingsInput[0])
     ? embeddingsInput
     : [embeddingsInput];
 
   const profile = await FaceProfile.findOneAndUpdate(
-    { userId },
+    filter,
     {
       $set: {
         userId,
@@ -40,6 +42,43 @@ const saveFaceProfile = async (userId, embeddingsInput, model = 'VGG-Face') => {
   );
 
   return profile;
+};
+
+// Primeiro cadastro nunca substitui: com perfil ativo, o indice unico de userId recusa o upsert.
+const saveFirstFaceProfile = async (userId, embeddings, model) => {
+  try {
+    return await saveFaceProfile(userId, embeddings, model, { userId, enrolled: { $ne: true } });
+  } catch (err) {
+    if (err.code === 11000) {
+      throw invalidFaceSessionError();
+    }
+    throw err;
+  }
+};
+
+// A oferta de primeiro cadastro termina uma unica vez: cadastrando ou pulando.
+const assertFaceOfferPending = async (user) => {
+  const pending =
+    user.faceEnrollmentOffered === true &&
+    user.faceEnrollmentSkipped !== true &&
+    user.faceEnrollmentOfferConcluded !== true &&
+    !(await FaceProfile.findOne({ userId: user._id, enrolled: true }));
+
+  if (!pending) {
+    throw invalidFaceSessionError();
+  }
+};
+
+// Update condicional: entre chamadas simultaneas, so uma conclui a oferta.
+const concludeFaceOffer = async (userId, changes = {}) => {
+  const concluded = await User.findOneAndUpdate(
+    { _id: userId, faceEnrollmentOfferConcluded: { $ne: true } },
+    { $set: { faceEnrollmentOfferConcluded: true, ...changes } }
+  );
+
+  if (!concluded) {
+    throw invalidFaceSessionError();
+  }
 };
 
 const extractEmbeddingsFromImages = async (imagesBase64, context) => {
@@ -64,16 +103,33 @@ const extractEmbeddingsFromImages = async (imagesBase64, context) => {
   return { ok: true, embeddings };
 };
 
+const isImage = (value) => typeof value === 'string' && value.length > 0;
+
+// Web envia 2 capturas e mobile 1: cada imagem e uma chamada ao servico facial e uma referencia no login.
+const MAX_ENROLLMENT_IMAGES = 2;
+const TOO_MANY_IMAGES = { erro: 'Quantidade de imagens excede o limite permitido.' };
+
 const resolveEnrollmentImages = (body) => {
   if (Array.isArray(body.imagesBase64) && body.imagesBase64.length > 0) {
-    return body.imagesBase64;
+    return body.imagesBase64.every(isImage) ? body.imagesBase64 : [];
   }
 
-  if (body.imageBase64) {
-    return [body.imageBase64];
+  return isImage(body.imageBase64) ? [body.imageBase64] : [];
+};
+
+const FACE_SERVICE_FAILURES = {
+  503: 'Serviço facial indisponível.',
+  504: 'Serviço facial não respondeu a tempo.',
+};
+
+// 4xx sao respostas previstas. Erro de servidor nao repassa mensagem nem detalhe: a causa fica no log.
+const buildFaceErrorBody = (err, context, fallback) => {
+  if (err.statusCode < 500) {
+    return { erro: normalizeFaceError(err.message, context), detalhe: err.details };
   }
 
-  return [];
+  console.error(`Erro em rota facial (${context}):`, err);
+  return { erro: FACE_SERVICE_FAILURES[err.statusCode] || fallback };
 };
 
 const buildEnrollErrorResponse = (err, context) => {
@@ -89,10 +145,7 @@ const buildEnrollErrorResponse = (err, context) => {
 
   return {
     status: err.statusCode || 500,
-    body: {
-      erro: normalizeFaceError(err.message, context) || 'Erro ao cadastrar rosto.',
-      detalhe: err.details,
-    },
+    body: buildFaceErrorBody(err, context, 'Erro ao cadastrar rosto.'),
   };
 };
 
@@ -113,7 +166,8 @@ exports.getStatus = async (req, res) => {
       offered: Boolean(user.faceEnrollmentOffered),
     });
   } catch (err) {
-    res.status(500).json({ erro: 'Erro ao consultar status facial.', detalhe: err.message });
+    console.error('Erro em rota facial (status):', err);
+    res.status(500).json({ erro: 'Erro ao consultar status facial.' });
   }
 };
 
@@ -128,12 +182,18 @@ exports.enrollWithSession = async (req, res) => {
       });
     }
 
+    if (imagesBase64.length > MAX_ENROLLMENT_IMAGES) {
+      return res.status(400).json(TOO_MANY_IMAGES);
+    }
+
     const decoded = verifyFaceSessionToken(faceSessionToken, 'face_enroll');
     const user = await User.findById(decoded.id);
 
     if (!user) {
       return res.status(404).json({ erro: 'Usuário não encontrado.' });
     }
+
+    await assertFaceOfferPending(user);
 
     const extracted = await extractEmbeddingsFromImages(imagesBase64, 'enroll');
     if (!extracted.ok) {
@@ -142,7 +202,9 @@ exports.enrollWithSession = async (req, res) => {
 
     const embeddingList = extracted.embeddings.map((item) => item.embedding);
     await assertUniqueFaceEnrollment(user._id, embeddingList);
-    await saveFaceProfile(user._id, embeddingList, extracted.embeddings[0].model);
+    // Depois das validacoes: foto ruim ou rosto duplicado nao gastam a oferta.
+    await concludeFaceOffer(user._id);
+    await saveFirstFaceProfile(user._id, embeddingList, extracted.embeddings[0].model);
 
     res.json({
       msg: 'Verificação facial cadastrada com sucesso.',
@@ -164,10 +226,27 @@ exports.enrollFromProfile = async (req, res) => {
       });
     }
 
+    if (imagesBase64.length > MAX_ENROLLMENT_IMAGES) {
+      return res.status(400).json(TOO_MANY_IMAGES);
+    }
+
+    const { senhaAtual } = req.body;
+
+    if (typeof senhaAtual !== 'string' || !senhaAtual) {
+      return res.status(400).json({ erro: 'Senha atual é obrigatória.' });
+    }
+
     const user = await User.findById(req.user.id);
 
     if (!user) {
       return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    }
+
+    // O JWT sozinho nao autoriza vincular um rosto. 400 para nao encerrar a sessao no cliente.
+    const senhaValida = await argon2.verify(user.senha, senhaAtual);
+
+    if (!senhaValida) {
+      return res.status(400).json({ erro: 'Senha atual incorreta.' });
     }
 
     const existingProfile = await FaceProfile.findOne({ userId: user._id, enrolled: true });
@@ -197,15 +276,32 @@ exports.enrollFromProfile = async (req, res) => {
   }
 };
 
-exports.verifyWithSession = async (req, res) => {
+const sendVerifyError = (res, err) => {
+  const status = err.statusCode || 500;
+  res.status(status).json(buildFaceErrorBody(err, 'verify', 'Erro na verificação facial.'));
+};
+
+// Roda antes do limiter: pedido incompleto responde 400 e sessao invalida 401, nunca 429.
+exports.requireFaceVerifySession = (req, res, next) => {
   try {
     const { faceSessionToken, imageBase64 } = req.body;
 
-    if (!faceSessionToken || !imageBase64) {
+    if (!faceSessionToken || !isImage(imageBase64)) {
       return res.status(400).json({ erro: 'faceSessionToken e imageBase64 são obrigatórios.' });
     }
 
-    const decoded = verifyFaceSessionToken(faceSessionToken, 'face_verify');
+    req.faceSession = verifyFaceSessionToken(faceSessionToken, 'face_verify');
+  } catch (err) {
+    return sendVerifyError(res, err);
+  }
+
+  return next();
+};
+
+exports.verifyWithSession = async (req, res) => {
+  try {
+    const { imageBase64 } = req.body;
+    const decoded = req.faceSession;
     const user = await User.findById(decoded.id);
     const profile = await FaceProfile.findOne({ userId: decoded.id, enrolled: true });
 
@@ -233,7 +329,6 @@ exports.verifyWithSession = async (req, res) => {
     if (!verifyResult.match) {
       return res.status(401).json({
         erro: 'Rosto não reconhecido. Tente capturar outra foto com o rosto bem visível.',
-        distance: verifyResult.distance,
       });
     }
 
@@ -242,11 +337,7 @@ exports.verifyWithSession = async (req, res) => {
       ...(await completeLoginResponse(user)),
     });
   } catch (err) {
-    const status = err.statusCode || 500;
-    res.status(status).json({
-      erro: normalizeFaceError(err.message, 'verify') || 'Erro na verificação facial.',
-      detalhe: err.details,
-    });
+    sendVerifyError(res, err);
   }
 };
 
@@ -265,9 +356,8 @@ exports.skipEnrollment = async (req, res) => {
       return res.status(404).json({ erro: 'Usuário não encontrado.' });
     }
 
-    user.faceEnrollmentSkipped = true;
-    user.faceEnrollmentOffered = true;
-    await user.save();
+    await assertFaceOfferPending(user);
+    await concludeFaceOffer(user._id, { faceEnrollmentSkipped: true });
 
     res.json({
       msg: 'Cadastro facial ignorado. Você pode cadastrar depois no perfil.',
@@ -275,20 +365,27 @@ exports.skipEnrollment = async (req, res) => {
     });
   } catch (err) {
     const status = err.statusCode || 500;
-    res.status(status).json({ erro: err.message || 'Erro ao ignorar cadastro facial.' });
+    res.status(status).json(buildFaceErrorBody(err, 'enroll', 'Erro ao ignorar cadastro facial.'));
   }
 };
 
 exports.health = async (_req, res) => {
   try {
     const faceHealth = await faceService.checkHealth();
-    res.json({ api: 'ok', faceService: faceHealth });
+
+    // Rota publica: modelo, detector e limiares ficam so no servico interno.
+    if (faceHealth?.status === 'ok') {
+      return res.json({ api: 'ok', faceService: { status: 'ok' } });
+    }
+
+    console.warn('Servico facial respondeu ao health sem status ok.');
   } catch (err) {
-    res.status(503).json({
-      api: 'ok',
-      faceService: null,
-      erro: 'Serviço facial indisponível.',
-      detalhe: err.message,
-    });
+    console.warn('Health do servico facial falhou:', err.cause?.message || err.message);
   }
+
+  return res.status(503).json({
+    api: 'ok',
+    faceService: { status: 'unavailable' },
+    erro: 'Serviço facial indisponível.',
+  });
 };

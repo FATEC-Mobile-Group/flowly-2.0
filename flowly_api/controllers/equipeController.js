@@ -57,6 +57,13 @@ const formatarNomeEquipe = (nome) => {
     .join(' ');
 };
 
+const nomeEquipeValido = (nome) => typeof nome === 'string' && nome.trim() !== '';
+
+// Cada membro precisa ser um id em texto: objeto, lista ou numero nao viram id por conversao.
+const listaDeMembrosValida = (membros) =>
+  Array.isArray(membros) &&
+  membros.every((id) => typeof id === 'string' && mongoose.isValidObjectId(id.trim()));
+
 const garantirCriadorComoMembro = (userId) => Equipe.updateMany(
   { createdBy: userId, membros: { $ne: userId } },
   { $addToSet: { membros: userId } }
@@ -67,7 +74,7 @@ exports.criarEquipe = async (req, res) => {
     const { nome, membros } = req.body;
 
     // Validação do nome da equipe
-    if (!nome || nome.trim() === "") {
+    if (!nomeEquipeValido(nome)) {
       return res.status(400).json({ erro: "O nome da equipe é obrigatório" });
     }
 
@@ -96,7 +103,8 @@ exports.criarEquipe = async (req, res) => {
     const equipePopulada = await Equipe.findById(novaEquipe._id).populate('membros', 'nome email fotoPerfil');
     res.status(201).json(await assinarFotosMembrosEquipe(equipePopulada));
   } catch (err) {
-    res.status(500).json({ erro: "Erro ao criar equipe", detalhe: err.message });
+    console.error('Erro ao criar equipe:', err);
+    res.status(500).json({ erro: "Erro ao criar equipe" });
   }
 };
 
@@ -133,33 +141,42 @@ exports.obterEquipe = async (req, res) => {
 
 exports.editarEquipe = async (req, res) => {
   try {
-    await garantirCriadorComoMembro(req.user.id);
     const { nome, membros } = req.body;
 
-    const membrosArray = Array.isArray(membros) ? membros : [];
-    const membrosUnicos = [...new Set(membrosArray.map((id) => String(id).trim()))].filter(Boolean);
+    // Sem nome valido, a atualizacao abaixo gravaria nome vazio e removeria os membros.
+    if (!nomeEquipeValido(nome)) {
+      return res.status(400).json({ erro: 'O nome da equipe é obrigatório' });
+    }
 
-    const membrosInvalidos = membrosUnicos.filter((id) => !mongoose.isValidObjectId(id));
-    if (membrosInvalidos.length > 0) {
+    // membros ausente preserva a lista atual; [] explicito deixa so o criador.
+    const atualizarMembros = membros !== undefined;
+    if (atualizarMembros && !listaDeMembrosValida(membros)) {
       return res.status(400).json({ erro: 'Existem membros com identificadores inválidos' });
     }
+
+    await garantirCriadorComoMembro(req.user.id);
 
     const equipeAtual = await Equipe.findOne({ _id: req.params.id, membros: req.user.id }).select('createdBy');
     if (!equipeAtual) {
       return res.status(404).json({ erro: 'Equipe não encontrada' });
     }
 
-    const membrosSemCriador = membrosUnicos.filter((id) => String(id) !== String(equipeAtual.createdBy || req.user.id));
-    const usuarios = await User.find({ _id: { $in: membrosSemCriador }, tipo: 'user' }).select('_id');
-    if (usuarios.length !== membrosSemCriador.length) {
-      return res.status(400).json({ erro: 'Alguns membros não são usuarios válidos' });
-    }
+    const dadosAtualizacao = { nome: formatarNomeEquipe(nome) };
 
-    const membrosComCriador = [...new Set([...membrosSemCriador, String(equipeAtual.createdBy || req.user.id)])];
+    if (atualizarMembros) {
+      const membrosUnicos = [...new Set(membros.map((id) => id.trim()))];
+      const membrosSemCriador = membrosUnicos.filter((id) => String(id) !== String(equipeAtual.createdBy || req.user.id));
+      const usuarios = await User.find({ _id: { $in: membrosSemCriador }, tipo: 'user' }).select('_id');
+      if (usuarios.length !== membrosSemCriador.length) {
+        return res.status(400).json({ erro: 'Alguns membros não são usuarios válidos' });
+      }
+
+      dadosAtualizacao.membros = [...new Set([...membrosSemCriador, String(equipeAtual.createdBy || req.user.id)])];
+    }
 
     const equipeAtualizada = await Equipe.findByIdAndUpdate(
       req.params.id,
-      { nome: formatarNomeEquipe(nome), membros: membrosComCriador },
+      dadosAtualizacao,
       { new: true }
     ).populate('membros', 'nome email fotoPerfil');
 
@@ -169,8 +186,8 @@ exports.editarEquipe = async (req, res) => {
 
     res.json(await assinarFotosMembrosEquipe(equipeAtualizada));
   } catch (err) {
-    console.error('Erro ao editar equipe:', err.message);
-    res.status(500).json({ erro: 'Erro ao editar equipe', detalhe: err.message });
+    console.error('Erro ao editar equipe:', err);
+    res.status(500).json({ erro: 'Erro ao editar equipe' });
   }
 };
 
@@ -189,7 +206,8 @@ exports.excluirEquipe = async (req, res) => {
 exports.getMembrosDaEquipe = async (req, res) => {
   try {
     await garantirCriadorComoMembro(req.user.id);
-    const equipe = await Equipe.findOne({ _id: req.params.id, membros: req.user.id }).populate("membros", "nome fotoPerfil");
+    // tipo permite aos clientes nao oferecer admin como responsavel de tarefa, que a API rejeita.
+    const equipe = await Equipe.findOne({ _id: req.params.id, membros: req.user.id }).populate("membros", "nome fotoPerfil tipo");
     if (!equipe) return res.status(404).json({ erro: "Equipe não encontrada" });
     const equipeAssinada = await assinarFotosMembrosEquipe(equipe);
     res.json(equipeAssinada.membros);

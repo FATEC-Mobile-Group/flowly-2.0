@@ -4,6 +4,7 @@ import 'package:meu_app/src/app/flowly_theme.dart';
 import 'package:meu_app/src/models/team.dart';
 import 'package:meu_app/src/core/network/api_client.dart';
 import 'package:meu_app/src/services/team_service.dart';
+import 'package:meu_app/src/utils/data_entrega.dart';
 import 'package:meu_app/src/widgets/flowly_button.dart';
 
 class CreateTaskAdminScreen extends StatefulWidget {
@@ -20,6 +21,7 @@ class _CreateTaskAdminScreenState extends State<CreateTaskAdminScreen> {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _detailsController = TextEditingController();
   final TextEditingController _dateController = TextEditingController();
+  DateTime? _dataEntregaOriginal;
   final TextEditingController _timeController = TextEditingController();
   final TeamService _teamService = TeamService();
 
@@ -62,6 +64,7 @@ class _CreateTaskAdminScreenState extends State<CreateTaskAdminScreen> {
         _dateController.text = rawDate != null && rawDate.isNotEmpty
             ? rawDate.substring(0, 10)
             : '';
+        _dataEntregaOriginal = DateTime.tryParse(_dateController.text);
         _timeController.text = (task['tempoEstimado'] ?? '').toString();
         _urgencia = (task['urgencia'] ?? 'baixa').toString();
         _selectedTeamId = _resolveId(task['equipe']) ?? _selectedTeamId;
@@ -87,7 +90,9 @@ class _CreateTaskAdminScreenState extends State<CreateTaskAdminScreen> {
   }
 
   Future<void> _loadMembers(String teamId) async {
-    final members = await _teamService.obterMembrosEquipe(teamId);
+    final members = responsaveisElegiveis(
+      await _teamService.obterMembrosEquipe(teamId),
+    );
     if (!mounted) return;
     setState(() {
       _members = members;
@@ -391,12 +396,17 @@ class _CreateTaskAdminScreenState extends State<CreateTaskAdminScreen> {
 
   Future<void> _pickDate() async {
     final DateTime now = DateTime.now();
-    final DateTime initial = DateTime.tryParse(_dateController.text) ?? now;
+    final DateTime hoje = diaCivil(now);
+    // Hoje ou depois; na edicao, a data atrasada ja salva continua escolhivel.
+    bool permitido(DateTime dia) =>
+        dataEntregaPermitida(dia, hoje: hoje, original: _dataEntregaOriginal);
+    final DateTime? atual = DateTime.tryParse(_dateController.text);
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: initial,
-      firstDate: now.subtract(const Duration(days: 1)),
+      initialDate: atual != null && permitido(atual) ? atual : hoje,
+      firstDate: primeiroDiaDeEntrega(hoje: hoje, original: _dataEntregaOriginal),
       lastDate: DateTime(now.year + 5),
+      selectableDayPredicate: permitido,
     );
 
     if (picked == null) {

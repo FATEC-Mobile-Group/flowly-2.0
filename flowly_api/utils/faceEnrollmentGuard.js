@@ -39,7 +39,16 @@ function isSamePersonFaceUpdate(
     return false;
   }
 
-  return minDistanceToOwnReferences(existingProfile, probeEmbeddingOrList) <= threshold;
+  const probeEmbeddings = normalizeEmbeddingList(probeEmbeddingOrList);
+
+  if (!probeEmbeddings.length) {
+    return false;
+  }
+
+  // Cada captura vira uma referencia aceita no proximo login: todas precisam ser do dono.
+  return probeEmbeddings.every(
+    (probeEmbedding) => minDistanceToOwnReferences(existingProfile, probeEmbedding) <= threshold
+  );
 }
 
 async function assertUniqueFaceEnrollment(userId, probeEmbeddingOrList, options = {}) {

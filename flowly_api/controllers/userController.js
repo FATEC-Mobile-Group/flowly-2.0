@@ -185,7 +185,7 @@ exports.atualizarSenha = async (req, res) => {
     const senhaValida = await argon2.verify(user.senha, senhaAtual);
 
     if (!senhaValida) {
-      return res.status(401).json({ erro: 'Senha atual invalida' });
+      return res.status(400).json({ erro: 'Senha atual invalida' });
     }
 
     user.senha = await argon2.hash(novaSenha);

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { publicRoutes, adminRoutes, userRoutes } from "./config/routes";
 import { authUtils } from "./config/authUtils";
+import { USER_TYPES } from "./config/config";
 import { ThemeProvider } from "./config/ThemeContext";
 import createSocketConnection from "./config/socketClient";
 import ThemeToggle from "./components/layout/ThemeToggle";
@@ -9,6 +10,15 @@ import FloatingTimer from "./components/timer/FloatingTimer";
 import ColorBendsBackground from "./components/layout/ColorBendsBackground";
 import MessageToastContainer from "./components/notifications/MessageToastContainer";
 import "./styles/common/App.css";
+
+// Home de cada papel. Sem sessao, ou com papel desconhecido, vai para o login (rota publica, sem loop).
+const homeDoUsuario = () => {
+  if (!authUtils.isAuthenticated()) return "/";
+  const userType = authUtils.getUserType();
+  if (userType === USER_TYPES.ADMIN) return "/admin";
+  if (userType === USER_TYPES.USER) return "/dashboard";
+  return "/";
+};
 
 function App() {
   return (
@@ -75,8 +85,9 @@ function AppContent() {
       return <Navigate to="/" replace />;
     }
 
+    // Papel errado mantem a sessao e leva para a home do papel real.
     if (requiredRole && userType !== requiredRole) {
-      return <Navigate to="/" replace />;
+      return <Navigate to={homeDoUsuario()} replace />;
     }
 
     return (
@@ -84,7 +95,8 @@ function AppContent() {
         <ColorBendsBackground />
         <ThemeToggle />
         {element}
-        <FloatingTimer />
+        {/* O timer usa /tarefas/minhas, exclusivo de user; admin nao tem tarefas e receberia 403. */}
+        {userType === USER_TYPES.USER && <FloatingTimer />}
       </>
     );
   };
@@ -127,7 +139,7 @@ function AppContent() {
         ))}
 
         {/* Rota padrão para URLs não encontradas */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to={homeDoUsuario()} replace />} />
       </Routes>
     </>
   );

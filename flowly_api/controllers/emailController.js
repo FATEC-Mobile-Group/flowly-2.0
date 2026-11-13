@@ -16,6 +16,9 @@ const INVALID_RESET_CODE_MESSAGE =
 const hashSecret = (value) =>
   crypto.createHash("sha256").update(String(value)).digest("hex");
 const generateCode = () => crypto.randomInt(100000, 1000000).toString();
+const normalizeEmail = (email) =>
+  typeof email === "string" ? email.trim().toLowerCase() : email;
+const OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
 const isUserNotFoundError = (error) =>
   String(error?.message || "")
     .normalize("NFD")
@@ -82,7 +85,8 @@ exports.convidarMembro = async (req, res) => {
       res.status(404).json({ message: "Usuário com esse email não encontrado." });
     }
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error('Erro ao enviar convite:', err);
+    res.status(500).json({ message: "Erro ao enviar convite." });
   }
 };
 
@@ -138,6 +142,11 @@ const _enviarCodigoVerificacaoEmail = async (email) => {
   const user = await User.findOne({ email });
   if (!user) {
     throw new Error("Usuário não encontrado.");
+  }
+
+  // Conta verificada entra pelo login: o codigo de verificacao so conclui o cadastro.
+  if (user.verificado !== false) {
+    return null;
   }
 
   // Gerar código de 6 dígitos
@@ -215,7 +224,7 @@ exports.enviarCodigoVerificacao = async (req, res) => {
   }
 
   try {
-    await _enviarCodigoVerificacaoEmail(email.trim().toLowerCase());
+    await _enviarCodigoVerificacaoEmail(normalizeEmail(email));
   } catch (err) {
     if (!isUserNotFoundError(err)) {
       console.error('Erro ao enviar código de verificação:', err.message);
@@ -238,9 +247,16 @@ exports.validarCodigoVerificacao = async (req, res) => {
       return res.status(400).json({ message: "Email ou UserId e código são obrigatórios." });
     }
 
+    // Valor nao textual viraria operador do MongoDB nas consultas abaixo.
+    const invalidUserId = userId && (typeof userId !== "string" || !OBJECT_ID_PATTERN.test(userId));
+    const invalidEmail = email && typeof email !== "string";
+    if (invalidUserId || invalidEmail || typeof codigo !== "string") {
+      return res.status(401).json({ message: INVALID_VERIFICATION_CODE_MESSAGE });
+    }
+
     let resolvedUserId = userId;
     if (!resolvedUserId && email) {
-      const user = await User.findOne({ email });
+      const user = await User.findOne({ email: normalizeEmail(email) });
       if (!user) {
         return res.status(401).json({ message: INVALID_VERIFICATION_CODE_MESSAGE });
       }
@@ -264,21 +280,29 @@ exports.validarCodigoVerificacao = async (req, res) => {
       return res.status(401).json({ message: INVALID_VERIFICATION_CODE_MESSAGE });
     }
 
+    // A identidade vem do token encontrado, nunca do valor enviado pelo cliente.
+    const user = await User.findById(twoFactorToken.userId);
+
+    // Token de conta ja verificada nao gera sessao. E marcado como usado, nao apagado,
+    // porque uma validacao concorrente ainda pode precisar salvar o mesmo registro.
+    if (!user || user.verificado !== false) {
+      await TwoFactorToken.updateOne({ _id: twoFactorToken._id }, { $set: { validado: true } });
+      return res.status(401).json({ message: INVALID_VERIFICATION_CODE_MESSAGE });
+    }
+
     // Checar limite de tentativas
     if (twoFactorToken.tentativas >= 5) {
       await TwoFactorToken.deleteOne({ _id: twoFactorToken._id });
       return res.status(429).json({ message: "Muitas tentativas. Solicite um novo código." });
     }
 
+    // A conta vem primeiro: se salvar falhar, o token continua valido para nova tentativa.
+    user.verificado = true;
+    await user.save();
+
     // Marcar como validado
     twoFactorToken.validado = true;
     await twoFactorToken.save();
-
-    const user = await User.findById(resolvedUserId);
-    if (user && !user.verificado) {
-      user.verificado = true;
-      await user.save();
-    }
 
     // Gerar JWT ou sessão aqui
     const token = issueAuthToken(user);
@@ -289,12 +313,12 @@ exports.validarCodigoVerificacao = async (req, res) => {
       token,
       user: userPayload,
       redirect: user.tipo === 'admin' ? '/admin' : '/dashboard',
-      userId: resolvedUserId
+      userId: user._id
     });
 
   } catch (err) {
     console.error('Erro ao validar código:', err.message);
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: "Erro ao validar código." });
   }
 };
 
@@ -316,16 +340,24 @@ exports.validarTokenVerificacao = async (req, res) => {
       return res.status(401).json({ message: "Token inválido ou expirado." });
     }
 
+    const user = await User.findById(twoFactorToken.userId);
+
+    // Token de conta ja verificada nao gera sessao. E marcado como usado, nao apagado,
+    // porque uma validacao concorrente ainda pode precisar salvar o mesmo registro.
+    if (!user || user.verificado !== false) {
+      await TwoFactorToken.updateOne({ _id: twoFactorToken._id }, { $set: { validado: true } });
+      return res.status(401).json({ message: "Token inválido ou expirado." });
+    }
+
+    // A conta vem primeiro: se salvar falhar, o token continua valido para nova tentativa.
+    user.verificado = true;
+    await user.save();
+
     // Marcar como validado
     twoFactorToken.validado = true;
     await twoFactorToken.save();
 
     // Gerar JWT ou sessão aqui
-    const user = await User.findById(twoFactorToken.userId);
-    if (user && user.verificado === false) {
-      user.verificado = true;
-      await user.save();
-    }
     const jwtToken = issueAuthToken(user);
     const userPayload = await buildUserPayload(user);
 
@@ -339,7 +371,7 @@ exports.validarTokenVerificacao = async (req, res) => {
 
   } catch (err) {
     console.error('Erro ao validar token:', err.message);
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: "Erro ao validar token." });
   }
 };
 
@@ -403,7 +435,7 @@ exports.enviarCodigoRecuperacaoSenha = async (req, res) => {
   }
 
   try {
-    await _enviarCodigoRecuperacaoSenha(email.trim().toLowerCase());
+    await _enviarCodigoRecuperacaoSenha(normalizeEmail(email));
   } catch (err) {
     if (!isUserNotFoundError(err)) {
       console.error('Erro ao enviar codigo de recuperacao:', err.message);
@@ -421,7 +453,12 @@ exports.validarCodigoRecuperacaoSenha = async (req, res) => {
       return res.status(400).json({ message: "Email e codigo sao obrigatorios." });
     }
 
-    const user = await User.findOne({ email });
+    // Valor nao textual viraria filtro do MongoDB ou seria convertido em codigo por hashSecret.
+    if (typeof email !== "string" || typeof codigo !== "string") {
+      return res.status(401).json({ message: INVALID_RESET_CODE_MESSAGE });
+    }
+
+    const user = await User.findOne({ email: normalizeEmail(email) });
     if (!user) {
       return res.status(401).json({ message: INVALID_RESET_CODE_MESSAGE });
     }
@@ -453,7 +490,7 @@ exports.validarCodigoRecuperacaoSenha = async (req, res) => {
     res.status(200).json({ message: "Codigo validado com sucesso. Informe sua nova senha." });
   } catch (err) {
     console.error('Erro ao validar codigo de recuperacao:', err.message);
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: "Erro ao validar codigo de recuperacao." });
   }
 };
 
@@ -470,7 +507,12 @@ exports.redefinirSenhaComCodigo = async (req, res) => {
       return res.status(400).json({ message: passwordValidationResult });
     }
 
-    const user = await User.findOne({ email });
+    // Valor nao textual viraria filtro do MongoDB ou seria convertido em codigo por hashSecret.
+    if (typeof email !== "string" || typeof codigo !== "string") {
+      return res.status(401).json({ message: INVALID_RESET_CODE_MESSAGE });
+    }
+
+    const user = await User.findOne({ email: normalizeEmail(email) });
     if (!user) {
       return res.status(401).json({ message: INVALID_RESET_CODE_MESSAGE });
     }
@@ -493,6 +535,6 @@ exports.redefinirSenhaComCodigo = async (req, res) => {
     res.status(200).json({ message: "Senha redefinida com sucesso. Faca login com a nova senha." });
   } catch (err) {
     console.error('Erro ao redefinir senha:', err.message);
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: "Erro ao redefinir senha." });
   }
 };

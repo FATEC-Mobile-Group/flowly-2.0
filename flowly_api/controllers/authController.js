@@ -40,6 +40,10 @@ exports.registrar = async (req, res) => {
       });
     }
 
+    if (termsVersion != null && typeof termsVersion !== 'string') {
+      return res.status(400).json({ erro: 'Versão dos termos inválida.' });
+    }
+
     const hash = await argon2.hash(senha);
     
     const novoUsuario = new User({
@@ -68,7 +72,12 @@ exports.registrar = async (req, res) => {
       redirectTo: `/verificar-2fa?email=${encodeURIComponent(normalizedEmail)}`
     });
   } catch (err) {
-    res.status(400).json({ erro: 'Erro ao registrar', detalhe: err.message });
+    // E-mail ja cadastrado ou dado recusado pelo modelo continuam 400; o resto e falha do servidor.
+    const invalidData = err.code === 11000 || err.name === 'ValidationError';
+    if (!invalidData) {
+      console.error('Erro ao registrar:', err);
+    }
+    res.status(invalidData ? 400 : 500).json({ erro: 'Erro ao registrar' });
   }
 };
 
@@ -103,13 +112,7 @@ exports.login = async (req, res) => {
       });
     }
 
-    if (user.tipo === 'admin') {
-      return res.json({
-        token: issueAuthToken(user),
-        user: await buildUserPayload(user),
-      });
-    }
-
+    // Perfil facial ativo vale para qualquer tipo de conta.
     const faceProfile = await FaceProfile.findOne({ userId: user._id, enrolled: true });
 
     if (faceProfile) {
@@ -117,6 +120,13 @@ exports.login = async (req, res) => {
       return res.json({
         requiresFaceVerification: true,
         faceSessionToken,
+        user: await buildUserPayload(user),
+      });
+    }
+
+    if (user.tipo === 'admin') {
+      return res.json({
+        token: issueAuthToken(user),
         user: await buildUserPayload(user),
       });
     }
@@ -141,7 +151,8 @@ exports.login = async (req, res) => {
     });
     
   } catch (err) {
-    res.status(500).json({ erro: 'Erro no login', detalhe: err.message });
+    console.error('Erro no login:', err);
+    res.status(500).json({ erro: 'Erro no login' });
   }
 };
 

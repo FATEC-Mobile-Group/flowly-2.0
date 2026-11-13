@@ -54,11 +54,15 @@ class FaceService {
 
   Future<AuthResult> enrollFromProfile({
     required String imageBase64,
+    required String senhaAtual,
   }) async {
     try {
       await ApiClient.instance.dio.post<Map<String, dynamic>>(
         '/api/face/enroll-profile',
-        data: <String, String>{'imageBase64': imageBase64},
+        data: <String, String>{
+          'imageBase64': imageBase64,
+          'senhaAtual': senhaAtual,
+        },
         options: _faceProcessingOptions,
       );
       return const AuthResult(

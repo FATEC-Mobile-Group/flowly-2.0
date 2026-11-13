@@ -10,6 +10,9 @@ class AuthService {
   AuthService({FlutterSecureStorage? storage})
     : _storage = storage ?? const FlutterSecureStorage();
 
+  static const String _adminDesktopOnlyMessage =
+      'Administradores estão disponíveis apenas no desktop.';
+
   final FlutterSecureStorage _storage;
 
   Future<AuthResult> login({
@@ -26,6 +29,13 @@ class AuthService {
 
       if (data['requiresFaceVerification'] == true) {
         final Map<String, dynamic> user = _extractUserMap(data);
+        // Admin com rosto tambem passa por aqui: a regra vale antes da etapa facial.
+        if (_extractUserType(data, user, '') == 'admin') {
+          return const AuthResult(
+            success: false,
+            message: _adminDesktopOnlyMessage,
+          );
+        }
         return AuthResult(
           success: false,
           message: 'Verificação facial necessária.',
@@ -66,7 +76,7 @@ class AuthService {
         await logout();
         return const AuthResult(
           success: false,
-          message: 'Administradores estão disponíveis apenas no desktop.',
+          message: _adminDesktopOnlyMessage,
         );
       }
 

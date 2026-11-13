@@ -16,6 +16,7 @@ class FaceProfileScreen extends StatefulWidget {
 class _FaceProfileScreenState extends State<FaceProfileScreen> {
   final FaceService _faceService = FaceService();
   final ImagePicker _picker = ImagePicker();
+  final TextEditingController _passwordController = TextEditingController();
 
   bool _loadingStatus = true;
   bool _enrolled = false;
@@ -27,6 +28,12 @@ class _FaceProfileScreenState extends State<FaceProfileScreen> {
   void initState() {
     super.initState();
     _loadStatus();
+  }
+
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadStatus() async {
@@ -66,16 +73,26 @@ class _FaceProfileScreenState extends State<FaceProfileScreen> {
       return;
     }
 
+    if (_passwordController.text.isEmpty) {
+      setState(() => _message = 'Informe sua senha atual para confirmar.');
+      return;
+    }
+
     setState(() {
       _submitting = true;
       _message = '';
     });
 
-    final result = await _faceService.enrollFromProfile(imageBase64: _previewBase64!);
+    final result = await _faceService.enrollFromProfile(
+      imageBase64: _previewBase64!,
+      senhaAtual: _passwordController.text,
+    );
 
     if (!mounted) {
       return;
     }
+
+    _passwordController.clear();
 
     setState(() {
       _submitting = false;
@@ -135,6 +152,15 @@ class _FaceProfileScreenState extends State<FaceProfileScreen> {
                     onPressed: _submitting ? null : _capturePhoto,
                     icon: const Icon(Icons.camera_alt_outlined),
                     label: const Text('Capturar rosto'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _passwordController,
+                    enabled: !_submitting,
+                    obscureText: true,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    decoration: const InputDecoration(labelText: 'Senha atual'),
                   ),
                   const SizedBox(height: 12),
                   FilledButton(

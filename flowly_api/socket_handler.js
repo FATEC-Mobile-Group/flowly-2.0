@@ -9,10 +9,9 @@ const { moderateText } = require('./services/nlpModerationService');
 const { saveChatInsight, saveBlockedChatInsight } = require('./services/assistantInsightService');
 const config = require('./config/config');
 const { verifyAuthToken } = require('./utils/faceAuth');
+const { isOriginAllowed } = require('./utils/corsPolicy');
 
-const socketOrigins = config.corsOrigin === '*'
-  ? '*'
-  : config.corsOrigin.split(',').map((origin) => origin.trim()).filter(Boolean);
+const isSocketOriginAllowed = (origin) => isOriginAllowed(origin, config.corsOrigin, config.env);
 
 const extractSocketToken = (socket) => {
   const authToken = socket.handshake?.auth?.token;
@@ -37,9 +36,11 @@ const authenticateSocket = (socket, next) => {
 const setupSocketInteractions = (server) => {
   const io = new Server(server, {
     cors: {
-      origin: socketOrigins,
+      origin: (origin, callback) => callback(null, isSocketOriginAllowed(origin)),
       methods: ['GET', 'POST']
-    }
+    },
+    // cors so define os cabecalhos da resposta; quem recusa o handshake e o allowRequest.
+    allowRequest: (req, callback) => callback(null, isSocketOriginAllowed(req.headers.origin)),
   });
 
   setIo(io);

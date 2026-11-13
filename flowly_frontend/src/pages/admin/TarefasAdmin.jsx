@@ -6,22 +6,37 @@ import "../../styles/pages/admin/DashboardAdmin.css";
 import "../../styles/pages/admin/TarefasAdmin.css";
 import Sidebar from "../../components/layout/Sidebar";
 
+// A API so aceita conta tipo 'user' como responsavel; membro sem tipo (API antiga) continua listado.
+const podeSerResponsavel = (membro) => membro?.tipo !== "admin";
+
+// Data civil local de hoje em YYYY-MM-DD. O input date tambem entrega YYYY-MM-DD, e esse formato
+// compara como texto na ordem do calendario; new Date('YYYY-MM-DD') seria meia-noite UTC.
+const hojeLocal = () => {
+  const agora = new Date();
+  const mes = String(agora.getMonth() + 1).padStart(2, "0");
+  const dia = String(agora.getDate()).padStart(2, "0");
+  return `${agora.getFullYear()}-${mes}-${dia}`;
+};
+
 function TarefasAdmin() {
   const [descricao, setDescricao] = useState("");
   const [detalhes, setDetalhes] = useState("");
   const [dataEntrega, setDataEntrega] = useState("");
+  const [dataEntregaOriginal, setDataEntregaOriginal] = useState("");
   const [equipes, setEquipes] = useState([]);
   const [users, setUsers] = useState([]);
   const [equipeSelecionada, setEquipeSelecionada] = useState("");
   const [userSelecionado, setUserSelecionado] = useState("");
+  const [responsavelAtual, setResponsavelAtual] = useState(null);
   const [mensagem, setMensagem] = useState("");
   const [tipoMensagem, setTipoMensagem] = useState("sucesso");
-  const [modoEdicao, setModoEdicao] = useState(false);
   const [idTarefaEditando, setIdTarefaEditando] = useState(null);
   const [tempoEstimado, setTempoEstimado] = useState("");
   const [urgencia, setUrgencia] = useState("baixa");
   const location = useLocation();
   const { id } = useParams();
+  // O modo vem da rota: falhar ao carregar a tarefa nunca pode transformar edicao em criacao.
+  const modoEdicao = Boolean(id);
 
   useEffect(() => {
     buscarEquipes();
@@ -32,16 +47,18 @@ function TarefasAdmin() {
 
     const carregarTarefa = async () => {
       try {
-        const res = await apiClient.get(API_ENDPOINTS.TAREFAS_BY_ID(id));
+        const res = await apiClient.get(`${API_ENDPOINTS.TAREFAS_BY_ID(id)}/detalhes`);
 
-        const tarefa = res.data;
-        setModoEdicao(true);
+        const { tarefa } = res.data;
         setIdTarefaEditando(tarefa._id);
         setDescricao(tarefa.descricao || "");
         setDetalhes(tarefa.detalhes || "");
-        setDataEntrega(tarefa.dataEntrega ? tarefa.dataEntrega.split("T")[0] : "");
+        const dataCarregada = tarefa.dataEntrega ? tarefa.dataEntrega.split("T")[0] : "";
+        setDataEntrega(dataCarregada);
+        setDataEntregaOriginal(dataCarregada);
         setEquipeSelecionada(tarefa.equipe?._id || "");
         setUserSelecionado(tarefa.user?._id || "");
+        setResponsavelAtual(tarefa.user || null);
         setTempoEstimado(tarefa.tempoEstimado || "");
         setUrgencia(tarefa.urgencia || "baixa");
 
@@ -50,6 +67,8 @@ function TarefasAdmin() {
         }
       } catch (err) {
         console.error("Erro ao carregar tarefa para edição:", err);
+        setTipoMensagem("erro");
+        setMensagem("Não foi possível carregar a tarefa para edição. Volte à lista de tarefas e tente novamente.");
       }
     };
 
@@ -68,7 +87,7 @@ function TarefasAdmin() {
   const buscarMembersDaEquipe = async (equipeId) => {
     try {
       const res = await apiClient.get(API_ENDPOINTS.EQUIPE_MEMBROS(equipeId));
-      setUsers(res.data);
+      setUsers(res.data.filter(podeSerResponsavel));
     } catch (err) {
       console.error("Erro ao buscar membros da equipe:", err);
     }
@@ -85,17 +104,9 @@ function TarefasAdmin() {
     }
   };
 
-  const cancelarEdicao = () => {
-    setModoEdicao(false);
-    setIdTarefaEditando(null);
-    setDescricao("");
-    setDetalhes("");
-    setDataEntrega("");
-    setEquipeSelecionada("");
-    setUserSelecionado("");
-    setTempoEstimado("");
-    setUrgencia("baixa");
-    setUsers([]);
+  const mostrarErroAoSalvar = (err) => {
+    setTipoMensagem("erro");
+    setMensagem(err.response?.data?.erro || "Não foi possível salvar a tarefa.");
   };
 
   const atualizarTarefa = async () => {
@@ -116,21 +127,22 @@ function TarefasAdmin() {
       setTipoMensagem("sucesso");
       setMensagem("Tarefa atualizada com sucesso!");
       setTimeout(() => setMensagem(""), 3000);
-      cancelarEdicao();
     } catch (err) {
       console.error("Erro ao atualizar tarefa:", err);
+      mostrarErroAoSalvar(err);
     }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    const hoje = new Date();
-    const dataSelecionada = new Date(dataEntrega);
-    hoje.setHours(0, 0, 0, 0);
-    dataSelecionada.setHours(0, 0, 0, 0);
+    // Sem a tarefa carregada nao ha o que salvar, e a rota de edicao nunca faz POST.
+    if (modoEdicao && !idTarefaEditando) return;
 
-    if (dataSelecionada < hoje) {
+    // Na edicao, a data que ja estava salva continua valida mesmo atrasada; so uma data nova e conferida.
+    const dataAlterada = !modoEdicao || dataEntrega !== dataEntregaOriginal;
+
+    if (dataEntrega && dataAlterada && dataEntrega < hojeLocal()) {
       setTipoMensagem("erro");
       setMensagem("A data de entrega não pode ser anterior à data de hoje.");
       setTimeout(() => setMensagem(""), 3000);
@@ -169,8 +181,15 @@ function TarefasAdmin() {
       }
     } catch (err) {
       console.error("Erro ao salvar tarefa:", err);
+      mostrarErroAoSalvar(err);
     }
   };
+
+  // Responsavel legado fora da lista (ex.: admin) aparece so como valor atual, nunca como nova escolha.
+  const responsavelForaDaLista =
+    responsavelAtual &&
+    userSelecionado === responsavelAtual._id &&
+    !users.some((user) => user._id === userSelecionado);
 
   return (
     <div className="admin-page">
@@ -248,9 +267,16 @@ function TarefasAdmin() {
                 {user.nome}
               </option>
             ))}
+            {responsavelForaDaLista && (
+              <option value={responsavelAtual._id} disabled>
+                {responsavelAtual.nome}
+              </option>
+            )}
           </select>
 
-          <button type="submit">{modoEdicao ? "Salvar Alterações" : "Criar Tarefa"}</button>
+          <button type="submit" disabled={modoEdicao && !idTarefaEditando}>
+            {modoEdicao ? "Salvar Alterações" : "Criar Tarefa"}
+          </button>
 
           {mensagem && <div className={`mensagem ${tipoMensagem}`}>{mensagem}</div>}
         </form>

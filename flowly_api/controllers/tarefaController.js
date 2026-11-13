@@ -55,6 +55,12 @@ const getEquipeIdsAcessiveis = async (req) => {
   return equipes.map((equipe) => equipe._id);
 };
 
+const CAMPOS_EDITAVEIS = ['descricao', 'detalhes', 'dataEntrega', 'user', 'equipe', 'tempoEstimado', 'urgencia', 'tags'];
+
+// Identificador informado que nao e texto viraria filtro ou valor invalido nas consultas.
+const identificadorInvalido = (value) =>
+  value !== undefined && value !== null && value !== '' && typeof value !== 'string';
+
 const montarFiltroTarefasAcessiveis = async (req, filtroBase = {}) => {
   const equipeIds = await getEquipeIdsAcessiveis(req);
   if (equipeIds.length === 0) {
@@ -77,6 +83,8 @@ exports.criarTarefa = async (req, res) => {
   try {
     const { descricao, detalhes, dataEntrega, user, equipe, tempoEstimado, urgencia, tags, subtarefas } = req.body;
     if (!equipe) return res.status(400).json({ erro: 'Equipe é obrigatória' });
+    if (typeof equipe !== 'string') return res.status(400).json({ erro: 'Equipe inválida' });
+    if (identificadorInvalido(user)) return res.status(400).json({ erro: 'User inválido' });
 
     const equipeDoc = await Equipe.findOne({
       _id: equipe,
@@ -126,7 +134,12 @@ exports.criarTarefa = async (req, res) => {
 
     res.status(201).json(await assinarAnexosTarefa(tarefa));
   } catch (err) {
-    res.status(500).json({ erro: 'Erro ao criar tarefa', detalhe: err.message });
+    // Campo obrigatorio ausente ou valor que o modelo nao aceita e erro do cliente.
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ erro: 'Dados da tarefa inválidos.' });
+    }
+    console.error('Erro ao criar tarefa:', err);
+    res.status(500).json({ erro: 'Erro ao criar tarefa' });
   }
 };
 
@@ -157,6 +170,12 @@ exports.listarTarefas = async (req, res) => {
 exports.editarTarefa = async (req, res) => {
   try {
     const { descricao, detalhes, dataEntrega, user, equipe, tempoEstimado, urgencia, tags } = req.body;
+
+    if (!CAMPOS_EDITAVEIS.some((campo) => req.body[campo] !== undefined)) {
+      return res.status(400).json({ erro: 'Nenhum dado para atualizar.' });
+    }
+    if (identificadorInvalido(equipe)) return res.status(400).json({ erro: 'Equipe inválida' });
+    if (identificadorInvalido(user)) return res.status(400).json({ erro: 'User inválido' });
 
     const filtroTarefaAtual = await montarFiltroTarefasAcessiveis(req, { _id: req.params.id });
     if (!filtroTarefaAtual) {
@@ -217,6 +236,7 @@ exports.editarTarefa = async (req, res) => {
     await logActivity('atualizacao_geral', 'Detalhes da tarefa foram atualizados', req.user.id, tarefaAtualizada._id);
     res.json(await assinarAnexosTarefa(tarefaAtualizada));
   } catch (err) {
+    console.error('Erro ao editar tarefa:', err);
     res.status(500).json({ erro: 'Erro ao editar tarefa' });
   }
 };
@@ -252,7 +272,8 @@ exports.detalhesTarefa = async (req, res) => {
 
     res.json({ tarefa: await assinarAnexosTarefa(tarefa), comentarios, logs });
   } catch (err) {
-    res.status(500).json({ erro: 'Erro ao buscar detalhes da tarefa', detalhe: err.message });
+    console.error('Erro ao buscar detalhes da tarefa:', err);
+    res.status(500).json({ erro: 'Erro ao buscar detalhes da tarefa' });
   }
 };
 
@@ -260,7 +281,7 @@ exports.detalhesTarefa = async (req, res) => {
 exports.adicionarComentario = async (req, res) => {
   try {
     const { texto } = req.body;
-    if (!texto) return res.status(400).json({ erro: 'Texto do comentário vazio' });
+    if (typeof texto !== 'string' || !texto) return res.status(400).json({ erro: 'Texto do comentário vazio' });
 
     const filtro = await montarFiltroTarefasAcessiveis(req, { _id: req.params.id });
     if (!filtro) return res.status(404).json({ erro: 'Tarefa nÃ£o encontrada' });
@@ -275,7 +296,8 @@ exports.adicionarComentario = async (req, res) => {
     const populateComentario = await Comment.findById(comentario._id).populate('user', 'nome');
     res.status(201).json(populateComentario);
   } catch (err) {
-    res.status(500).json({ erro: 'Erro ao adicionar comentário', detalhe: err.message });
+    console.error('Erro ao adicionar comentário:', err);
+    res.status(500).json({ erro: 'Erro ao adicionar comentário' });
   }
 };
 
@@ -283,7 +305,7 @@ exports.adicionarComentario = async (req, res) => {
 exports.adicionarSubtarefa = async (req, res) => {
   try {
     const { descricao } = req.body;
-    if (!descricao) return res.status(400).json({ erro: 'Obrigatório fornecer descrição' });
+    if (typeof descricao !== 'string' || !descricao) return res.status(400).json({ erro: 'Obrigatório fornecer descrição' });
 
     const filtro = await montarFiltroTarefasAcessiveis(req, { _id: req.params.id });
     if (!filtro) return res.status(404).json({ erro: 'Tarefa nÃ£o encontrada' });
@@ -297,6 +319,7 @@ exports.adicionarSubtarefa = async (req, res) => {
     await logActivity('nova_subtarefa', `Subtarefa '${descricao}' adicionada`, req.user.id, req.params.id);
     res.status(201).json(await assinarAnexosTarefa(tarefa));
   } catch (err) {
+    console.error('Erro ao adicionar subtarefa:', err);
     res.status(500).json({ erro: 'Erro ao adicionar subtarefa' });
   }
 };
@@ -360,7 +383,8 @@ exports.listarBacklog = async (req, res) => {
 
     res.json(await assinarAnexosTarefas(tarefas));
   } catch (err) {
-    res.status(500).json({ erro: 'Erro ao buscar backlog', detalhe: err.message });
+    console.error('Erro ao buscar backlog:', err);
+    res.status(500).json({ erro: 'Erro ao buscar backlog' });
   }
 };
 
@@ -420,7 +444,8 @@ exports.atribuirParaMim = async (req, res) => {
 
     res.json({ msg: 'Tarefa atribuída com sucesso', tarefa: await assinarAnexosTarefa(tarefaAtualizada) });
   } catch (err) {
-    res.status(500).json({ erro: 'Erro ao atribuir tarefa', detalhe: err.message });
+    console.error('Erro ao atribuir tarefa:', err);
+    res.status(500).json({ erro: 'Erro ao atribuir tarefa' });
   }
 };
 
@@ -468,7 +493,8 @@ exports.atualizarStatusUser = async (req, res) => {
 
     res.json({ msg: 'Status atualizado com sucesso', tarefa: await assinarAnexosTarefa(tarefa) });
   } catch (err) {
-    res.status(500).json({ erro: 'Erro ao atualizar status', detalhe: err.message });
+    console.error('Erro ao atualizar status:', err);
+    res.status(500).json({ erro: 'Erro ao atualizar status' });
   }
 };
 
@@ -476,6 +502,10 @@ exports.atualizarStatusUser = async (req, res) => {
 exports.controlarCronometro = async (req, res) => {
   try {
     const { acao } = req.body; // 'iniciar' ou 'pausar'
+    if (acao !== 'iniciar' && acao !== 'pausar') {
+      return res.status(400).json({ erro: 'Ação inválida.' });
+    }
+
     const tarefa = await Tarefa.findOne({ _id: req.params.id, user: req.user.id });
 
     if (!tarefa) return res.status(403).json({ erro: 'Acesso negado à tarefa' });
@@ -509,6 +539,7 @@ exports.controlarCronometro = async (req, res) => {
       tempoExcedido: tarefa.tempoExcedido
     });
   } catch (err) {
+    console.error('Erro ao controlar cronômetro:', err);
     res.status(500).json({ erro: 'Erro ao controlar cronômetro' });
   }
 };
@@ -558,7 +589,7 @@ exports.adicionarAnexo = async (req, res) => {
     if (err.message.includes('timeout')) {
       return res.status(504).json({ erro: 'Timeout ao conectar com Cloud Storage' });
     }
-    res.status(500).json({ erro: 'Erro ao fazer upload de anexo', detalhe: err.message });
+    res.status(500).json({ erro: 'Erro ao fazer upload de anexo' });
   }
 };
 
