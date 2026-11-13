@@ -17,6 +17,9 @@ const faceRoutes = require('./routes/faceRoutes');
 
 const app = express();
 
+// Define o req.ip usado pelos rate limiters: so o salto do proxy da plataforma e confiavel.
+app.set('trust proxy', config.trustProxy);
+
 const corsOptions = {
   origin(origin, callback) {
     if (isOriginAllowed(origin, config.corsOrigin, config.env)) {

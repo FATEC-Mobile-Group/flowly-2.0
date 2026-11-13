@@ -19,6 +19,9 @@ const config = {
     fileAudience: process.env.JWT_FILE_AUDIENCE || 'flowly-storage',
   },
   env: process.env.NODE_ENV || 'development',
+  // Em producao a API fica atras do proxy do Cloud Run, que acrescenta o IP do cliente ao fim do
+  // X-Forwarded-For: com 1 salto confiavel o req.ip e esse endereco. Fora dela nao ha proxy.
+  trustProxy: process.env.NODE_ENV === 'production' ? 1 : false,
   corsOrigin: process.env.CORS_ORIGIN || '*',
   bodySizeLimit: process.env.BODY_SIZE_LIMIT || '15mb',
   face: {
