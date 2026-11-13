@@ -3,6 +3,7 @@ const cors = require('cors');
 const config = require('./config/config');
 const errorHandler = require('./middlewares/errorHandler');
 const { HTTP_STATUS, ERROR_MESSAGES } = require('./config/constants');
+const { isOriginAllowed } = require('./utils/corsPolicy');
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
@@ -16,17 +17,16 @@ const faceRoutes = require('./routes/faceRoutes');
 
 const app = express();
 
-const allowedOrigins = config.corsOrigin
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+    if (isOriginAllowed(origin, config.corsOrigin, config.env)) {
       callback(null, true);
       return;
     }
-    callback(new Error('Origem nao permitida pelo CORS.'));
+    // Sem status o errorHandler responderia 500.
+    const error = new Error('Origem nao permitida pelo CORS.');
+    error.status = HTTP_STATUS.FORBIDDEN;
+    callback(error);
   },
 };
 

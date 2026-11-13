@@ -1,4 +1,5 @@
 require('dotenv').config();
+const { isCorsOriginExplicit } = require('../utils/corsPolicy');
 
 const jwtSecret = process.env.JWT_SECRET || 'sua_chave_secreta';
 
@@ -50,9 +51,9 @@ config.validateRuntime = () => {
   if (config.jwt.secret === 'sua_chave_secreta' || config.jwt.secret.length < 32) {
     errors.push('JWT_SECRET deve ter pelo menos 32 caracteres e nao pode usar o valor padrao.');
   }
-  /*if (config.corsOrigin === '*') {
-    errors.push('CORS_ORIGIN nao pode ser curinga em producao.');
-  }*/
+  if (!isCorsOriginExplicit(config.corsOrigin)) {
+    errors.push('CORS_ORIGIN deve listar origens explicitas e nao pode ser curinga em producao.');
+  }
   if (!config.face.serviceSecret) {
     errors.push('FACE_SERVICE_SECRET e obrigatorio em producao.');
   }
