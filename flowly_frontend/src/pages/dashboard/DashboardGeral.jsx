@@ -13,6 +13,7 @@ import {
   BarElement
 } from 'chart.js';
 import Sidebar from "../../components/layout/Sidebar";
+import { useFotoPerfil } from "../../components/layout/useFotoPerfil";
 import { formatarStatus } from "../../config/statusUtils";
 import { API_ENDPOINTS } from "../../config/config";
 import "../../styles/pages/dashboard/DashboardGeral.css";
@@ -34,6 +35,7 @@ function DashboardGeral() {
   const [notificationCount, setNotificationCount] = useState(0);
 
   const adminName = localStorage.getItem('nome') || 'Admin Flowly';
+  const { fotoUrl, aoFalharFoto } = useFotoPerfil();
 
   useEffect(() => {
     buscarEquipes();
@@ -139,7 +141,13 @@ function DashboardGeral() {
             {notificationCount > 0 && <span style={{ position: 'absolute', top: '-8px', right: '-8px', backgroundColor: '#ff4444', color: 'white', borderRadius: '50%', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75em', fontWeight: 'bold' }}>{notificationCount}</span>}
           </Link>
           <div className="profile-info">
-            <div className="avatar">{adminName.charAt(0).toUpperCase()}</div>
+            <div className="avatar">
+              {fotoUrl ? (
+                <img src={fotoUrl} alt="Foto de perfil" className="avatar-img" onError={aoFalharFoto} />
+              ) : (
+                adminName.charAt(0).toUpperCase()
+              )}
+            </div>
             <span>{adminName}</span>
           </div>
         </div>
