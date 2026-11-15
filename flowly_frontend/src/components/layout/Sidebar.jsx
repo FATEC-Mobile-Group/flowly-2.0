@@ -1,12 +1,11 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   FaChartPie, FaUsers, FaTasks, FaSignOutAlt,
   FaBars, FaTimes, FaPlus, FaClipboardList, FaHome, FaInbox, FaComments, FaBell, FaMicrophone
 } from 'react-icons/fa';
 import { authUtils } from '../../config/authUtils';
-import apiClient, { getFullApiUrl } from '../../config/apiClient';
-import { API_ENDPOINTS, LOCAL_STORAGE_KEYS } from '../../config/config';
+import { useFotoPerfil } from './useFotoPerfil';
 import '../../styles/components/Sidebar.css';
 
 const Sidebar = () => {
@@ -18,45 +17,7 @@ const Sidebar = () => {
   const userType = authUtils.getUserType();
   const isAdmin = userType === 'admin';
   const userName = localStorage.getItem('nome') || 'Usuário';
-  const userPhoto = localStorage.getItem(LOCAL_STORAGE_KEYS.USER_PHOTO) || '';
-
-  // A foto vem com token de 5 minutos. O localStorage e so cache: a URL e renovada ao montar e,
-  // se a imagem falhar, uma unica vez por montagem. Uma URL que ja falhou nao volta a ser exibida.
-  const [fotoQuebrada, setFotoQuebrada] = useState('');
-  const [, setFotoRenovada] = useState(0);
-  const renovandoRef = useRef(false);
-  const renovouNoErroRef = useRef(false);
-
-  const renovarFoto = useCallback(async () => {
-    renovandoRef.current = true;
-    try {
-      const res = await apiClient.get(API_ENDPOINTS.USER_ME);
-      const fotoAtual = res.data?.fotoPerfil || '';
-      if (fotoAtual) {
-        localStorage.setItem(LOCAL_STORAGE_KEYS.USER_PHOTO, fotoAtual);
-      } else {
-        localStorage.removeItem(LOCAL_STORAGE_KEYS.USER_PHOTO);
-      }
-      setFotoRenovada((versao) => versao + 1);
-    } catch {
-      // Sem renovacao fica a foto em cache ou a inicial; sessao invalida segue o interceptor global.
-    } finally {
-      renovandoRef.current = false;
-    }
-  }, []);
-
-  useEffect(() => {
-    renovarFoto();
-  }, [renovarFoto]);
-
-  const handleFotoErro = () => {
-    setFotoQuebrada(userPhoto);
-    if (renovandoRef.current || renovouNoErroRef.current) return;
-    renovouNoErroRef.current = true;
-    renovarFoto();
-  };
-
-  const userPhotoUrl = userPhoto && userPhoto !== fotoQuebrada ? getFullApiUrl(userPhoto) : '';
+  const { fotoUrl: userPhotoUrl, aoFalharFoto: handleFotoErro } = useFotoPerfil();
 
   // Close mobile menu on route change
   useEffect(() => {
