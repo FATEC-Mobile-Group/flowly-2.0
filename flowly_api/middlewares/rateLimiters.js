@@ -71,4 +71,11 @@ module.exports = {
     windowMs: fifteenMinutes,
     buildKey: (req) => `face-verify:${sha256(req.body.faceSessionToken)}`,
   }),
+  // Upload com JWT (anexo de tarefa e foto de perfil): um contador por conta, dividido entre as duas
+  // rotas. Usar depois do auth e antes do Multer. O contador e por instancia do Cloud Run.
+  uploadLimiter: createRateLimiter({
+    max: 20,
+    windowMs: fifteenMinutes,
+    buildKey: (req) => `upload:${req.user.id}`,
+  }),
 };

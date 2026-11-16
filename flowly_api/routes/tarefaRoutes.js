@@ -5,6 +5,7 @@ const upload = require('../middlewares/upload');
 const moderateUpload = require('../middlewares/moderateUpload');
 const { isAdmin, isUser } = require('../middlewares/roles');
 const ensureObjectBody = require('../middlewares/ensureObjectBody');
+const { uploadLimiter } = require('../middlewares/rateLimiters');
 const tarefaController = require('../controllers/tarefaController');
 
 // Todas as rotas requerem autenticação
@@ -42,7 +43,15 @@ router.post('/:id/subtarefas', ensureObjectBody, tarefaController.adicionarSubta
 router.put('/:id/subtarefas/:subId', tarefaController.toggleSubtarefa);
 
 // ALL: Upload de anexo (suporta multipart/form-data)
-router.post('/:id/anexos', upload.single('file'), moderateUpload('task_attachment'), tarefaController.adicionarAnexo);
+// Limite e acesso vem antes do Multer: sem eles o arquivo nao e lido, moderado nem gravado.
+router.post(
+  '/:id/anexos',
+  uploadLimiter,
+  tarefaController.verificarAcessoAnexo,
+  upload.single('file'),
+  moderateUpload('task_attachment'),
+  tarefaController.adicionarAnexo
+);
 
 // USER: atualizar status da tarefa
 router.put('/:id/status', isUser, ensureObjectBody, tarefaController.atualizarStatusUser);
