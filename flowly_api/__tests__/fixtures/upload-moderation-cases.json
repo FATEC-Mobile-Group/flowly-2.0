@@ -1,0 +1,396 @@
+{
+  "_comment": "Casos compartilhados pela API (uploadModeration.falsePositives.test.js) e pelo assistente (tests/test_upload_moderation.py). As duas implementacoes precisam dar o mesmo resultado para nomes e textos de PDF. A secao terms e a lista exata de termos de nome e de texto: as duas implementacoes conferem que suas listas sao iguais a ela. pornCompounds: raiz + prefixo e/ou sufixo das listas fechadas, como palavra inteira (freeporn, pornvideo).",
+  "terms": {
+    "filename": [
+      "porn",
+      "porno",
+      "pornos",
+      "pornografia",
+      "pornografias",
+      "pornografico",
+      "pornograficos",
+      "pornografica",
+      "pornograficas",
+      "pornography",
+      "pornographic",
+      "pornstar",
+      "pornstars",
+      "pornhub",
+      "youporn",
+      "pornografia explicita",
+      "conteudo sexual",
+      "sexo explicito",
+      "sexually explicit",
+      "simbolo de odio",
+      "simbolos de odio",
+      "hate symbol",
+      "hate symbols",
+      "ku klux klan",
+      "white supremacy",
+      "white supremacist",
+      "white supremacists",
+      "white supremacism",
+      "supremacia branca",
+      "heil hitler",
+      "sieg heil",
+      "apologia ao nazismo"
+    ],
+    "text": [
+      "pornografia explicita",
+      "conteudo sexual",
+      "sexo explicito",
+      "sexually explicit",
+      "simbolo de odio",
+      "simbolos de odio",
+      "hate symbol",
+      "hate symbols",
+      "ku klux klan",
+      "white supremacy",
+      "white supremacist",
+      "white supremacists",
+      "white supremacism",
+      "supremacia branca",
+      "heil hitler",
+      "sieg heil",
+      "apologia ao nazismo"
+    ],
+    "pornCompounds": {
+      "roots": [
+        "porn",
+        "porno"
+      ],
+      "prefixes": [
+        "free",
+        "hard",
+        "hardcore",
+        "softcore",
+        "xxx",
+        "hd",
+        "live",
+        "amateur"
+      ],
+      "suffixes": [
+        "video",
+        "videos",
+        "vid",
+        "vids",
+        "tube",
+        "site",
+        "sites",
+        "star",
+        "stars",
+        "hub",
+        "pic",
+        "pics",
+        "foto",
+        "fotos",
+        "filme",
+        "filmes",
+        "film",
+        "films",
+        "movie",
+        "movies",
+        "clip",
+        "clips",
+        "cam",
+        "cams"
+      ]
+    }
+  },
+  "filenames": [
+    {
+      "name": "relatorio.pdf",
+      "blocked": false
+    },
+    {
+      "name": "relatorio-sexta.pdf",
+      "blocked": false
+    },
+    {
+      "name": "episodio-3.pdf",
+      "blocked": false
+    },
+    {
+      "name": "foto-maria-gorete.pdf",
+      "blocked": false
+    },
+    {
+      "name": "whatever.pdf",
+      "blocked": false
+    },
+    {
+      "name": "print-kkkk.pdf",
+      "blocked": false
+    },
+    {
+      "name": "custodio-ata.pdf",
+      "blocked": false
+    },
+    {
+      "name": "Relatório_Sexta-Feira.PDF",
+      "blocked": false
+    },
+    {
+      "name": "EPISÓDIO 3 - Custódio.pdf",
+      "blocked": false
+    },
+    {
+      "name": "FotoMariaGorete2026.pdf",
+      "blocked": false
+    },
+    {
+      "name": "exame-de-sangue.pdf",
+      "blocked": false
+    },
+    {
+      "name": "violencia-domestica-relatorio.pdf",
+      "blocked": false
+    },
+    {
+      "name": "censo-sexo-feminino.pdf",
+      "blocked": false
+    },
+    {
+      "name": "modelo-contrato-xxx.pdf",
+      "blocked": false
+    },
+    {
+      "name": "Essex_chateau_melodioso.pdf",
+      "blocked": false
+    },
+    {
+      "name": "al-gore-clima.pdf",
+      "blocked": false
+    },
+    {
+      "name": "bloodhound.pdf",
+      "blocked": false
+    },
+    {
+      "name": "nazare-paulista.pdf",
+      "blocked": false
+    },
+    {
+      "name": "explicitamente.pdf",
+      "blocked": false
+    },
+    {
+      "name": "Pornic-ferias-2026.pdf",
+      "blocked": false
+    },
+    {
+      "name": "foodporn-receitas.pdf",
+      "blocked": false
+    },
+    {
+      "name": "cityporn-wallpaper.pdf",
+      "blocked": false
+    },
+    {
+      "name": "earthporn-paisagem.pdf",
+      "blocked": false
+    },
+    {
+      "name": "Pornichet-viagem.pdf",
+      "blocked": false
+    },
+    {
+      "name": "plano-conteudo-sexualidade.pdf",
+      "blocked": false
+    },
+    {
+      "name": "video-porno.pdf",
+      "blocked": true
+    },
+    {
+      "name": "PORNO.pdf",
+      "blocked": true
+    },
+    {
+      "name": "fotoPorno2.pdf",
+      "blocked": true
+    },
+    {
+      "name": "porno123.pdf",
+      "blocked": true
+    },
+    {
+      "name": "Pornográfico.pdf",
+      "blocked": true
+    },
+    {
+      "name": "ｐｏｒｎｏ.pdf",
+      "blocked": true
+    },
+    {
+      "name": "sexo-explícito.pdf",
+      "blocked": true
+    },
+    {
+      "name": "Sexo_Explicito.pdf",
+      "blocked": true
+    },
+    {
+      "name": "conteúdo sexual.pdf",
+      "blocked": true
+    },
+    {
+      "name": "heil-hitler.pdf",
+      "blocked": true
+    },
+    {
+      "name": "ku_klux_klan.pdf",
+      "blocked": true
+    },
+    {
+      "name": "simbolo.de.odio.pdf",
+      "blocked": true
+    },
+    {
+      "name": "simbolos-de-odio.pdf",
+      "blocked": true
+    },
+    {
+      "name": "pornhub.pdf",
+      "blocked": true
+    },
+    {
+      "name": "Pornstar_2026.pdf",
+      "blocked": true
+    },
+    {
+      "name": "videos-pornograficos.pdf",
+      "blocked": true
+    },
+    {
+      "name": "youporn.pdf",
+      "blocked": true
+    },
+    {
+      "name": "white-supremacism.pdf",
+      "blocked": true
+    },
+    {
+      "name": "freeporn.pdf",
+      "blocked": true
+    },
+    {
+      "name": "PORNvideo.pdf",
+      "blocked": true
+    },
+    {
+      "name": "FreePornVideos.pdf",
+      "blocked": true
+    },
+    {
+      "name": "pornovideos.pdf",
+      "blocked": true
+    },
+    {
+      "name": "XXXporn.pdf",
+      "blocked": true
+    },
+    {
+      "name": "pornfilme_2026.pdf",
+      "blocked": true
+    },
+    {
+      "name": "hardcoreporn.pdf",
+      "blocked": true
+    }
+  ],
+  "pdfTexts": [
+    {
+      "text": "Ata da reuniao de sexta-feira",
+      "blocked": false
+    },
+    {
+      "text": "O episodio do Custodio foi melodioso",
+      "blocked": false
+    },
+    {
+      "text": "Defina o valor explicitamente",
+      "blocked": false
+    },
+    {
+      "text": "Resumo: historia do nazismo e da suastica",
+      "blocked": false
+    },
+    {
+      "text": "Al Gore e o clima",
+      "blocked": false
+    },
+    {
+      "text": "Lei contra a mutilacao genital",
+      "blocked": false
+    },
+    {
+      "text": "Exame de sangue e relatorio de violencia",
+      "blocked": false
+    },
+    {
+      "text": "kkkk otima reuniao",
+      "blocked": false
+    },
+    {
+      "text": "Plano de aula: conteúdo sexualidade e saúde",
+      "blocked": false
+    },
+    {
+      "text": "Viagem a Pornic",
+      "blocked": false
+    },
+    {
+      "text": "conteudo sexual explicito",
+      "blocked": true
+    },
+    {
+      "text": "Conteúdo Sexual",
+      "blocked": true
+    },
+    {
+      "text": "SEXO EXPLÍCITO",
+      "blocked": true
+    },
+    {
+      "text": "pornografia explícita",
+      "blocked": true
+    },
+    {
+      "text": "um símbolo de ódio",
+      "blocked": true
+    },
+    {
+      "text": "heil hitler",
+      "blocked": true
+    },
+    {
+      "text": "Sieg Heil",
+      "blocked": true
+    },
+    {
+      "text": "Ku Klux Klan",
+      "blocked": true
+    },
+    {
+      "text": "supremacia branca",
+      "blocked": true
+    },
+    {
+      "text": "apologia ao nazismo",
+      "blocked": true
+    },
+    {
+      "text": "lista de hate symbols",
+      "blocked": true
+    },
+    {
+      "text": "Símbolos de Ódio",
+      "blocked": true
+    },
+    {
+      "text": "manifesto de white supremacism",
+      "blocked": true
+    }
+  ]
+}

@@ -4,41 +4,60 @@ const { GoogleAuth } = require('google-auth-library');
 const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png']);
 const DOCUMENT_MIME_TYPES = new Set(['application/pdf']);
 
-const BLOCKED_FILENAME_TERMS = [
-  /porn/i,
-  /porno/i,
-  /pornografia/i,
-  /xxx/i,
-  /nude/i,
-  /nudes/i,
-  /nudez/i,
-  /sex/i,
-  /sexo/i,
-  /gore/i,
-  /blood/i,
-  /sangue/i,
-  /violencia/i,
-  /violence/i,
-  /naz[iy]/i,
-  /hitler/i,
-  /swastika/i,
-  /suastica/i,
-  /kkk/i,
-  /hate/i,
-  /odio/i,
+// Os termos sao comparados como palavras inteiras, nunca como trecho de outra palavra: "sexta",
+// "episodio" e "Gorete" nao contem "sex", "odio" e "gore". Cada regra e [categoria, termo], com o
+// termo ja sem acento e em minusculas. Isto e correspondencia de texto, nao analise de significado.
+
+// Palavras que, sozinhas, ja nomeiam material pornografico (flexoes e compostos explicitos).
+const PORN_WORDS = [
+  'porn', 'porno', 'pornos', 'pornografia', 'pornografias', 'pornografico', 'pornograficos', 'pornografica',
+  'pornograficas', 'pornography', 'pornographic', 'pornstar', 'pornstars', 'pornhub', 'youporn',
+].map((word) => ['explicit_pornography', word]);
+
+// Compostos colados (freeporn, PORNvideo): so raiz + prefixo e/ou sufixo destas listas fechadas, como palavra
+// inteira. Nao e busca por trecho: "foodporn", "Pornic" e "earthporn" nao formam composto da lista.
+const PORN_COMPOUND_PARTS = {
+  roots: ['porn', 'porno'],
+  prefixes: ['free', 'hard', 'hardcore', 'softcore', 'xxx', 'hd', 'live', 'amateur'],
+  suffixes: [
+    'video', 'videos', 'vid', 'vids', 'tube', 'site', 'sites', 'star', 'stars', 'hub', 'pic', 'pics',
+    'foto', 'fotos', 'filme', 'filmes', 'film', 'films', 'movie', 'movies', 'clip', 'clips', 'cam', 'cams',
+  ],
+};
+const PORN_COMPOUNDS = (() => {
+  const { roots, prefixes, suffixes } = PORN_COMPOUND_PARTS;
+  const words = roots.flatMap((root) => [
+    ...prefixes.map((prefix) => `${prefix}${root}`),
+    ...suffixes.map((suffix) => `${root}${suffix}`),
+    ...prefixes.flatMap((prefix) => suffixes.map((suffix) => `${prefix}${root}${suffix}`)),
+  ]);
+  return [...new Set(words)].map((word) => ['explicit_pornography', word]);
+})();
+
+// Expressoes explicitas. Palavras de tema ("sangue", "violencia", "nazismo", "sexo") ficam de fora
+// sozinhas: aparecem em exames, relatorios e material didatico.
+const PROHIBITED_PHRASES = [
+  ['explicit_pornography', 'pornografia explicita'],
+  ['explicit_pornography', 'conteudo sexual'],
+  ['explicit_pornography', 'sexo explicito'],
+  ['explicit_pornography', 'sexually explicit'],
+  ['hate_symbols', 'simbolo de odio'],
+  ['hate_symbols', 'simbolos de odio'],
+  ['hate_symbols', 'hate symbol'],
+  ['hate_symbols', 'hate symbols'],
+  ['hate_symbols', 'ku klux klan'],
+  ['hate_symbols', 'white supremacy'],
+  ['hate_symbols', 'white supremacist'],
+  ['hate_symbols', 'white supremacists'],
+  ['hate_symbols', 'white supremacism'],
+  ['hate_symbols', 'supremacia branca'],
+  ['hate_symbols', 'heil hitler'],
+  ['hate_symbols', 'sieg heil'],
+  ['hate_symbols', 'apologia ao nazismo'],
 ];
 
-const BLOCKED_TEXT_TERMS = [
-  /pornografia\s+explicita/i,
-  /conte[uú]do\s+sexual/i,
-  /sexo\s+expl[ií]cito/i,
-  /gore/i,
-  /decapita/i,
-  /mutila/i,
-  /s[ií]mbolo\s+de\s+[oó]dio/i,
-  /su[aá]stica/i,
-  /nazismo/i,
-];
+const FILENAME_RULES = [...PORN_WORDS, ...PORN_COMPOUNDS, ...PROHIBITED_PHRASES];
+const TEXT_RULES = PROHIBITED_PHRASES;
 
 const HIGH_RISK_CATEGORIES = new Set([
   'explicit_pornography',
@@ -49,34 +68,42 @@ const HIGH_RISK_CATEGORIES = new Set([
   'offensive_content',
 ]);
 
-const BLOCKED_VISION_TERMS = [
-  /swastika/i,
-  /suastica/i,
-  /su[aá]stica/i,
-  /nazi/i,
-  /nazism/i,
-  /nazismo/i,
-  /hitler/i,
-  /third reich/i,
-  /terceiro reich/i,
-  /reichskriegsflagge/i,
-  /hate symbol/i,
-  /hate group/i,
-  /white supremac/i,
-  /supremac/i,
-  /kkk/i,
-  /ku klux klan/i,
-  /porn/i,
-  /pornography/i,
-  /nude/i,
-  /nudity/i,
-  /explicit/i,
-  /gore/i,
-  /blood/i,
-  /corpse/i,
-  /mutilation/i,
-  /decapitation/i,
+// Rotulos e entidades do Vision nomeiam o que aparece na imagem: ai o nome do simbolo basta.
+// Cada descricao e avaliada sozinha, nunca concatenada com as outras.
+const VISION_ENTITY_RULES = [
+  ...[
+    'swastika', 'swastikas', 'suastica', 'suasticas', 'reichskriegsflagge', 'nazi', 'nazis', 'nazism',
+    'nazismo', 'nazista', 'nazistas', 'neonazi', 'neonazis', 'neonazism', 'neonazismo', 'neonazista',
+    'neonazistas', 'hitler', 'hitlerjugend', 'third reich', 'terceiro reich', 'ku klux klan', 'kkk',
+    'white supremacy', 'white supremacist', 'white supremacists', 'white supremacism', 'supremacia branca',
+    'hate symbol', 'hate symbols', 'hate group', 'hate groups', 'simbolo de odio', 'simbolos de odio',
+  ].map((term) => ['hate_symbols', term]),
+  ...PORN_WORDS,
+  ...PORN_COMPOUNDS,
+  ...['nudity', 'nude photography'].map((term) => ['explicit_pornography', term]),
+  ...['corpse', 'corpses', 'mutilation', 'mutilations', 'decapitation', 'decapitations', 'gore film'].map(
+    (term) => ['gore', term]
+  ),
 ];
+
+// Texto lido por OCR pode ser qualquer coisa (conversa, documento, risada "kkkk"): so expressoes explicitas.
+const VISION_TEXT_RULES = [...PORN_WORDS, ...PORN_COMPOUNDS, ...PROHIBITED_PHRASES];
+
+// " palavra palavra ": sem acento, minusculo; camelCase, troca letra/digito e qualquer separador viram espaco.
+const toWords = (value) => ` ${String(value || '')
+  .normalize('NFKD')
+  .replace(/[̀-ͯ]/g, '')
+  .replace(/([a-z])([A-Z])/g, '$1 $2')
+  .toLowerCase()
+  .replace(/([a-z])(\d)/g, '$1 $2')
+  .replace(/(\d)([a-z])/g, '$1 $2')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim()} `;
+
+const matchCategories = (value, rules) => {
+  const words = toWords(value);
+  return rules.filter(([, term]) => words.includes(` ${term} `)).map(([category]) => category);
+};
 
 const BLOCKING_LIKELIHOODS = new Set(['LIKELY', 'VERY_LIKELY']);
 
@@ -100,16 +127,12 @@ const detectExpectedSignature = (mimetype) => {
   return 'unknown';
 };
 
-const scanFilename = (file) => {
-  const filename = String(file?.originalname || '');
-  const normalized = filename.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  return BLOCKED_FILENAME_TERMS.some((pattern) => pattern.test(normalized));
-};
+const scanFilename = (file) => matchCategories(file?.originalname, FILENAME_RULES).length > 0;
 
 const scanReadableText = (file) => {
   if (file?.mimetype !== 'application/pdf' && file?.mimetype !== 'text/plain') return false;
   const sample = file.buffer.slice(0, 512 * 1024).toString('latin1');
-  return BLOCKED_TEXT_TERMS.some((pattern) => pattern.test(sample));
+  return matchCategories(sample, TEXT_RULES).length > 0;
 };
 
 const callExternalModeration = async ({ file, context }) => {
@@ -252,18 +275,19 @@ const callGoogleVisionModeration = async (file) => {
   if (BLOCKING_LIKELIHOODS.has(safeSearch.racy)) categories.push('suggestive_content');
   if (BLOCKING_LIKELIHOODS.has(safeSearch.violence)) categories.push('violence');
 
-  const descriptions = [
+  const entityDescriptions = [
     ...(annotation.labelAnnotations || []).map((item) => item.description),
     ...(annotation.webDetection?.webEntities || []).map((item) => item.description),
     ...(annotation.webDetection?.bestGuessLabels || []).map((item) => item.label),
-    annotation.fullTextAnnotation?.text,
-  ]
-    .filter(Boolean)
-    .join(' ');
+  ].filter(Boolean);
+  const ocrText = annotation.fullTextAnnotation?.text || '';
 
-  if (BLOCKED_VISION_TERMS.some((pattern) => pattern.test(descriptions))) {
-    categories.push('hate_symbols');
-  }
+  entityDescriptions.forEach((description) => {
+    categories.push(...matchCategories(description, VISION_ENTITY_RULES));
+  });
+  categories.push(...matchCategories(ocrText, VISION_TEXT_RULES));
+
+  const descriptions = [...entityDescriptions, ocrText].filter(Boolean).join(' ');
 
   return {
     allowed: categories.length === 0,
@@ -382,4 +406,10 @@ const verifyUploadContent = async ({ file, context = 'task_attachment' }) => {
 
 module.exports = {
   verifyUploadContent,
+  // Listas de nome e de texto: os testes conferem que sao iguais as do assistente Python.
+  MODERATION_TERMS: {
+    filename: [...PORN_WORDS, ...PROHIBITED_PHRASES].map(([, term]) => term),
+    text: TEXT_RULES.map(([, term]) => term),
+    pornCompounds: PORN_COMPOUND_PARTS,
+  },
 };
