@@ -57,6 +57,8 @@ const getEquipeIdsAcessiveis = async (req) => {
 
 const CAMPOS_EDITAVEIS = ['descricao', 'detalhes', 'dataEntrega', 'user', 'equipe', 'tempoEstimado', 'urgencia', 'tags'];
 
+const OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
+
 // Identificador informado que nao e texto viraria filtro ou valor invalido nas consultas.
 const identificadorInvalido = (value) =>
   value !== undefined && value !== null && value !== '' && typeof value !== 'string';
@@ -545,6 +547,23 @@ exports.controlarCronometro = async (req, res) => {
 };
 
 // ALL: Upload de anexos
+// Rota de anexo: confere o acesso antes do Multer, da moderacao e do Storage. Sem acesso e tarefa
+// inexistente recebem o mesmo 404. O adicionarAnexo confere de novo antes de gravar.
+exports.verificarAcessoAnexo = async (req, res, next) => {
+  try {
+    // ID malformado viraria CastError (500) no Mongoose: responde como tarefa inexistente.
+    const filtro = OBJECT_ID_PATTERN.test(req.params.id)
+      ? await montarFiltroTarefasAcessiveis(req, { _id: req.params.id })
+      : null;
+    const tarefa = filtro ? await Tarefa.findOne(filtro).select('_id') : null;
+    if (!tarefa) return res.status(404).json({ erro: 'Tarefa não encontrada' });
+    return next();
+  } catch (err) {
+    console.error('Erro ao verificar acesso ao anexo:', err);
+    return res.status(500).json({ erro: 'Erro ao fazer upload de anexo' });
+  }
+};
+
 exports.adicionarAnexo = async (req, res) => {
   try {
     const filtro = await montarFiltroTarefasAcessiveis(req, { _id: req.params.id });
