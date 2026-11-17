@@ -10,6 +10,7 @@ import {
 import LightRays from "../../components/backgrounds/LightRays";
 import CurvedLoop from "../../components/text/CurvedLoop";
 import FaceAuthStep from "../../components/face/FaceAuthStep";
+import FaceRecovery from "../../components/face/FaceRecovery";
 import "../../styles/pages/auth/Auth.css";
 
 const TERMS_VERSION = "2026-06-08";
@@ -98,6 +99,7 @@ function AuthPage() {
   const [faceStep, setFaceStep] = useState(null);
   const [faceSessionToken, setFaceSessionToken] = useState("");
   const [pendingUser, setPendingUser] = useState(null);
+  const [faceRecovery, setFaceRecovery] = useState(false);
 
   useEffect(() => {
     const query = new URLSearchParams(location.search);
@@ -150,6 +152,15 @@ function AuthPage() {
     setFaceStep(null);
     setFaceSessionToken("");
     setPendingUser(null);
+    setFaceRecovery(false);
+  };
+
+  // A recuperacao nao reaproveita a sessao facial: ao sair dela, volta ao login.
+  const openFaceRecovery = () => {
+    setFaceStep(null);
+    setFaceSessionToken("");
+    setPendingUser(null);
+    setFaceRecovery(true);
   };
 
   // Login handler
@@ -349,7 +360,11 @@ function AuthPage() {
 
         {/* ========== FORM CAROUSEL ========== */}
         <div className={`auth-carousel-wrapper ${slideDirection}`}>
-          {faceStep ? (
+          {faceRecovery ? (
+            <div className="auth-form-container">
+              <FaceRecovery initialEmail={loginEmail} onDone={resetFaceStep} onCancel={resetFaceStep} />
+            </div>
+          ) : faceStep ? (
             <div className="auth-form-container">
               <FaceAuthStep
                 mode={faceStep}
@@ -357,6 +372,7 @@ function AuthPage() {
                 user={pendingUser}
                 onComplete={redirectAfterLogin}
                 onCancel={resetFaceStep}
+                onRecover={openFaceRecovery}
               />
             </div>
           ) : recoveringPassword ? (

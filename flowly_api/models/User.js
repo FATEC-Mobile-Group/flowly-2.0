@@ -5,6 +5,8 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   senha: { type: String, required: true },
   tipo: { type: String, enum: ['admin', 'user'], default: 'user' },
+  // Versao das sessoes: incrementar invalida todo token de acesso emitido antes (utils/sessionGuard.js).
+  authVersion: { type: Number, default: 0 },
   verificado: { type: Boolean, default: false },
   fotoPerfil: { type: String, default: '' },
   faceEnrollmentOffered: { type: Boolean, default: false },

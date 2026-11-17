@@ -822,6 +822,9 @@ FACE_VERIFY_THRESHOLD=0.50
 FACE_DUPLICATE_THRESHOLD=0.46
 FACE_SESSION_EXPIRES_IN=5m
 FACE_ENROLL_SESSION_EXPIRES_IN=10m
+# Recuperação facial excepcional: identificadores dos operadores, separados por vírgula. Vazio = desligada.
+FACE_RECOVERY_OPERATORS=
+FACE_RECOVERY_WINDOW_MINUTES=30
 
 # Google Cloud Storage e Vision API
 GCP_PROJECT_ID=SEU_GCP_PROJECT_ID
@@ -848,6 +851,19 @@ SERVICE=example
 ```
 
 > No Cloud Run, a API precisa escutar a porta `8080`. Como o projeto lê `PORT_ENV`, configure `PORT_ENV=8080`.
+
+#### Sessões e recuperação facial excepcional
+
+Cada token de acesso carrega a versão de sessão da conta (`authVersion`). A API e o Socket.IO conferem essa versão e o papel no banco a cada requisição e a cada evento. Redefinir a senha por e-mail ou recadastrar o rosto pela recuperação incrementa a versão, e todos os tokens emitidos antes deixam de valer. Mudar o papel de uma conta direto no banco também invalida os tokens antigos.
+
+A recuperação facial serve para quem ficou sem acesso porque o rosto cadastrado não o reconhece mais. Ela não tem rota de autorização: só um operador listado em `FACE_RECOVERY_OPERATORS`, com acesso ao banco, pode habilitá-la.
+
+1. O operador registra o pedido: `node scripts/faceRecovery.js request --email <conta> --operator <id> --reason "<justificativa>"`. A API envia um código de titularidade ao e-mail da conta.
+2. O titular informa esse código ao operador por outro canal. O operador ativa a autorização: `node scripts/faceRecovery.js confirm --id <autorizacao> --operator <id>`. O código é pedido na entrada padrão. A autorização vale por `FACE_RECOVERY_WINDOW_MINUTES` (padrão 30, máximo 120) e só pode ser usada uma vez.
+3. Na etapa de verificação facial do login, o titular clica em "Não consigo verificar meu rosto", recebe outro código por e-mail e envia o código, a senha atual e duas fotos novas.
+4. A API rejeita o rosto se ele bater, no limiar de login, com o perfil ativo de qualquer outra conta. Se passar, troca o cadastro dentro de uma transação do MongoDB, criptografado. Na mesma transação, consome o código e a autorização e encerra todas as sessões. A API não emite token: o titular entra pelo login normal, com o rosto novo.
+
+A recuperação exige MongoDB com transações (replica set, como o Atlas). Num MongoDB standalone ela responde 503 e não altera nada. Para validar com transação real, use um replica set local descartável e `FLOWLY_TEST_REPLSET_URI`, como descrito no topo de `flowly_api/__tests__/faceRecovery.replicaSet.test.js`. A suíte recusa qualquer URI que não seja local e de teste. Para cancelar uma autorização: `node scripts/faceRecovery.js revoke --id <autorizacao> --operator <id> --reason "<motivo>"`. Os eventos ficam na coleção `securityauditevents`, sem fotos, embeddings, senhas, tokens, códigos nem e-mails.
 
 ### Frontend Web (`flowly_frontend`)
 

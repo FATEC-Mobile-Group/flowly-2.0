@@ -243,6 +243,16 @@ describe('recuperacao de senha: tipo das entradas', () => {
       expect(contaB.senha).toBe(ORIGINAL_HASH);
     });
 
+    test('redefinicao revoga as sessoes emitidas antes, so da conta redefinida', async () => {
+      const codigo = await askAndValidate(EMAIL_A);
+      const antes = Number(contaA.authVersion) || 0;
+
+      await post('/redefinir', { email: EMAIL_A, codigo, novaSenha: NEW_PASSWORD });
+
+      expect(contaA.authVersion).toBe(antes + 1);
+      expect(contaB.authVersion).toBeUndefined();
+    });
+
     test('redefinir sem validar antes continua recusado', async () => {
       const codigo = await askCode(EMAIL_A);
 

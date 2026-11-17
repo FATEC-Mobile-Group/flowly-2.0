@@ -207,6 +207,8 @@ describe('C1/C2: uploads verificam acesso e frequencia antes de processar o arqu
 
     test('3b. admin que nao criou nem participa da equipe: 404 sem processamento', async () => {
       const outroAdmin = { _id: id(), nome: 'Outro Admin', email: 'outro@exemplo.com', tipo: 'admin' };
+      // A conta existe: so nao participa da equipe. Token de conta inexistente cai antes, com 401.
+      mockState.users.push(outroAdmin);
 
       const res = await anexar(outroAdmin);
 

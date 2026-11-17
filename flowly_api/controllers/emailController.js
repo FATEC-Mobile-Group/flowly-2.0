@@ -6,6 +6,7 @@ const TwoFactorToken = require("../models/TwoFactorToken.js");
 const sendEmail = require("../utils/sendEmail.js");
 const validatePassword = require("../utils/validatePassword.js");
 const { buildUserPayload, issueAuthToken } = require("../utils/faceAuth.js");
+const { disconnectUserSockets } = require("../utils/sessionGuard.js");
 
 const GENERIC_EMAIL_CODE_MESSAGE =
   "Se o email estiver cadastrado, um codigo sera enviado.";
@@ -529,7 +530,10 @@ exports.redefinirSenhaComCodigo = async (req, res) => {
     }
 
     user.senha = await argon2.hash(novaSenha);
+    // Mesma gravacao da senha: todo token de acesso emitido antes deixa de valer (utils/sessionGuard.js).
+    user.authVersion = (Number(user.authVersion) || 0) + 1;
     await user.save();
+    disconnectUserSockets(user._id);
     await TwoFactorToken.deleteMany({ userId: user._id, purpose: 'password_reset' });
 
     res.status(200).json({ message: "Senha redefinida com sucesso. Faca login com a nova senha." });

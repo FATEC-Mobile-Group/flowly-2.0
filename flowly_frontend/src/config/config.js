@@ -64,6 +64,8 @@ export const API_ENDPOINTS = {
   FACE_SKIP_ENROLLMENT: `${API_BASE_URL}/face/skip-enrollment`,
   FACE_ENROLL_PROFILE: `${API_BASE_URL}/face/enroll-profile`,
   FACE_STATUS: `${API_BASE_URL}/face/status`,
+  FACE_RECOVERY_SEND_CODE: `${API_BASE_URL}/face/recovery/send-code`,
+  FACE_RECOVERY_REENROLL: `${API_BASE_URL}/face/recovery/re-enroll`,
   FACE_HEALTH: `${API_BASE_URL}/face/health`,
 
   ASSISTANT_HEALTH: `${ASSISTANT_BASE_URL}/health`,

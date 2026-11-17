@@ -383,14 +383,15 @@ describe('rosto e login', () => {
         expect(mockDb.faces).toHaveLength(0);
       });
 
-      test('conta do JWT que nao existe mais responde 404', async () => {
+      test('conta do JWT que nao existe mais e barrada na autenticacao (401)', async () => {
         const removida = createAccount('a@exemplo.com');
         const token = issueAuthToken(removida);
         mockDb.users = [];
 
         const res = await enrollProfile(token, { imagesBase64: [OWNER_FACE, OWNER_FACE], senhaAtual: PASSWORD });
 
-        expect(res.status).toBe(404);
+        // Antes o controller respondia 404; agora a sessao de uma conta inexistente nem chega ao controller.
+        expect(res.status).toBe(401);
         expect(mockDb.faces).toHaveLength(0);
       });
     });

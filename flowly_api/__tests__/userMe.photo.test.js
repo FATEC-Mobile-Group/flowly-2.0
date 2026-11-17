@@ -6,6 +6,9 @@ const jwt = require('jsonwebtoken');
 
 let mockAssinaturas = 0;
 
+// Esta suite nao modela o estado de sessao no banco: ver __tests__/helpers/sessionGuardStub.js.
+jest.mock('../utils/sessionGuard', () => require('./helpers/sessionGuardStub'));
+
 jest.mock('@google-cloud/storage', () => ({
   Storage: jest.fn().mockImplementation(() => ({ bucket: jest.fn().mockReturnValue({ file: jest.fn() }) })),
 }));

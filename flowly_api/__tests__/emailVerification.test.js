@@ -90,11 +90,13 @@ const issueVerification = async (user) => {
   return { savedData, linkToken, emailCode };
 };
 
-const authenticateWith = (token) => {
+// O middleware confere a sessao no banco: a conta do token precisa existir com o mesmo papel e versao.
+const authenticateWith = async (token, user) => {
+  User.findById.mockResolvedValueOnce(user);
   const req = { headers: { authorization: `Bearer ${token}` } };
   const res = createResponse();
   const next = jest.fn();
-  authMiddleware(req, res, next);
+  await authMiddleware(req, res, next);
   return { req, res, next };
 };
 
@@ -236,7 +238,7 @@ describe('PR-01 — verificacao de e-mail', () => {
         res
       );
 
-      const { req, res: authRes, next } = authenticateWith(res.json.mock.calls[0][0].token);
+      const { req, res: authRes, next } = await authenticateWith(res.json.mock.calls[0][0].token, user);
       expect(next).toHaveBeenCalled();
       expect(authRes.status).not.toHaveBeenCalled();
       expect(String(req.user.id)).toBe(USER_ID);
@@ -251,7 +253,7 @@ describe('PR-01 — verificacao de e-mail', () => {
       const res = createResponse();
       await emailController.validarTokenVerificacao({ query: { token: linkToken } }, res);
 
-      const { req, res: authRes, next } = authenticateWith(res.json.mock.calls[0][0].token);
+      const { req, res: authRes, next } = await authenticateWith(res.json.mock.calls[0][0].token, user);
       expect(next).toHaveBeenCalled();
       expect(authRes.status).not.toHaveBeenCalled();
       expect(String(req.user.id)).toBe(USER_ID);

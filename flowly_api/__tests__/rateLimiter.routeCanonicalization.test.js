@@ -2,6 +2,9 @@ const request = require('supertest');
 
 const mockAccount = { _id: '507f1f77bcf86cd799439011', senha: 'hash-guardado', save: jest.fn() };
 
+// Esta suite nao modela o estado de sessao no banco: ver __tests__/helpers/sessionGuardStub.js.
+jest.mock('../utils/sessionGuard', () => require('./helpers/sessionGuardStub'));
+
 jest.mock('@google-cloud/storage', () => ({
   Storage: jest.fn().mockImplementation(() => ({
     bucket: jest.fn().mockReturnValue({ file: jest.fn() }),

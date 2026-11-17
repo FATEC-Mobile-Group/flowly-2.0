@@ -13,6 +13,7 @@ function FaceAuthStep({
   user,
   onComplete,
   onCancel,
+  onRecover,
 }) {
   const [capturePayload, setCapturePayload] = useState(mode === 'verify' ? '' : []);
   const [loading, setLoading] = useState(false);
@@ -130,6 +131,17 @@ function FaceAuthStep({
             disabled={loading}
           >
             Pular por agora
+          </button>
+        )}
+
+        {isVerify && onRecover && (
+          <button
+            type="button"
+            className="auth-switch-btn"
+            onClick={onRecover}
+            disabled={loading}
+          >
+            Não consigo verificar meu rosto
           </button>
         )}
 

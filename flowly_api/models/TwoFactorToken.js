@@ -17,7 +17,7 @@ const twoFactorTokenSchema = new mongoose.Schema({
   },
   purpose: {
     type: String,
-    enum: ['email_verification', 'password_reset'],
+    enum: ['email_verification', 'password_reset', 'face_recovery'],
     default: 'email_verification'
   },
   validado: {
