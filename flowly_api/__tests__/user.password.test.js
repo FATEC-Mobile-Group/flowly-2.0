@@ -8,6 +8,9 @@ jest.mock('@google-cloud/storage', () => ({
   })),
 }));
 
+// Esta suite nao modela o estado de sessao no banco: ver __tests__/helpers/sessionGuardStub.js.
+jest.mock('../utils/sessionGuard', () => require('./helpers/sessionGuardStub'));
+
 jest.mock('../models/User', () => ({
   findById: jest.fn(),
 }));

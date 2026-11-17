@@ -9,8 +9,9 @@ const buildUserPayload = async (user) => ({
   fotoPerfil: await getSignedUrl(user.fotoPerfil),
 });
 
+// av: versao das sessoes da conta. O middleware compara com o banco para revogar tokens antigos.
 const issueAuthToken = (user) =>
-  jwt.sign({ id: user._id, tipo: user.tipo, tokenType: 'access' }, config.jwt.secret, {
+  jwt.sign({ id: user._id, tipo: user.tipo, av: Number(user.authVersion) || 0, tokenType: 'access' }, config.jwt.secret, {
     expiresIn: config.jwt.expiresIn || '1d',
     issuer: config.jwt.issuer,
     audience: config.jwt.accessAudience,

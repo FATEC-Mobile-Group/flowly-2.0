@@ -46,6 +46,16 @@ const config = {
     ),
     sessionExpiresIn: process.env.FACE_SESSION_EXPIRES_IN || '5m',
     enrollSessionExpiresIn: process.env.FACE_ENROLL_SESSION_EXPIRES_IN || '10m',
+    // Recuperacao excepcional do cadastro facial (scripts/faceRecovery.js). Sem operadores, fica desligada.
+    recovery: {
+      operators: (process.env.FACE_RECOVERY_OPERATORS || '')
+        .split(',')
+        .map((operator) => operator.trim())
+        .filter(Boolean),
+      windowMinutes: Math.min(Math.max(parseInt(process.env.FACE_RECOVERY_WINDOW_MINUTES || '30', 10) || 30, 5), 120),
+      codeMinutes: 15,
+      maxAttempts: 5,
+    },
   },
 };
 

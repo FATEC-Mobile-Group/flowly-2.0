@@ -51,16 +51,18 @@ function isSamePersonFaceUpdate(
   );
 }
 
-async function assertUniqueFaceEnrollment(userId, probeEmbeddingOrList, options = {}) {
-  const { existingProfile = null } = options;
+// Um rosto aceito por outra conta no login nao pode ser cadastrado aqui: o piso e o limiar de login.
+// So endurece: se o limiar de duplicidade configurado for maior, ele continua valendo.
+function crossAccountThreshold() {
+  return Math.max(config.face.duplicateThreshold, config.face.verifyThreshold);
+}
+
+// A checagem contra as outras contas roda sempre, inclusive quando o rosto bate com o proprio perfil.
+async function assertUniqueFaceEnrollment(userId, probeEmbeddingOrList) {
   const probeEmbeddings = normalizeEmbeddingList(probeEmbeddingOrList);
 
-  if (isSamePersonFaceUpdate(existingProfile, probeEmbeddings)) {
-    return;
-  }
-
   for (const probeEmbedding of probeEmbeddings) {
-    const duplicate = await findDuplicateFace(probeEmbedding, userId);
+    const duplicate = await findDuplicateFace(probeEmbedding, userId, crossAccountThreshold());
 
     if (!duplicate) {
       continue;
@@ -82,6 +84,7 @@ async function assertUniqueFaceEnrollment(userId, probeEmbeddingOrList, options 
 
 module.exports = {
   assertUniqueFaceEnrollment,
+  crossAccountThreshold,
   isSamePersonFaceUpdate,
   minDistanceToOwnReferences,
   DUPLICATE_FACE_USER_MESSAGE,

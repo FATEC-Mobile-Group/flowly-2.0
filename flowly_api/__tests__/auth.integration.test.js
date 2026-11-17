@@ -12,6 +12,9 @@ const request = require('supertest');
 // ==========================================
 
 // Mock do Google Cloud Storage (necessário porque tarefaController importa services/storage.js)
+// Esta suite nao modela o estado de sessao no banco: ver __tests__/helpers/sessionGuardStub.js.
+jest.mock('../utils/sessionGuard', () => require('./helpers/sessionGuardStub'));
+
 jest.mock('@google-cloud/storage', () => ({
   Storage: jest.fn().mockImplementation(() => ({
     bucket: jest.fn().mockReturnValue({

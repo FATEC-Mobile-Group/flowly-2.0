@@ -15,6 +15,7 @@ const {
 } = require('../utils/faceEnrollmentGuard');
 const { toPlainEmbeddings, getStoredEmbeddings } = require('../utils/faceEmbeddings');
 const { encryptEmbeddings } = require('../utils/faceEmbeddingCrypto');
+const { extractEmbeddingsFromImages } = require('../utils/faceEnrollmentImages');
 
 const completeLoginResponse = async (user) => ({
   token: issueAuthToken(user),
@@ -79,28 +80,6 @@ const concludeFaceOffer = async (userId, changes = {}) => {
   if (!concluded) {
     throw invalidFaceSessionError();
   }
-};
-
-const extractEmbeddingsFromImages = async (imagesBase64, context) => {
-  const embeddings = [];
-
-  for (const imageBase64 of imagesBase64) {
-    const embedResult = await faceService.extractEmbedding(imageBase64, context);
-
-    if (!embedResult.face_detected || !embedResult.embedding) {
-      return {
-        ok: false,
-        erro: normalizeFaceError(embedResult.erro, context),
-      };
-    }
-
-    embeddings.push({
-      embedding: embedResult.embedding,
-      model: embedResult.model,
-    });
-  }
-
-  return { ok: true, embeddings };
 };
 
 const isImage = (value) => typeof value === 'string' && value.length > 0;
@@ -263,7 +242,7 @@ exports.enrollFromProfile = async (req, res) => {
       error.code = 'FACE_UPDATE_MISMATCH';
       throw error;
     }
-    await assertUniqueFaceEnrollment(user._id, embeddingList, { existingProfile });
+    await assertUniqueFaceEnrollment(user._id, embeddingList);
     await saveFaceProfile(user._id, embeddingList, extracted.embeddings[0].model);
 
     res.json({

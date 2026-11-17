@@ -3,6 +3,9 @@ const jwt = require('jsonwebtoken');
 
 // D09: GET /api/auth/users listava nome e e-mail de todos os usuarios para qualquer conta autenticada.
 
+// Esta suite nao modela o estado de sessao no banco: ver __tests__/helpers/sessionGuardStub.js.
+jest.mock('../utils/sessionGuard', () => require('./helpers/sessionGuardStub'));
+
 jest.mock('../services/storage', () => ({
   getSignedUrl: jest.fn(async (path) => (path ? `assinada:${path}` : path)),
 }));

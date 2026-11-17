@@ -9,6 +9,7 @@ const { moderateText } = require('./services/nlpModerationService');
 const { saveChatInsight, saveBlockedChatInsight } = require('./services/assistantInsightService');
 const config = require('./config/config');
 const { verifyAuthToken } = require('./utils/faceAuth');
+const { assertActiveSession, socketSessionRoom } = require('./utils/sessionGuard');
 const { isOriginAllowed } = require('./utils/corsPolicy');
 
 const isSocketOriginAllowed = (origin) => isOriginAllowed(origin, config.corsOrigin, config.env);
@@ -22,15 +23,48 @@ const extractSocketToken = (socket) => {
   return scheme?.toLowerCase() === 'bearer' ? token : null;
 };
 
-const authenticateSocket = (socket, next) => {
+const authenticateSocket = async (socket, next) => {
   try {
     const token = extractSocketToken(socket);
     if (!token) throw new Error('Token não informado.');
-    socket.user = verifyAuthToken(token);
+    const claims = verifyAuthToken(token);
+    await assertActiveSession(claims);
+    socket.user = claims;
     next();
   } catch (_error) {
     next(new Error('Não autorizado.'));
   }
+};
+
+// Sem adaptador compartilhado, a revogacao so alcanca os sockets desta instancia. A varredura cobre
+// os das outras instancias, inclusive os que so recebem mensagens e nunca emitem eventos.
+const SOCKET_SESSION_SWEEP_MS = 60 * 1000;
+
+const sweepRevokedSockets = async (io) => {
+  const sockets = Array.from(io.of('/').sockets.values());
+  await Promise.all(
+    sockets.map(async (socket) => {
+      try {
+        await assertActiveSession(socket.user);
+      } catch (error) {
+        // Falha do banco nao derruba ninguem: a proxima varredura tenta de novo.
+        if (error.statusCode === 401) {
+          socket.disconnect(true);
+        }
+      }
+    })
+  );
+};
+
+// Cada evento confere de novo a sessao: revogacao ou troca de papel derrubam o socket ja conectado.
+const revalidateSocketSession = async (socket, next) => {
+  try {
+    await assertActiveSession(socket.user);
+  } catch (_error) {
+    socket.disconnect(true);
+    return;
+  }
+  next();
 };
 
 const setupSocketInteractions = (server) => {
@@ -45,10 +79,18 @@ const setupSocketInteractions = (server) => {
 
   setIo(io);
 
+  const sweepTimer = setInterval(() => {
+    sweepRevokedSockets(io).catch(() => {});
+  }, SOCKET_SESSION_SWEEP_MS);
+  sweepTimer.unref?.();
+  server.on?.('close', () => clearInterval(sweepTimer));
+
   io.use(authenticateSocket);
 
   io.on('connection', (socket) => {
     console.log('Novo cliente WebSocket conectado:', socket.id);
+    socket.join(socketSessionRoom(socket.user.id));
+    socket.use((_packet, next) => revalidateSocketSession(socket, next));
 
     socket.on('join_user', () => {
       const userId = String(socket.user.id);
@@ -203,5 +245,7 @@ const setupSocketInteractions = (server) => {
 
 setupSocketInteractions.getIo = () => getIo();
 setupSocketInteractions.authenticateSocket = authenticateSocket;
+setupSocketInteractions.revalidateSocketSession = revalidateSocketSession;
+setupSocketInteractions.sweepRevokedSockets = sweepRevokedSockets;
 
 module.exports = setupSocketInteractions;
