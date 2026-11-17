@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && pip uninstall -y opencv-python opencv-python-headless opencv-contrib-python opencv-contrib-python-headless \
     && pip install --no-cache-dir --no-deps -c constraints.txt opencv-python-headless
 
-# Pesos do VGG-Face dentro da imagem, onde o DeepFace os procura ($DEEPFACE_HOME/.deepface/weights).
+# Pesos do VGG-Face e do anti-spoofing (Fasnet) dentro da imagem, onde o DeepFace os procura ($DEEPFACE_HOME/.deepface/weights).
 # Sem isto, cada instancia nova baixava ~553 MiB no primeiro login e os gravava no disco em memoria.
 # As origens vem do DeepFace instalado; o arquivo so entra se tamanho e SHA-256 baterem com fetch_face_weights.py.
 # O backend fica fixo em tensorflow: o DeepFace 0.0.105 tambem traz onnxruntime e, sem isto, poderia procurar o .onnx.
@@ -40,7 +40,7 @@ ENV FACE_MATCH_THRESHOLD=0.4
 # Barra a imagem se o OpenCV nao tiver os classificadores Haar ou se o DeepFace nao montar o detector.
 RUN python check_opencv.py
 
-# Barra a imagem se o VGG-Face nao carregar da propria imagem com a rede desligada.
+# Barra a imagem se o VGG-Face ou o anti-spoofing nao carregarem da propria imagem com a rede desligada.
 COPY check_face_model.py ./
 RUN python check_face_model.py
 

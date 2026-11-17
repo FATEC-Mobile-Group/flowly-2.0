@@ -47,6 +47,8 @@ def synthetic_jpeg() -> bytes:
 JPEG = synthetic_jpeg()
 RAW_BASE64 = base64.b64encode(JPEG).decode()
 DATA_URL = "data:image/jpeg;base64," + RAW_BASE64
+# Resposta do anti-spoofing para uma captura ao vivo (o padrao dos testes que nao tratam de spoofing).
+LIVE_FACE = {"facial_area": {"x": 10, "y": 10, "w": 60, "h": 60}, "confidence": 0.9, "is_real": True, "antispoof_score": 0.97}
 
 
 class FakeCascade:
@@ -76,6 +78,7 @@ class FaceProcessingTestCase(unittest.TestCase):
     def setUp(self):
         self.deepface = MagicMock(name="DeepFace")
         self.deepface.represent.side_effect = self._represent
+        self.deepface.extract_faces.return_value = [dict(LIVE_FACE)]
         self.probe = list(REFERENCE)
         self.received_images = []
         self.install_deepface(self._fake_module(self.deepface))
@@ -301,7 +304,7 @@ class ModelFailureTests(FaceProcessingTestCase):
         response = self.verify()
 
         self.assertEqual(response.status_code, 200)
-        self.deepface.build_model.assert_called_with(main.MODEL)
+        self.deepface.build_model.assert_any_call(main.MODEL)
         self.deepface.represent.assert_called_once()
 
 

@@ -144,6 +144,30 @@ class FetchWeightsTests(WeightServerTestCase):
         self.assertEqual(module.PINNED_SIZE, 580085408)
         self.assertEqual(module.WEIGHTS_FILE, "vgg_face_weights.h5")
 
+    def test_pesos_do_anti_spoofing_fixados_e_iguais_aos_que_o_servico_exige(self):
+        module = fetch_module()
+
+        self.assertEqual(
+            module.FASNET_WEIGHTS,
+            (
+                ("2.7_80x80_MiniFASNetV2.h5", "da0de51d44dc3d9af808c6c2f6fe97dd174774fa66881c9fd291bde1a1174e04", 2234368, "FIRST_WEIGHTS_URL"),
+                ("4_0_0_80x80_MiniFASNetV1SE.h5", "d2f4280c30d88dbd02d0d6691dcfbdd389316de398f94bb6cba30144e23889b0", 2288392, "SECOND_WEIGHTS_URL"),
+            ),
+        )
+        self.assertEqual(tuple(name for name, *_ in module.FASNET_WEIGHTS), main.ANTI_SPOOFING_WEIGHT_FILES)
+        self.assertEqual(
+            [name for name, *_ in module.required_weights()],
+            ["vgg_face_weights.h5", *main.ANTI_SPOOFING_WEIGHT_FILES],
+        )
+
+    def test_grava_cada_arquivo_com_o_proprio_nome(self):
+        path = fetch_module().fetch_weights(
+            [f"{self.base}/ok.h5"], self.target_dir, PAYLOAD_SHA256, len(PAYLOAD), "2.7_80x80_MiniFASNetV2.h5"
+        )
+
+        self.assertEqual(path, os.path.join(self.target_dir, "2.7_80x80_MiniFASNetV2.h5"))
+        self.assertEqual(Path(path).read_bytes(), PAYLOAD)
+
     def test_origens_vem_do_deepface_instalado(self):
         module = fetch_module()
         lista = type("M", (), {"WEIGHTS_URL": ["https://a/vgg_face_weights.h5", "https://b/vgg_face_weights.h5"]})
@@ -173,7 +197,9 @@ class RuntimeWeightsGuardTests(FaceProcessingTestCase):
     def place_weights(self):
         folder = Path(self.home, ".deepface", "weights")
         folder.mkdir(parents=True)
-        Path(folder, "vgg_face_weights.h5").write_bytes(b"pesos")
+        # Producao exige os pesos do VGG-Face e os dois do anti-spoofing.
+        for name in ("vgg_face_weights.h5", *main.ANTI_SPOOFING_WEIGHT_FILES):
+            Path(folder, name).write_bytes(b"pesos")
 
     def test_caminho_e_o_do_deepface(self):
         self.assertEqual(main.model_weights_path(), os.path.join(self.home, ".deepface", "weights", "vgg_face_weights.h5"))
@@ -193,7 +219,7 @@ class RuntimeWeightsGuardTests(FaceProcessingTestCase):
             response = self.verify()
 
         self.assertEqual(response.status_code, 200)
-        self.deepface.build_model.assert_called_with(main.MODEL)
+        self.deepface.build_model.assert_any_call(main.MODEL)
 
     def test_desenvolvimento_local_continua_como_antes(self):
         env = {key: value for key, value in os.environ.items() if key != "FACE_REQUIRE_LOCAL_WEIGHTS"}
@@ -201,7 +227,7 @@ class RuntimeWeightsGuardTests(FaceProcessingTestCase):
             response = self.verify()
 
         self.assertEqual(response.status_code, 200)
-        self.deepface.build_model.assert_called_with(main.MODEL)
+        self.deepface.build_model.assert_any_call(main.MODEL)
 
 
 class TimingTests(FaceProcessingTestCase):
@@ -259,7 +285,7 @@ class PreloadTests(FaceProcessingTestCase):
         with patch.object(main, "_MODEL_READY", False), patch.dict(os.environ, {"FACE_PRELOAD_MODEL": "1"}):
             main.preload_model_if_enabled()
 
-        self.deepface.build_model.assert_called_with(main.MODEL)
+        self.deepface.build_model.assert_any_call(main.MODEL)
         main.get_face_cascade.assert_called()
         startup = [line for line in self.logs.lines if line.startswith("face_startup ")]
         self.assertEqual(len(startup), 1, self.logs.lines)
@@ -327,7 +353,14 @@ class PreloadTests(FaceProcessingTestCase):
         self.assertIn("weights=missing", self.assert_logged("model_unavailable", "model_load"))
 
     def test_em_producao_com_tudo_carregado_sobe_normalmente(self):
-        with patch.object(main, "_MODEL_READY", False), self.production_env():
+        # Pasta propria com os tres arquivos: o teste nao depende dos pesos instalados nesta maquina.
+        home = tempfile.mkdtemp(prefix="deepface-home-")
+        self.addCleanup(remove_tree, home)
+        folder = Path(home, ".deepface", "weights")
+        folder.mkdir(parents=True)
+        for name in ("vgg_face_weights.h5", *main.ANTI_SPOOFING_WEIGHT_FILES):
+            Path(folder, name).write_bytes(b"pesos")
+        with patch.object(main, "_MODEL_READY", False), self.production_env(DEEPFACE_HOME=home):
             main.preload_model_if_enabled()
             self.assertTrue(main._MODEL_READY)
 

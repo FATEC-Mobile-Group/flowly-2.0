@@ -293,7 +293,9 @@ class BuildRecipeTests(unittest.TestCase):
     def test_constraints_fixam_as_duas_variantes_na_mesma_versao_4x(self):
         pins = self.pins()
 
-        self.assertEqual(set(pins), {"opencv-python-headless", "opencv-python"})
+        # OpenCV: as duas variantes fixadas na mesma versao 4.x. DeepFace: a versao validada do anti-spoofing.
+        self.assertEqual(set(pins), {"opencv-python-headless", "opencv-python", "deepface"})
+        self.assertEqual(pins["deepface"], "0.0.105")
         self.assertEqual(pins["opencv-python-headless"], pins["opencv-python"])
         self.assertTrue(pins["opencv-python-headless"].startswith("4."))
 
