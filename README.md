@@ -908,6 +908,27 @@ FACE_VERIFY_THRESHOLD=0.50
 
 > Em Cloud Run, não configure `HOST` nem `PORT` para o serviço facial. O container já usa a porta injetada pela plataforma.
 
+`FACE_SERVICE_SECRET` vem do Secret Manager e precisa ter o mesmo valor configurado na API. Sem ele, `/embed`, `/verify` e `/verify-multi` respondem 503; só `/health` continua respondendo.
+
+Cada nova revisão herda os segredos da anterior. Para o deploy não removê-los:
+
+* repita o vínculo em todo deploy (é idempotente): `--update-secrets FACE_SERVICE_SECRET=<NOME_DO_SEGREDO>:<VERSAO>`;
+* não use `--set-secrets` sem incluir `FACE_SERVICE_SECRET`, nem `--clear-secrets`;
+* não use `--set-env-vars`, `--env-vars-file` nem `--clear-env-vars`, que substituem as variáveis existentes. Prefira `--update-env-vars`.
+
+```bash
+gcloud run deploy <SERVICO_FACIAL> --source flowly_iot_face --region <REGIAO> \
+  --update-secrets FACE_SERVICE_SECRET=<NOME_DO_SEGREDO>:<VERSAO>
+
+# Conferir depois do deploy: FACE_SERVICE_SECRET deve aparecer com secretKeyRef
+gcloud run services describe <SERVICO_FACIAL> --region <REGIAO> \
+  --format="yaml(spec.template.spec.containers[0].env)"
+```
+
+O OpenCV da imagem é só o `opencv-python-headless`, na versão fixada em `flowly_iot_face/constraints.txt`. Os wheels 5.0.0.93 não trazem os classificadores Haar que o serviço e o DeepFace usam. O build roda `check_opencv.py` e falha se houver outra distribuição OpenCV, se faltar `haarcascade_frontalface_default.xml` ou `haarcascade_eye.xml`, ou se o DeepFace não montar o detector. Para instalar localmente, use `pip install -r requirements.txt`: as constraints são aplicadas automaticamente.
+
+Os logs do serviço facial registram cada falha numa linha `face_failure`, com categoria, etapa e tipo da exceção. Na primeira carga do modelo, uma linha `face_runtime` registra as versões instaladas das dependências. Nenhuma das duas registra imagem, Base64, embedding ou segredo.
+
 ---
 
 # Funcionalidades Futuras

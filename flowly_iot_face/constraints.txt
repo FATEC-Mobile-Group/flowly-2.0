@@ -1,0 +1,5 @@
+# OpenCV fixado em 4.x: os wheels 5.0.0.93 (02/07/2026) trazem cv2/data sem nenhum classificador Haar,
+# e o servico e o detector "opencv" do DeepFace dependem de haarcascade_frontalface_default.xml e haarcascade_eye.xml.
+# opencv-python entra como dependencia do DeepFace e do retina-face; o Dockerfile o remove e deixa so o headless.
+opencv-python-headless==4.13.0.92
+opencv-python==4.13.0.92
