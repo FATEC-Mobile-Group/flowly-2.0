@@ -5,3 +5,7 @@ __pycache__/
 venv/
 *.jpg
 *.png
+# Pesos de modelo (centenas de MB): entram na imagem pelo fetch_face_weights.py, nunca no Git.
+*.h5
+*.onnx
+*.pth

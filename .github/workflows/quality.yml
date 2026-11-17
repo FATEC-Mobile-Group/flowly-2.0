@@ -42,7 +42,13 @@ jobs:
           VITE_API_PUBLIC_URL: http://localhost:5000
           VITE_SOCKET_URL: http://localhost:5000
           VITE_ASSISTANT_URL: http://localhost:8080
-      - run: npm audit
+      # Dependencias de producao: obrigatoria, qualquer severidade, sem excecoes.
+      - name: npm audit (producao)
+        run: npm audit --omit=dev
+      # Todas as dependencias, inclusive de desenvolvimento: so passam os avisos de audit-exceptions.json,
+      # com prazo, e os pacotes que dependem exclusivamente deles. Erro do npm ou do registro reprova.
+      - name: npm audit (completo, excecoes temporarias)
+        run: node scripts/audit-policy.mjs
 
   python:
     runs-on: ubuntu-latest

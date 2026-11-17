@@ -1,0 +1,11 @@
+{
+  "_comment": "Excecoes temporarias da auditoria completa do CI (scripts/audit-policy.mjs). Cada uma cobre um aviso em um pacote e os pacotes cuja cadeia via leva somente a ele. Nunca valem para a auditoria de producao (npm audit --omit=dev). Vencida a data, a auditoria volta a reprovar.",
+  "exceptions": [
+    {
+      "id": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "reason": "ReDoS no picomatch <=4.0.7 com extglobs repetidos. Entra apenas por Vite e Vitest, ferramentas de build e teste; a auditoria de producao nao tem vulnerabilidades. O npm so oferece rebaixar Vite e Vitest de versao maior.",
+      "expiresOn": "2027-01-31"
+    }
+  ]
+}

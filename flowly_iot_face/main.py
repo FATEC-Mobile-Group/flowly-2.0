@@ -11,13 +11,18 @@ import logging
 import os
 import platform
 import tempfile
+import time
 import traceback
+from contextlib import contextmanager
 
 import cv2
 import numpy as np
 from dotenv import load_dotenv
-from flask import Flask, has_request_context, jsonify, request
+from flask import Flask, g, has_request_context, jsonify, request
 from flask_cors import CORS
+
+# Base da medicao de inicializacao: o import deste modulo pelo worker do gunicorn.
+_PROCESS_STARTED = time.perf_counter()
 
 load_dotenv()
 
@@ -42,6 +47,9 @@ VERIFY_THRESHOLD = float(os.getenv("FACE_VERIFY_THRESHOLD", os.getenv("FACE_MATC
 
 _FACE_CASCADE = None
 _RUNTIME_LOGGED = False
+_MODEL_READY = False
+# Arquivo que o DeepFace (backend tensorflow) procura para cada modelo. Na imagem ele vem de fetch_face_weights.py.
+MODEL_WEIGHT_FILES = {"VGG-Face": "vgg_face_weights.h5"}
 RUNTIME_PACKAGES = (
     "deepface",
     "tensorflow",
@@ -239,29 +247,94 @@ def has_detectable_face(image_path: str) -> bool:
     return len(faces) > 0
 
 
+def record_timing(stage: str, started: float) -> float:
+    """Soma o tempo da etapa na requisicao atual (log face_timing). Fora de requisicao, so devolve o valor."""
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    timings = getattr(g, "face_timings", None) if has_request_context() else None
+    if timings is not None:
+        timings[stage] = timings.get(stage, 0.0) + elapsed_ms
+    return elapsed_ms
+
+
+@contextmanager
+def timed(stage: str):
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        record_timing(stage, started)
+
+
+def model_weights_path() -> str:
+    """Onde o DeepFace procura os pesos (mesma regra de deepface.commons.folder_utils.get_deepface_home)."""
+    home = str(os.getenv("DEEPFACE_HOME", default=os.path.expanduser("~")))
+    return os.path.join(home, ".deepface", "weights", MODEL_WEIGHT_FILES.get(MODEL, ""))
+
+
+def assert_local_weights() -> None:
+    """Na imagem (FACE_REQUIRE_LOCAL_WEIGHTS=1), sem os pesos o modelo nao carrega: nada de baixar no login."""
+    if os.getenv("FACE_REQUIRE_LOCAL_WEIGHTS") != "1" or MODEL not in MODEL_WEIGHT_FILES:
+        return
+    if not os.path.isfile(model_weights_path()):
+        raise FaceProcessingError("model_unavailable", "model_load", "Pesos do modelo ausentes", weights="missing")
+
+
 def load_face_model():
     """Importa o DeepFace e garante o modelo carregado (o DeepFace guarda em cache depois da 1a vez)."""
+    global _MODEL_READY
     log_runtime_versions()
+    first_load = not _MODEL_READY
+    if first_load:
+        assert_local_weights()
+
+    started = time.perf_counter()
     try:
         from deepface import DeepFace
     except Exception as exc:
         raise FaceProcessingError("model_unavailable", "model_import") from exc
+    import_ms = (time.perf_counter() - started) * 1000
 
+    started = time.perf_counter()
     try:
         DeepFace.build_model(MODEL)
     except Exception as exc:
         raise FaceProcessingError("model_unavailable", "model_load") from exc
+    build_ms = (time.perf_counter() - started) * 1000
+
+    if first_load:
+        _MODEL_READY = True
+        logger.info("face_model_load model=%s import_ms=%.0f build_ms=%.0f", MODEL, import_ms, build_ms)
+        if has_request_context() and getattr(g, "face_timings", None) is not None:
+            g.face_timings["model"] = import_ms + build_ms
     return DeepFace
 
 
-def warmup_model() -> None:
+class ModelPreloadError(RuntimeError):
+    """Inicializacao de producao sem o modelo obrigatorio: o worker nao sobe e o gunicorn encerra."""
+
+
+def warmup_model() -> bool:
     logger.info("Pré-carregando modelo facial %s...", MODEL)
     try:
+        # O classificador Haar tambem fica pronto: a primeira requisicao nao paga a leitura dos XML.
+        get_face_cascade()
         load_face_model()
     except FaceProcessingError as exc:
         log_face_failure(exc, exc.category, exc.stage, FAILURES[exc.category][0])
-        return
+        return False
     logger.info("Modelo facial pronto.")
+    return True
+
+
+def recognition_ready() -> bool:
+    """Modelo carregado e classificador Haar disponivel."""
+    if not _MODEL_READY:
+        return False
+    try:
+        get_face_cascade()
+    except FaceProcessingError:
+        return False
+    return True
 
 
 def is_no_face_error(exc: Exception) -> bool:
@@ -270,28 +343,30 @@ def is_no_face_error(exc: Exception) -> bool:
 
 
 def extract_embedding(image_path: str) -> list[float]:
-    try:
-        face_found = has_detectable_face(image_path)
-    except FaceProcessingError:
-        raise
-    except Exception as exc:
-        raise FaceProcessingError("internal_error", "face_detection") from exc
+    with timed("detect"):
+        try:
+            face_found = has_detectable_face(image_path)
+        except FaceProcessingError:
+            raise
+        except Exception as exc:
+            raise FaceProcessingError("internal_error", "face_detection") from exc
     if not face_found:
         raise FaceProcessingError("no_face", "face_detection", "Face could not be detected")
 
     DeepFace = load_face_model()
 
-    try:
-        results = DeepFace.represent(
-            img_path=image_path,
-            model_name=MODEL,
-            detector_backend=DETECTOR,
-            enforce_detection=True,
-        )
-    except Exception as exc:
-        if is_no_face_error(exc):
-            raise FaceProcessingError("no_face", "embedding", "Face could not be detected") from exc
-        raise FaceProcessingError("internal_error", "embedding") from exc
+    with timed("embed"):
+        try:
+            results = DeepFace.represent(
+                img_path=image_path,
+                model_name=MODEL,
+                detector_backend=DETECTOR,
+                enforce_detection=True,
+            )
+        except Exception as exc:
+            if is_no_face_error(exc):
+                raise FaceProcessingError("no_face", "embedding", "Face could not be detected") from exc
+            raise FaceProcessingError("internal_error", "embedding") from exc
     if not results:
         raise FaceProcessingError("no_face", "embedding", "Nenhum rosto detectado na imagem.")
     if len(results) > 1:
@@ -314,6 +389,23 @@ def parse_references(references) -> list[np.ndarray]:
 
 
 @app.before_request
+def start_request_timer():
+    g.face_started = time.perf_counter()
+    g.face_timings = {}
+
+
+# Uma linha por requisicao: so caminho, status e milissegundos por etapa. Nada de imagem, embedding ou segredo.
+@app.after_request
+def log_request_timing(response):
+    started = getattr(g, "face_started", None)
+    if request.path != "/health" and started is not None:
+        fields = [f"path={request.path}", f"status={response.status_code}", f"total_ms={(time.perf_counter() - started) * 1000:.0f}"]
+        fields += [f"{stage}_ms={value:.0f}" for stage, value in getattr(g, "face_timings", {}).items()]
+        logger.info("face_timing %s", " ".join(fields))
+    return response
+
+
+@app.before_request
 def authenticate_internal_request():
     if request.path == "/health":
         return None
@@ -331,6 +423,9 @@ def authenticate_internal_request():
 
 @app.get("/health")
 def health():
+    # Com pre-carregamento (imagem Docker), "ok" so quando o reconhecimento consegue de fato rodar.
+    if os.getenv("FACE_PRELOAD_MODEL") == "1" and not recognition_ready():
+        return jsonify({"status": "unavailable", "service": "flowly_iot_face"}), 503
     return jsonify(
         {
             "status": "ok",
@@ -353,7 +448,8 @@ def embed():
 
     image_path = None
     try:
-        image_path = decode_image_to_path(image_base64)
+        with timed("decode"):
+            image_path = decode_image_to_path(image_base64)
         embedding = extract_embedding(image_path)
         return jsonify(
             {
@@ -373,19 +469,21 @@ def verify_against_references(references, image_base64, threshold):
     image_path = None
     try:
         reference_vectors = parse_references(references)
-        image_path = decode_image_to_path(image_base64)
+        with timed("decode"):
+            image_path = decode_image_to_path(image_base64)
         probe_embedding = extract_embedding(image_path)
         probe = np.array(probe_embedding, dtype=np.float64)
 
         best_distance = 1.0
-        for ref in reference_vectors:
-            if ref.shape != probe.shape:
-                raise FaceProcessingError(
-                    "invalid_reference", "compare", reference_dim=ref.size, probe_dim=probe.size
-                )
-            distance = cosine_distance(ref, probe)
-            if distance < best_distance:
-                best_distance = distance
+        with timed("compare"):
+            for ref in reference_vectors:
+                if ref.shape != probe.shape:
+                    raise FaceProcessingError(
+                        "invalid_reference", "compare", reference_dim=ref.size, probe_dim=probe.size
+                    )
+                distance = cosine_distance(ref, probe)
+                if distance < best_distance:
+                    best_distance = distance
 
         match = best_distance <= threshold
 
@@ -433,6 +531,31 @@ def verify_multi():
         ), 400
 
     return verify_against_references(references, image_base64, threshold)
+
+
+def preload_model_if_enabled() -> None:
+    """Com FACE_PRELOAD_MODEL=1 (imagem Docker), o worker carrega o modelo antes de atender.
+
+    Em producao (tambem FACE_REQUIRE_LOCAL_WEIGHTS=1), falhar ao carregar o VGG-Face ou o Haar encerra a
+    inicializacao: o import lanca, o worker do gunicorn nao sobe e o processo termina, em vez de uma
+    instancia que parece saudavel mas nao reconhece rostos. Em desenvolvimento, so registra e segue.
+    """
+    if os.getenv("FACE_PRELOAD_MODEL") != "1":
+        return
+    started = time.perf_counter()
+    ready = warmup_model()
+    logger.info(
+        "face_startup preload=1 model_ready=%s model_ms=%.0f total_ms=%.0f",
+        "true" if ready else "false",
+        (time.perf_counter() - started) * 1000,
+        (time.perf_counter() - _PROCESS_STARTED) * 1000,
+    )
+    if not ready and os.getenv("FACE_REQUIRE_LOCAL_WEIGHTS") == "1":
+        # Mensagem fixa: a causa (categoria e etapa) ja esta na linha face_failure, sem caminhos nem segredos.
+        raise ModelPreloadError("Modelo facial obrigatorio indisponivel na inicializacao.")
+
+
+preload_model_if_enabled()
 
 
 if __name__ == "__main__":
