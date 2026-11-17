@@ -1,3 +1,5 @@
+# Versao do OpenCV fixada em constraints.txt (os wheels 5.x vem sem os classificadores Haar).
+-c constraints.txt
 flask>=3.0.0
 flask-cors>=4.0.0
 python-dotenv>=1.0.0
