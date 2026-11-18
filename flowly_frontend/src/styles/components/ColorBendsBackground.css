@@ -351,3 +351,15 @@
     left: -42vw;
   }
 }
+
+/* Prioriza a fluidez da webcam durante a captura facial. */
+/* Vale enquanto o FaceCapture estiver montado (inclusive iniciando, com a camera negada ou com foto ja tirada).
+   O fundo continua visivel, so congelado; sem suporte a :has(), a regra e ignorada e o fundo segue animado. */
+body:has(.face-capture-video) .color-bends-container :is(
+  .xmb-wave,
+  .xmb-lightbeam,
+  .xmb-particles,
+  .xmb-glow
+) {
+  animation-play-state: paused;
+}
