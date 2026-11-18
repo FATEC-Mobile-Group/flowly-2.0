@@ -8,6 +8,8 @@ import binascii
 import hmac
 import importlib.metadata
 import logging
+import math
+import numbers
 import os
 import platform
 import tempfile
@@ -50,6 +52,9 @@ _RUNTIME_LOGGED = False
 _MODEL_READY = False
 # Arquivo que o DeepFace (backend tensorflow) procura para cada modelo. Na imagem ele vem de fetch_face_weights.py.
 MODEL_WEIGHT_FILES = {"VGG-Face": "vgg_face_weights.h5"}
+# Anti-spoofing nativo do DeepFace (MiniFASNetV2 + MiniFASNetV1SE). Sempre ligado: nao ha variavel que o desligue.
+ANTI_SPOOFING_MODEL = "Fasnet"
+ANTI_SPOOFING_WEIGHT_FILES = ("2.7_80x80_MiniFASNetV2.h5", "4_0_0_80x80_MiniFASNetV1SE.h5")
 RUNTIME_PACKAGES = (
     "deepface",
     "tensorflow",
@@ -75,6 +80,11 @@ FAILURES = {
     "multiple_faces": (
         400,
         "Mais de um rosto foi detectado na imagem. Certifique-se de que apenas você apareça na foto.",
+    ),
+    "spoof_detected": (
+        400,
+        "Não foi possível confirmar que a captura é de um rosto ao vivo. "
+        "Olhe diretamente para a câmera, sem fotos ou telas, com boa iluminação, e tente novamente.",
     ),
     "model_unavailable": (503, "Serviço facial indisponível no momento. Tente novamente em instantes."),
     "invalid_reference": (500, "Erro interno no serviço facial."),
@@ -265,18 +275,30 @@ def timed(stage: str):
         record_timing(stage, started)
 
 
-def model_weights_path() -> str:
+def deepface_weights_dir() -> str:
     """Onde o DeepFace procura os pesos (mesma regra de deepface.commons.folder_utils.get_deepface_home)."""
     home = str(os.getenv("DEEPFACE_HOME", default=os.path.expanduser("~")))
-    return os.path.join(home, ".deepface", "weights", MODEL_WEIGHT_FILES.get(MODEL, ""))
+    return os.path.join(home, ".deepface", "weights")
+
+
+def model_weights_path() -> str:
+    return os.path.join(deepface_weights_dir(), MODEL_WEIGHT_FILES.get(MODEL, ""))
+
+
+def required_weight_paths() -> list[str]:
+    paths = [model_weights_path()] if MODEL in MODEL_WEIGHT_FILES else []
+    return paths + [os.path.join(deepface_weights_dir(), name) for name in ANTI_SPOOFING_WEIGHT_FILES]
 
 
 def assert_local_weights() -> None:
-    """Na imagem (FACE_REQUIRE_LOCAL_WEIGHTS=1), sem os pesos o modelo nao carrega: nada de baixar no login."""
-    if os.getenv("FACE_REQUIRE_LOCAL_WEIGHTS") != "1" or MODEL not in MODEL_WEIGHT_FILES:
+    """Na imagem (FACE_REQUIRE_LOCAL_WEIGHTS=1), sem os pesos os modelos nao carregam: nada de baixar no login."""
+    if os.getenv("FACE_REQUIRE_LOCAL_WEIGHTS") != "1":
         return
-    if not os.path.isfile(model_weights_path()):
-        raise FaceProcessingError("model_unavailable", "model_load", "Pesos do modelo ausentes", weights="missing")
+    missing = [path for path in required_weight_paths() if not os.path.isfile(path)]
+    if missing:
+        raise FaceProcessingError(
+            "model_unavailable", "model_load", "Pesos dos modelos ausentes", weights="missing", missing_files=len(missing)
+        )
 
 
 def load_face_model():
@@ -301,11 +323,22 @@ def load_face_model():
         raise FaceProcessingError("model_unavailable", "model_load") from exc
     build_ms = (time.perf_counter() - started) * 1000
 
+    # Sem o anti-spoofing o reconhecimento nao fica pronto: falha aqui e 503, nunca seguir sem a checagem.
+    started = time.perf_counter()
+    try:
+        DeepFace.build_model(model_name=ANTI_SPOOFING_MODEL, task="spoofing")
+    except Exception as exc:
+        raise FaceProcessingError("model_unavailable", "liveness_load") from exc
+    liveness_build_ms = (time.perf_counter() - started) * 1000
+
     if first_load:
         _MODEL_READY = True
-        logger.info("face_model_load model=%s import_ms=%.0f build_ms=%.0f", MODEL, import_ms, build_ms)
+        logger.info(
+            "face_model_load model=%s import_ms=%.0f build_ms=%.0f liveness_build_ms=%.0f",
+            MODEL, import_ms, build_ms, liveness_build_ms,
+        )
         if has_request_context() and getattr(g, "face_timings", None) is not None:
-            g.face_timings["model"] = import_ms + build_ms
+            g.face_timings["model"] = import_ms + build_ms + liveness_build_ms
     return DeepFace
 
 
@@ -342,6 +375,44 @@ def is_no_face_error(exc: Exception) -> bool:
     return type(exc).__name__ == "FaceNotDetected" or "could not be detected" in message or "no face" in message
 
 
+def _valid_liveness_score(score) -> bool:
+    return (
+        isinstance(score, numbers.Real)
+        and not isinstance(score, (bool, np.bool_))
+        and math.isfinite(float(score))
+        and 0.0 <= float(score) <= 1.0
+    )
+
+
+def check_liveness(DeepFace, image_path: str) -> None:
+    """Recusa foto ou tela antes de gerar o embedding. So segue com confirmacao valida do Fasnet."""
+    with timed("liveness"):
+        try:
+            faces = DeepFace.extract_faces(
+                img_path=image_path,
+                detector_backend=DETECTOR,
+                enforce_detection=True,
+                align=True,
+                anti_spoofing=True,
+            )
+        except Exception as exc:
+            if is_no_face_error(exc):
+                raise FaceProcessingError("no_face", "liveness", "Face could not be detected") from exc
+            raise FaceProcessingError("model_unavailable", "liveness") from exc
+
+    if isinstance(faces, list) and len(faces) > 1:
+        raise FaceProcessingError("multiple_faces", "liveness", "Multiple faces detected")
+    analysis = faces[0] if isinstance(faces, list) and len(faces) == 1 and isinstance(faces[0], dict) else {}
+    is_real = analysis.get("is_real")
+    # Sem um booleano e um score validos nao ha confirmacao: e falha tecnica (503), nunca aprovacao.
+    if not isinstance(is_real, (bool, np.bool_)) or not _valid_liveness_score(analysis.get("antispoof_score")):
+        raise FaceProcessingError(
+            "model_unavailable", "liveness", "Resposta do anti-spoofing incompleta", liveness="invalid_response"
+        )
+    if not bool(is_real):
+        raise FaceProcessingError("spoof_detected", "liveness", "Spoof detected")
+
+
 def extract_embedding(image_path: str) -> list[float]:
     with timed("detect"):
         try:
@@ -354,6 +425,7 @@ def extract_embedding(image_path: str) -> list[float]:
         raise FaceProcessingError("no_face", "face_detection", "Face could not be detected")
 
     DeepFace = load_face_model()
+    check_liveness(DeepFace, image_path)
 
     with timed("embed"):
         try:

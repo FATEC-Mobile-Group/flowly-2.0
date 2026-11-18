@@ -31,6 +31,10 @@ class FaceTestCase(unittest.TestCase):
     def setUp(self):
         self.represent = _fake_deepface.DeepFace.represent
         self.represent.reset_mock(return_value=True, side_effect=True)
+        # Captura ao vivo: o anti-spoofing aprova e o teste trata so da contagem de rostos.
+        liveness = _fake_deepface.DeepFace.extract_faces
+        liveness.reset_mock(return_value=True, side_effect=True)
+        liveness.return_value = [{"facial_area": {"x": 1, "y": 1, "w": 2, "h": 2}, "is_real": True, "antispoof_score": 0.97}]
         haar = patch.object(main, "has_detectable_face", return_value=True)
         self.has_detectable_face = haar.start()
         self.addCleanup(haar.stop)

@@ -1,8 +1,8 @@
-"""Baixa os pesos do VGG-Face durante o build da imagem e os grava onde o DeepFace procura.
+"""Baixa os pesos do VGG-Face e do anti-spoofing (Fasnet) no build da imagem e os grava onde o DeepFace procura.
 
-As origens sao as da lista WEIGHTS_URL do DeepFace instalado (release oficial v1.0 no GitHub e espelho
-oficial no Hugging Face). O arquivo so entra na imagem se tamanho e SHA-256 baterem com os valores fixados.
-Em execucao nada e baixado: main.py recusa carregar o modelo sem o arquivo (FACE_REQUIRE_LOCAL_WEIGHTS=1).
+As origens sao as listas de URLs do DeepFace instalado (release oficial v1.0 no GitHub e espelho oficial no
+Hugging Face). Cada arquivo so entra na imagem se tamanho e SHA-256 baterem com os valores fixados.
+Em execucao nada e baixado: main.py recusa carregar os modelos sem os arquivos (FACE_REQUIRE_LOCAL_WEIGHTS=1).
 """
 
 import hashlib
@@ -17,6 +17,13 @@ WEIGHTS_FILE = "vgg_face_weights.h5"
 # A release do GitHub nao publica digest para este asset.
 PINNED_SHA256 = "759266b9614d0fd5d65b97bf716818b746cc77ab5944c7bffc937c6ba9455d8c"
 PINNED_SIZE = 580085408
+
+# Anti-spoofing (Fasnet, backend tensorflow do DeepFace 0.0.105): arquivo, SHA-256, tamanho e atributo de URLs.
+# SHA-256 publicado pela release v1.0 no GitHub (digest do asset) e pelo Hugging Face (oid do LFS): as duas conferem.
+FASNET_WEIGHTS = (
+    ("2.7_80x80_MiniFASNetV2.h5", "da0de51d44dc3d9af808c6c2f6fe97dd174774fa66881c9fd291bde1a1174e04", 2234368, "FIRST_WEIGHTS_URL"),
+    ("4_0_0_80x80_MiniFASNetV1SE.h5", "d2f4280c30d88dbd02d0d6691dcfbdd389316de398f94bb6cba30144e23889b0", 2288392, "SECOND_WEIGHTS_URL"),
+)
 
 CHUNK_BYTES = 8 * 1024 * 1024
 TIMEOUT_SECONDS = 60
@@ -46,6 +53,25 @@ def installed_weight_urls() -> list:
     except ModuleNotFoundError:
         from deepface.models.facial_recognition import VGGFace as module  # versoes anteriores
     return urls_from(module)
+
+
+def installed_fasnet_urls(attribute: str) -> list:
+    from deepface import DeepFace  # noqa: F401
+
+    try:
+        from deepface.models.spoofing.tf import FasNet as module
+    except ModuleNotFoundError as exc:
+        raise WeightsError("o DeepFace instalado nao tem o Fasnet para tensorflow (requer 0.0.105)") from exc
+    urls = getattr(module, attribute)
+    return [urls] if isinstance(urls, str) else list(urls)
+
+
+def required_weights() -> list:
+    """(arquivo, SHA-256, tamanho, funcao que devolve as origens) de tudo o que a imagem precisa."""
+    weights = [(WEIGHTS_FILE, PINNED_SHA256, PINNED_SIZE, installed_weight_urls)]
+    for name, sha256, size, attribute in FASNET_WEIGHTS:
+        weights.append((name, sha256, size, lambda attribute=attribute: installed_fasnet_urls(attribute)))
+    return weights
 
 
 def sha256_of(path: str) -> str:
@@ -79,16 +105,18 @@ def _remove(path: str) -> None:
         os.remove(path)
 
 
-def fetch_weights(urls, target_dir: str, sha256: str = PINNED_SHA256, size: int = PINNED_SIZE) -> str:
-    """Grava target_dir/vgg_face_weights.h5 somente leitura. Arquivo ja valido nao e baixado de novo."""
-    target = os.path.join(target_dir, WEIGHTS_FILE)
+def fetch_weights(
+    urls, target_dir: str, sha256: str = PINNED_SHA256, size: int = PINNED_SIZE, file_name: str = WEIGHTS_FILE
+) -> str:
+    """Grava target_dir/file_name somente leitura. Arquivo ja valido nao e baixado de novo."""
+    target = os.path.join(target_dir, file_name)
     if file_matches(target, sha256, size):
         return target
 
     os.makedirs(target_dir, exist_ok=True)
     failures = []
     for url in urls:
-        handle, partial = tempfile.mkstemp(prefix=".vgg-face-", suffix=".part", dir=target_dir)
+        handle, partial = tempfile.mkstemp(prefix=f".{file_name}-", suffix=".part", dir=target_dir)
         os.close(handle)
         try:
             got_sha256, got_size = _download(url, partial, size)
@@ -109,12 +137,14 @@ def fetch_weights(urls, target_dir: str, sha256: str = PINNED_SHA256, size: int 
 
 
 def main() -> int:
+    target_dir = deepface_weights_dir()
     try:
-        path = fetch_weights(installed_weight_urls(), deepface_weights_dir())
+        for name, sha256, size, urls in required_weights():
+            path = fetch_weights(urls(), target_dir, sha256, size, name)
+            print(f"{name} conferido em {path} ({size} bytes, SHA-256 {sha256}).")
     except WeightsError as exc:
         print(f"ERRO: {exc}", file=sys.stderr)
         return 1
-    print(f"{WEIGHTS_FILE} conferido em {path} ({PINNED_SIZE} bytes, SHA-256 {PINNED_SHA256}).")
     return 0
 
 

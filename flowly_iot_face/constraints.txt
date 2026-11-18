@@ -3,3 +3,6 @@
 # opencv-python entra como dependencia do DeepFace e do retina-face; o Dockerfile o remove e deixa so o headless.
 opencv-python-headless==4.13.0.92
 opencv-python==4.13.0.92
+# DeepFace fixado na versao validada: o anti-spoofing (Fasnet no backend tensorflow), as origens e os SHA-256
+# dos pesos em fetch_face_weights.py dependem dela. Trocar de versao exige validar tudo de novo.
+deepface==0.0.105
