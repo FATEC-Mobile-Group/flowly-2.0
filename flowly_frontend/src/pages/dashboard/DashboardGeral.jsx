@@ -1,127 +1,140 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import apiClient from "../../config/apiClient";
 import { Link } from 'react-router-dom';
-import { FaBell } from 'react-icons/fa';
+import { FaBell, FaSyncAlt } from 'react-icons/fa';
 import { Bar } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
-  ArcElement,
   Tooltip,
-  Legend,
   CategoryScale,
   LinearScale,
   BarElement
 } from 'chart.js';
 import Sidebar from "../../components/layout/Sidebar";
 import { useFotoPerfil } from "../../components/layout/useFotoPerfil";
-import { formatarStatus } from "../../config/statusUtils";
 import { API_ENDPOINTS } from "../../config/config";
+import RankingEquipes from "./RankingEquipes";
+import IndicadoresPainel from "./IndicadoresPainel";
+import ProximasEntregas from "./ProximasEntregas";
+import { useCoresDoTema } from "./useCoresDoTema";
+import {
+  calcularIndicadores,
+  chaveDiaLocal,
+  contarPorStatus,
+  filtrarPorEquipe,
+  idDaEquipe,
+  listarProximasEntregas,
+  ordenarEquipesPorNome
+} from "./painelGeralUtils";
 import "../../styles/pages/dashboard/DashboardGeral.css";
 import "../../styles/pages/admin/DashboardAdmin.css";
 
 ChartJS.register(
-  ArcElement,
   BarElement,
   Tooltip,
-  Legend,
   CategoryScale,
   LinearScale
 );
 
+const CORES_STATUS = ['rgba(255, 51, 102, 0.8)', 'rgba(251, 192, 45, 0.8)', 'rgba(0, 212, 141, 0.8)'];
+const AVISO_EQUIPE_INDISPONIVEL = 'A equipe selecionada não está mais disponível. Mostrando todas as equipes.';
+
 function DashboardGeral() {
   const [equipes, setEquipes] = useState([]);
   const [tarefas, setTarefas] = useState([]);
-  const [dadosGraficos, setDadosGraficos] = useState([]);
+  // carregando: ainda sem dados (nada de zeros); pronto: dados reais; erro: equipes ou tarefas falharam.
+  const [estado, setEstado] = useState('carregando');
+  const [atualizando, setAtualizando] = useState(false);
+  const [equipeId, setEquipeId] = useState('');
+  const [avisoFiltro, setAvisoFiltro] = useState('');
   const [notificationCount, setNotificationCount] = useState(0);
+  const carregamentoAtual = useRef(null);
+  const idFiltro = useId();
+  const cores = useCoresDoTema();
 
   const adminName = localStorage.getItem('nome') || 'Admin Flowly';
   const { fotoUrl, aoFalharFoto } = useFotoPerfil();
 
-  useEffect(() => {
-    buscarEquipes();
-    buscarTarefas();
-    buscarNotificationCount();
+  // Um carregamento por vez: o novo cancela o anterior, e nada atualiza o estado depois de desmontar.
+  const carregarDados = useCallback(async () => {
+    carregamentoAtual.current?.abort();
+    const controle = new AbortController();
+    carregamentoAtual.current = controle;
+    setAtualizando(true);
+
+    try {
+      const [resEquipes, resTarefas] = await Promise.all([
+        apiClient.get(API_ENDPOINTS.EQUIPES, { signal: controle.signal }),
+        apiClient.get(API_ENDPOINTS.TAREFAS, { signal: controle.signal }),
+      ]);
+      if (controle.signal.aborted) return;
+      if (!Array.isArray(resEquipes?.data) || !Array.isArray(resTarefas?.data)) {
+        throw new Error('Resposta inesperada ao carregar equipes ou tarefas.');
+      }
+      setEquipes(resEquipes.data);
+      setTarefas(resTarefas.data);
+      setEstado('pronto');
+    } catch (err) {
+      if (controle.signal.aborted) return;
+      console.error('Erro ao carregar o Painel Geral:', err);
+      setEstado('erro');
+    } finally {
+      if (carregamentoAtual.current === controle) carregamentoAtual.current = null;
+      if (!controle.signal.aborted) setAtualizando(false);
+    }
   }, []);
 
   useEffect(() => {
-    if (equipes.length > 0 && tarefas.length > 0) {
-      processarDadosGraficos();
-    }
-  }, [equipes, tarefas]);
+    carregarDados();
+    return () => carregamentoAtual.current?.abort();
+  }, [carregarDados]);
 
+  // O contador do sino e independente: se falhar, o painel segue normalmente.
+  useEffect(() => {
+    const controle = new AbortController();
+    apiClient.get(API_ENDPOINTS.NOTIFICATIONS_COUNT, { signal: controle.signal })
+      .then((res) => {
+        if (!controle.signal.aborted) setNotificationCount(res.data?.count || 0);
+      })
+      .catch((err) => {
+        if (!controle.signal.aborted) console.error('Erro ao buscar notificações:', err);
+      });
+    return () => controle.abort();
+  }, []);
 
-  const processarDadosGraficos = () => {
-    const dadosPorEquipe = equipes.map(equipe => {
-      const tarefasEquipe = tarefas.filter(tarefa => tarefa.equipe?._id === equipe._id);
-      
-      const pendentes = tarefasEquipe.filter(t => t.status === 'pendente').length;
-      const emAndamento = tarefasEquipe.filter(t => t.status === 'em_andamento').length;
-      const concluidas = tarefasEquipe.filter(t => t.status === 'concluido').length;
-
-      return {
-        equipe: equipe.nome,
-        dados: {
-          labels: [formatarStatus('pendente'), formatarStatus('em_andamento'), formatarStatus('concluido')],
-          datasets: [{
-            data: [pendentes, emAndamento, concluidas],
-            backgroundColor: ['#f44336', '#ff9800', '#4caf50'],
-            borderWidth: 1
-          }]
-        }
-      };
-    });
-
-    setDadosGraficos(dadosPorEquipe);
+  const tentarNovamente = () => {
+    setEstado('carregando');
+    carregarDados();
   };
 
-  const buscarEquipes = async () => {
-    try {
-      const res = await apiClient.get(API_ENDPOINTS.EQUIPES);
-      setEquipes(res.data);
-    } catch (err) {
-      console.error("Erro ao buscar equipes:", err);
+  const filtro = filtrarPorEquipe(equipes, tarefas, equipeId);
+  const filtrando = Boolean(filtro.equipeId);
+  const selecaoIndisponivel = Boolean(equipeId) && !filtrando;
+
+  // Equipe escolhida que sumiu numa atualizacao: volta para "todas" e avisa (o filtro ja ignora o id invalido).
+  useEffect(() => {
+    if (estado === 'pronto' && selecaoIndisponivel) {
+      setEquipeId('');
+      setAvisoFiltro(AVISO_EQUIPE_INDISPONIVEL);
     }
+  }, [estado, selecaoIndisponivel]);
+
+  const escolherEquipe = (evento) => {
+    setEquipeId(evento.target.value);
+    setAvisoFiltro('');
   };
 
-  const buscarTarefas = async () => {
-    try {
-      const res = await apiClient.get(API_ENDPOINTS.TAREFAS);
-      setTarefas(res.data);
-    } catch (err) {
-      console.error("Erro ao buscar tarefas:", err);
-    }
-  };
-
-  const buscarNotificationCount = async () => {
-    try {
-      const res = await apiClient.get(API_ENDPOINTS.NOTIFICATIONS_COUNT);
-      setNotificationCount(res.data?.count || 0);
-    } catch (err) {
-      console.error('Erro ao buscar notificações:', err);
-    }
-  };
-
-  const totalTarefas = tarefas.length;
-  const tarefasConcluidas = tarefas.filter(t => t.status === 'concluido').length;
-  const totalTempoGasto = tarefas.reduce((acc, t) => acc + (t.tempoGasto || 0), 0);
-  
-  // Calculate Ranking
-  const equipesRanking = equipes.map(eq => {
-    const tarefasEq = tarefas.filter(t => t.equipe?._id === eq._id);
-    const concluidasEq = tarefasEq.filter(t => t.status === 'concluido').length;
-    return { nome: eq.nome, concluidas: concluidasEq, total: tarefasEq.length };
-  }).sort((a, b) => b.concluidas - a.concluidas);
+  const hoje = chaveDiaLocal(new Date());
+  const indicadores = calcularIndicadores(filtro.equipes, filtro.tarefas, hoje);
+  const entregas = listarProximasEntregas(filtro.tarefas, hoje);
+  const opcoesEquipes = ordenarEquipesPorNome(equipes).filter((equipe) => idDaEquipe(equipe));
 
   const dadosGeraisBar = {
     labels: ['Pendente', 'Em Andamento', 'Concluído'],
     datasets: [{
       label: 'Quantidade de Tarefas',
-      data: [
-        tarefas.filter(t => t.status === 'pendente').length,
-        tarefas.filter(t => t.status === 'em_andamento').length,
-        tarefas.filter(t => t.status === 'concluido').length
-      ],
-      backgroundColor: ['rgba(255, 51, 102, 0.8)', 'rgba(251, 192, 45, 0.8)', 'rgba(0, 212, 141, 0.8)'],
+      data: contarPorStatus(filtro.tarefas),
+      backgroundColor: CORES_STATUS,
       borderRadius: 6
     }]
   };
@@ -132,13 +145,27 @@ function DashboardGeral() {
 
     <main className="dashboard-geral">
       <header className="dashboard-header">
-        <div className="header-search">
-          <input type="text" placeholder="Pesquisar painéis..." />
+        <div className="painel-filtros">
+          <div className="filtro-equipe">
+            <label htmlFor={idFiltro}>Equipe</label>
+            <select id={idFiltro} value={filtro.equipeId} onChange={escolherEquipe} disabled={estado !== 'pronto'}>
+              <option value="">Todas as equipes</option>
+              {opcoesEquipes.map((equipe) => (
+                <option key={idDaEquipe(equipe)} value={idDaEquipe(equipe)}>
+                  {equipe.nome || 'Equipe sem nome'}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button type="button" className="botao-atualizar" onClick={carregarDados} disabled={atualizando}>
+            <FaSyncAlt aria-hidden="true" className={atualizando ? 'girando' : undefined} />
+            <span>{atualizando ? 'Atualizando…' : 'Atualizar'}</span>
+          </button>
         </div>
         <div className="header-profile">
-          <Link to="/notificacoes" className="notification-bell" aria-label="Ver notificações" style={{ position: 'relative', fontSize: '1.8em', color: '#333', textDecoration: 'none', display: 'flex', alignItems: 'center' }}>
+          <Link to="/notificacoes" className="notification-bell" aria-label="Ver notificações">
             <FaBell />
-            {notificationCount > 0 && <span style={{ position: 'absolute', top: '-8px', right: '-8px', backgroundColor: '#ff4444', color: 'white', borderRadius: '50%', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75em', fontWeight: 'bold' }}>{notificationCount}</span>}
+            {notificationCount > 0 && <span className="notification-badge">{notificationCount}</span>}
           </Link>
           <div className="profile-info">
             <div className="avatar">
@@ -153,60 +180,71 @@ function DashboardGeral() {
         </div>
       </header>
 
-      <div className="cards-container">
-        <div className="card cyan summary-card">
-          <h3>Equipes Operando</h3>
-          <p>{equipes.length}</p>
-        </div>
-        <div className="card purple summary-card">
-          <h3>Total de Tarefas</h3>
-          <p>{totalTarefas}</p>
-        </div>
-        <div className="card green summary-card">
-          <h3>Tarefas Concluídas</h3>
-          <p>{tarefasConcluidas}</p>
-        </div>
-        <div className="card orange summary-card">
-          <h3>Minutos Investidos</h3>
-          <p>{totalTempoGasto}m</p>
-        </div>
-      </div>
+      {avisoFiltro && <p className="aviso-filtro" role="status">{avisoFiltro}</p>}
 
-      <div className="dashboard-grid">
-        <div className="glass-card big-chart">
-          <h3 style={{ marginBottom: '20px' }}>Visão Geral de Produtividade</h3>
-          <Bar 
-            data={dadosGeraisBar}
-            options={{
-              responsive: true,
-              plugins: {
-                legend: { position: 'top', labels: { color: '#fff' } },
-                title: { display: false }
-              },
-              scales: {
-                x: { ticks: { color: '#fff' } },
-                y: { beginAtZero: true, title: { display: true, text: 'Volume', color: '#fff' }, ticks: { color: '#fff', stepSize: 1 } }
-              }
-            }}
+      {estado === 'erro' ? (
+        <section className="glass-card painel-erro" role="alert">
+          <h3>Não foi possível carregar os dados do painel.</h3>
+          <p>Os indicadores não foram exibidos para não mostrar números incorretos.</p>
+          <button type="button" className="botao-tentar" onClick={tentarNovamente}>
+            Tentar novamente
+          </button>
+        </section>
+      ) : (
+        <>
+          <IndicadoresPainel
+            indicadores={estado === 'pronto' ? indicadores : null}
+            filtrando={filtrando}
+            totalEquipes={equipes.length}
           />
-        </div>
 
-        <div className="glass-card ranking-panel">
-          <h3>Ranking de Equipes</h3>
-          <ul className="ranking-list">
-            {equipesRanking.map((eq, idx) => (
-              <li key={idx} className="ranking-item">
-                <div className="ranking-medal">{idx + 1}</div>
-                <div className="ranking-info">
-                  <span className="ranking-nome">{eq.nome}</span>
-                  <span className="ranking-stats">{eq.concluidas} concluídas de {eq.total}</span>
+          {estado === 'carregando' ? (
+            <p className="painel-status" role="status">Carregando dados do painel…</p>
+          ) : (
+            <div className="dashboard-grid">
+              <div className="glass-card big-chart">
+                <header className="painel-cabecalho">
+                  <h3>Visão Geral de Produtividade</h3>
+                </header>
+                {/* Altura fixa no contêiner: o gráfico não acompanha a altura do ranking. */}
+                <div className="chart-area">
+                  {filtro.tarefas.length === 0 ? (
+                    <p className="painel-vazio chart-vazio">
+                      {filtrando ? 'Esta equipe ainda não tem tarefas.' : 'Nenhuma tarefa nas suas equipes.'}
+                    </p>
+                  ) : (
+                    <Bar
+                      data={dadosGeraisBar}
+                      options={{
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                          // Outras telas registram o Legend no Chart.js global: aqui ele fica desligado.
+                          legend: { display: false },
+                          title: { display: false }
+                        },
+                        scales: {
+                          x: { ticks: { color: cores.texto }, grid: { color: cores.grade } },
+                          y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Volume', color: cores.texto },
+                            ticks: { color: cores.texto, stepSize: 1 },
+                            grid: { color: cores.grade }
+                          }
+                        }
+                      }}
+                    />
+                  )}
                 </div>
-              </li>
-            ))}
-            {equipesRanking.length === 0 && <p style={{color: '#aaa', marginTop: '10px'}}>Nenhuma equipe cadastrada.</p>}
-          </ul>
-        </div>
-      </div>
+              </div>
+
+              <RankingEquipes key={filtro.equipeId || 'todas'} equipes={filtro.equipes} tarefas={filtro.tarefas} />
+
+              <ProximasEntregas itens={entregas.itens} total={entregas.total} filtrando={filtrando} />
+            </div>
+          )}
+        </>
+      )}
     </main>
   </div>
 );
