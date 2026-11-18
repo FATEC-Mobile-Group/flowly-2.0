@@ -20,6 +20,35 @@ const homeDoUsuario = () => {
   return "/";
 };
 
+/**
+ * Componente para renderizar rotas protegidas.
+ * Fica fora do AppContent: definido la dentro, virava um tipo novo a cada render (ex.: toast de chat)
+ * e o React remontava a pagina inteira.
+ */
+const ProtectedRoute = ({ element, requiredRole }) => {
+  const isAuthenticated = authUtils.isAuthenticated();
+  const userType = authUtils.getUserType();
+
+  if (!isAuthenticated) {
+    return <Navigate to="/" replace />;
+  }
+
+  // Papel errado mantem a sessao e leva para a home do papel real.
+  if (requiredRole && userType !== requiredRole) {
+    return <Navigate to={homeDoUsuario()} replace />;
+  }
+
+  return (
+    <>
+      <ColorBendsBackground />
+      <ThemeToggle />
+      {element}
+      {/* O timer usa /tarefas/minhas, exclusivo de user; admin nao tem tarefas e receberia 403. */}
+      {userType === USER_TYPES.USER && <FloatingTimer />}
+    </>
+  );
+};
+
 function App() {
   return (
     <ThemeProvider>
@@ -73,33 +102,6 @@ function AppContent() {
       socket.disconnect();
     };
   }, [location.pathname]);
-
-  /**
-   * Componente para renderizar rotas protegidas
-   */
-  const ProtectedRoute = ({ element, requiredRole }) => {
-    const isAuthenticated = authUtils.isAuthenticated();
-    const userType = authUtils.getUserType();
-
-    if (!isAuthenticated) {
-      return <Navigate to="/" replace />;
-    }
-
-    // Papel errado mantem a sessao e leva para a home do papel real.
-    if (requiredRole && userType !== requiredRole) {
-      return <Navigate to={homeDoUsuario()} replace />;
-    }
-
-    return (
-      <>
-        <ColorBendsBackground />
-        <ThemeToggle />
-        {element}
-        {/* O timer usa /tarefas/minhas, exclusivo de user; admin nao tem tarefas e receberia 403. */}
-        {userType === USER_TYPES.USER && <FloatingTimer />}
-      </>
-    );
-  };
 
   return (
     <>
