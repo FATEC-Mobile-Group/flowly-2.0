@@ -15,6 +15,14 @@ const DUAL_STEPS = [
   },
 ];
 
+// Para as tracks e solta o aviso de fim: um stream encerrado ou substituido nao mexe mais no estado.
+const pararStream = (stream) => {
+  stream.getTracks().forEach((track) => {
+    track.onended = null;
+    track.stop();
+  });
+};
+
 function FaceCapture({
   onCapture,
   disabled = false,
@@ -25,6 +33,9 @@ function FaceCapture({
 }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  // getUserMedia e assincrono: cada pedido guarda este numero e so o mais recente pode usar o stream.
+  // stopCamera (desmontagem ou novo pedido) avanca o numero e invalida o que ainda estiver pendente.
+  const pedidoRef = useRef(0);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [preview, setPreview] = useState('');
@@ -35,8 +46,9 @@ function FaceCapture({
   const currentDualStep = DUAL_STEPS[captureStep] || DUAL_STEPS[0];
 
   const stopCamera = useCallback(() => {
+    pedidoRef.current += 1;
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
+      pararStream(streamRef.current);
       streamRef.current = null;
     }
     if (videoRef.current) {
@@ -83,6 +95,7 @@ function FaceCapture({
     }
 
     stopCamera();
+    const pedido = pedidoRef.current;
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -90,16 +103,32 @@ function FaceCapture({
         audio: false,
       });
 
+      if (pedido !== pedidoRef.current) {
+        // Chegou tarde (componente desmontado ou pedido mais novo, como na montagem dupla do StrictMode).
+        pararStream(stream);
+        return;
+      }
+
       attachStream(stream);
     } catch (error) {
+      if (pedido !== pedidoRef.current) {
+        return;
+      }
       setCameraError('Não foi possível acessar a câmera. Verifique as permissões do navegador.');
       setCameraReady(false);
     }
   }, [attachStream, isStreamAlive, stopCamera]);
 
   useEffect(() => {
+    // Na desmontagem o React ja soltou videoRef quando esta limpeza roda; guarda o elemento para liberar o srcObject.
+    const video = videoRef.current;
     startCamera();
-    return stopCamera;
+    return () => {
+      stopCamera();
+      if (video) {
+        video.srcObject = null;
+      }
+    };
   }, [startCamera, stopCamera]);
 
   const resetCapture = useCallback(() => {
