@@ -102,13 +102,23 @@ describe('Teste de Fluxo Crítico - Projeto Integrador Flowly', () => {
     cy.get('input[placeholder="Seu nome completo"]', { timeout: 5000 }).should('be.visible');
     cy.get('input[placeholder="Seu melhor email"]').should('be.visible');
     cy.get('input[placeholder="Escolha uma senha segura"]').should('be.visible');
-    cy.get('.select-tipo').should('be.visible');
 
-    // Verifica que o botão "Criar conta" está visível
-    cy.contains('button', 'Criar conta').should('be.visible');
+    // O cadastro público não escolhe tipo de conta: exige o aceite dos Termos de Uso
+    cy.get('.terms-check input[type="checkbox"]').as('termos');
+    cy.get('@termos').should('be.visible').and('not.be.checked');
+    cy.contains('.terms-check', 'Termos de Uso').should('be.visible');
+
+    // Sem aceitar os termos, o botão "Criar conta" fica desabilitado
+    cy.contains('button[type="submit"]', 'Criar conta').as('criarConta');
+    cy.get('@criarConta').should('be.visible').and('be.disabled');
+
+    // Aceitar os termos habilita o botão (o formulário não é enviado)
+    cy.get('@termos').check();
+    cy.get('@termos').should('be.checked');
+    cy.get('@criarConta').should('be.enabled');
 
     // Verifica que é possível voltar para o login
-    cy.contains('Faça login').should('be.visible');
+    cy.contains('button', 'Faça login').should('be.visible');
   });
 
 });
