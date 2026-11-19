@@ -75,8 +75,12 @@ function VoiceAssistantPage() {
   const [processing, setProcessing] = useState(false);
   const [status, setStatus] = useState('standby');
   const [rainbowActive, setRainbowActive] = useState(false);
-  const recognitionRef = useRef(null);
-  const transcriptRef = useRef('');
+  // Sessao de reconhecimento atual. Eventos de sessoes encerradas, canceladas ou substituidas sao ignorados.
+  const sessionRef = useRef(null);
+  // Um comando por vez. Ref (e nao estado) para nao depender de closures com valor antigo.
+  const sendingRef = useRef(false);
+  // Texto do campo e sua origem: 'typed' (digitado) ou 'voice' (transcricao da sessao em andamento).
+  const draftRef = useRef({ text: '', source: 'typed' });
   const messagesEndRef = useRef(null);
   const conversationIdRef = useRef(`voice-${authUtils.getUserId() || 'guest'}-${Date.now()}`);
 
@@ -107,19 +111,43 @@ function VoiceAssistantPage() {
     window.speechSynthesis.speak(utterance);
   }, []);
 
+  const updateDraft = useCallback((text, source = 'typed') => {
+    draftRef.current = { text, source };
+    setDraft(text);
+  }, []);
+
+  // Encerra a sessao: os handlers sao desligados e eventos tardios do navegador nao chegam mais aqui.
+  // abort descarta o audio captado (stop ainda entregaria um resultado e dispararia onend).
+  const releaseSession = useCallback((session, { abort = false } = {}) => {
+    if (!session || session.closed) return;
+    session.closed = true;
+    if (sessionRef.current === session) sessionRef.current = null;
+
+    const { recognition } = session;
+    recognition.onstart = null;
+    recognition.onresult = null;
+    recognition.onerror = null;
+    recognition.onend = null;
+    if (abort) {
+      try {
+        if (typeof recognition.abort === 'function') recognition.abort();
+        else recognition.stop();
+      } catch (error) {
+        // O navegador pode ja ter encerrado a sessao.
+      }
+    }
+
+    // A transcricao sai do campo e o texto digitado antes da escuta volta.
+    if (draftRef.current.source === 'voice') updateDraft(session.typedDraft);
+    setListening(false);
+    setStatus('standby');
+  }, [updateDraft]);
+
   const enterStandby = useCallback(async ({ silent = false } = {}) => {
+    releaseSession(sessionRef.current, { abort: true });
     setListening(false);
     setProcessing(false);
     setStatus('standby');
-    transcriptRef.current = '';
-
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (error) {
-        // Browser recognition may already be stopped.
-      }
-    }
 
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
@@ -139,14 +167,15 @@ function VoiceAssistantPage() {
         addMessage('assistant', 'Não consegui avisar o standby, mas parei a escuta local.');
       }
     }
-  }, [addMessage]);
+  }, [addMessage, releaseSession]);
 
-  const sendUtterance = useCallback(async (utterance) => {
+  const sendUtterance = useCallback(async (utterance, { nextDraft = '' } = {}) => {
     const cleanUtterance = String(utterance || '').trim();
-    if (!cleanUtterance || processing) return;
+    if (!cleanUtterance || sendingRef.current) return;
+    sendingRef.current = true;
 
     addMessage('user', cleanUtterance);
-    setDraft('');
+    updateDraft(nextDraft);
     setProcessing(true);
     setStatus('processing');
 
@@ -177,65 +206,84 @@ function VoiceAssistantPage() {
     } catch (error) {
       addMessage('assistant', 'Não consegui falar com a API do assistente.', { error: true });
     } finally {
+      sendingRef.current = false;
       setProcessing(false);
       setStatus('standby');
     }
-  }, [addMessage, enterStandby, processing, speak]);
+  }, [addMessage, enterStandby, speak, updateDraft]);
 
   const startListening = useCallback(() => {
-    if (!supported || processing) return;
+    // Uma sessao por vez, e nenhuma enquanto um comando esta sendo processado.
+    if (!supported || sessionRef.current || sendingRef.current) return;
 
-    const recognition = new SpeechRecognition();
+    const session = {
+      recognition: null,
+      closed: false,
+      finalText: '',
+      typedDraft: draftRef.current.source === 'typed' ? draftRef.current.text : '',
+    };
+    const failToListen = () => {
+      if (session.recognition) releaseSession(session);
+      setListening(false);
+      setStatus('standby');
+      addMessage('assistant', 'Não consegui ouvir agora. Tente novamente ou digite o comando.', { error: true });
+    };
+    const isCurrent = () => sessionRef.current === session && !session.closed;
+
+    let recognition;
+    try {
+      recognition = new SpeechRecognition();
+    } catch (error) {
+      failToListen();
+      return;
+    }
     recognition.lang = 'pt-BR';
     recognition.continuous = false;
     recognition.interimResults = true;
-    transcriptRef.current = '';
+    session.recognition = recognition;
+    sessionRef.current = session;
 
     recognition.onstart = () => {
+      if (!isCurrent()) return;
       setListening(true);
       setStatus('listening');
     };
 
     recognition.onresult = (event) => {
-      let finalTranscript = '';
-      let interimTranscript = '';
-
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interimTranscript += transcript;
-        }
+      if (!isCurrent()) return;
+      // A lista de resultados e cumulativa: refazer o texto a cada evento evita repetir ou perder trechos.
+      const finals = [];
+      const interims = [];
+      for (let i = 0; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        const transcript = String(result?.[0]?.transcript || '').trim();
+        if (transcript) (result.isFinal ? finals : interims).push(transcript);
       }
-
-      const current = (finalTranscript || interimTranscript).trim();
-      if (current) {
-        transcriptRef.current = current;
-        setDraft(current);
-      }
+      session.finalText = finals.join(' ');
+      const shown = [...finals, ...interims].join(' ');
+      if (shown) updateDraft(shown, 'voice');
     };
 
     recognition.onerror = () => {
-      setListening(false);
-      setStatus('standby');
-      addMessage('assistant', 'Não consegui ouvir agora. Tente novamente ou digite o comando.', { error: true });
+      if (!isCurrent()) return;
+      // Com erro, nada desta sessao e enviado: nem o texto provisorio, nem um final incompleto.
+      failToListen();
     };
 
     recognition.onend = () => {
-      setListening(false);
-      const spoken = transcriptRef.current.trim();
-      transcriptRef.current = '';
-      if (spoken) {
-        sendUtterance(spoken);
-      } else {
-        setStatus('standby');
-      }
+      if (!isCurrent()) return;
+      const { finalText, typedDraft } = session;
+      releaseSession(session);
+      // So o resultado final vira comando; texto apenas provisorio nunca e executado.
+      if (finalText) sendUtterance(finalText, { nextDraft: typedDraft });
     };
 
-    recognitionRef.current = recognition;
-    recognition.start();
-  }, [addMessage, processing, sendUtterance, supported]);
+    try {
+      recognition.start();
+    } catch (error) {
+      failToListen();
+    }
+  }, [addMessage, releaseSession, sendUtterance, supported, updateDraft]);
 
   const toggleListening = () => {
     setRainbowActive(true);
@@ -252,7 +300,19 @@ function VoiceAssistantPage() {
 
   const submitTypedCommand = (event) => {
     event.preventDefault();
-    sendUtterance(draft);
+    const { text, source } = draftRef.current;
+    // Transcricao da sessao em andamento (provisoria ou final ainda sem onend) nunca sai pelo botao:
+    // so o onend envia, e apenas o resultado final.
+    if (source === 'voice' || !text.trim()) return;
+    // Texto digitado enviado durante a escuta: a captura e descartada e este e o unico envio.
+    releaseSession(sessionRef.current, { abort: true });
+    sendUtterance(text);
+  };
+
+  const changeDraft = (event) => {
+    // Digitar assume o comando: a captura em andamento e descartada e nao sobrescreve o texto.
+    updateDraft(event.target.value, 'typed');
+    releaseSession(sessionRef.current, { abort: true });
   };
 
   useEffect(() => {
@@ -314,7 +374,7 @@ function VoiceAssistantPage() {
               <FaVolumeUp />
               <input
                 value={draft}
-                onChange={(event) => setDraft(event.target.value)}
+                onChange={changeDraft}
                 placeholder={supported ? 'O texto reconhecido aparece aqui' : 'Digite um comando'}
                 disabled={processing}
               />
