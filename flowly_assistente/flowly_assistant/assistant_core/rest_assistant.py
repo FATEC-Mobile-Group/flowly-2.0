@@ -8,7 +8,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from flowly_assistant.api_client import APIError, FlowlyAPIClient
 from flowly_assistant.api_config import configured_api_base_url
-from flowly_assistant.command_parser import CommandParser, Match
+from flowly_assistant.command_parser import STRICT_PARAM_WORDS, CommandParser, Match, strict_param_value
+from flowly_assistant.commands import DISABLED_COMMAND_REPLY, DISABLED_COMMANDS
 
 
 OBJ_ID_RE = re.compile(r"\b[a-fA-F0-9]{24}\b")
@@ -117,10 +118,31 @@ class RestAssistant:
                 }
             )
 
+        # Antes de resolver nomes ou chamar a API: comando desativado nao executa nada.
+        if match.command.key in DISABLED_COMMANDS:
+            return self._error("command_disabled", DISABLED_COMMAND_REPLY, 403, command={"key": match.command.key})
+
         if user_type and not has_permission(user_type, match.command.role_required):
             return self._error("forbidden", "Você não tem permissão para esse comando.", 403)
 
         resolved_params = self._merge_params(match, params or {})
+        # status/acao/urgencia so seguem com valor conhecido (vale para frase, params do cliente e fluxo pendente).
+        invalid = []
+        for param in STRICT_PARAM_WORDS:
+            if resolved_params.get(param):
+                value = strict_param_value(param, resolved_params[param])
+                if value is None:
+                    invalid.append(param)
+                else:
+                    resolved_params[param] = value
+        if invalid:
+            return self._error(
+                "invalid_params",
+                "Não entendi: " + ", ".join(invalid) + ". Nada foi alterado.",
+                400,
+                invalid=invalid,
+            )
+
         missing = [p for p in match.command.required_params if not resolved_params.get(p)]
         if missing:
             missing_txt = ", ".join(missing)
@@ -320,6 +342,8 @@ class RestAssistant:
 
     def _execute(self, match: Match, params: Dict[str, str]) -> Any:
         key = match.command.key
+        if key in DISABLED_COMMANDS:
+            raise APIError(DISABLED_COMMAND_REPLY)
         if key == "me":
             return self.api.me()
         if key == "list_users":
@@ -363,8 +387,6 @@ class RestAssistant:
             )
         if key == "list_tasks":
             return self.api.list_tasks()
-        if key == "delete_task":
-            return self.api.delete_task(params["task_id"])
         raise APIError(f"Comando não implementado: {key}")
 
     def _ratio(self, a: str, b: str) -> int:

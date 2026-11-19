@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
@@ -16,6 +17,9 @@ NEGATION_TOKENS = {
     "não",
     "nao",
     "nega",
+    "nunca",
+    "jamais",
+    "nem",
     "cancelar",
     "cancela",
     "deixa",
@@ -28,6 +32,21 @@ EXIT_RE = re.compile(
     r"(?:(?:sair|encerrar)(?: (?:d?o )?assistente)?|(?:parar|fechar) assistente)"
     r"(?: por favor)?$"
 )
+
+
+WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+# Verbos que alteram dados. Sem um comando de escrita explicito (e sem frase de consulta presente),
+# a frase nao vira comando nenhum: melhor nao agir do que agir no comando errado.
+WRITE_INTENT_RE = re.compile(
+    r"\b(?:conclu\w*|exclu\w*|inclu\w*|apag\w*|delet\w*|remov\w*|adicion\w*|atribu\w*|assum\w*|alter\w*"
+    r"|atualiz\w*|finaliz\w*|edit\w*|renome\w*|termin\w*|inici\w*|paus\w*"
+    r"|cri(?:ar|e|a|o|ou)|mud(?:ar|e|a|o|ou)|marc(?:ar|a|ou|que))\b"
+)
+
+
+def is_write_command(command: Command) -> bool:
+    return (command.method or "").strip().upper() in WRITE_METHODS
 
 
 @dataclass
@@ -84,24 +103,92 @@ def extract_object_id(text: str) -> Optional[str]:
     return m.group(0) if m else None
 
 
+def plain_words(text: str) -> list[str]:
+    """Palavras em minusculas e sem acento ("Não, deixa pra lá" -> ["nao", "deixa", "pra", "la"])."""
+    ascii_text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
+    return re.findall(r"[a-z0-9]+", ascii_text.lower())
+
+
+# Valores aceitos para parametros que viram escrita. Palavra inteira, sem valor padrao:
+# desconhecido ou dois valores diferentes na mesma frase -> None (o assistente pergunta de novo).
+STATUS_WORDS = {
+    "pendente": "pendente", "pendentes": "pendente",
+    "andamento": "em_andamento",
+    "concluido": "concluido", "concluida": "concluido", "concluidos": "concluido", "concluidas": "concluido",
+    "concluir": "concluido", "conclui": "concluido",
+    "finalizado": "concluido", "finalizada": "concluido", "finalizar": "concluido",
+    "feito": "concluido", "feita": "concluido",
+}
+TIMER_ACTION_WORDS = {
+    "iniciar": "iniciar", "inicia": "iniciar", "inicie": "iniciar",
+    "comecar": "iniciar", "comeca": "iniciar", "comece": "iniciar", "start": "iniciar",
+    "pausar": "pausar", "pausa": "pausar", "pause": "pausar",
+    "parar": "pausar", "pare": "pausar", "stop": "pausar",
+}
+URGENCY_WORDS = {
+    "alta": "alta", "urgente": "alta",
+    "media": "media", "normal": "media",
+    "baixa": "baixa",
+}
+STRICT_PARAM_WORDS = {"status": STATUS_WORDS, "acao": TIMER_ACTION_WORDS, "urgencia": URGENCY_WORDS}
+
+
+def _strict_choice(text: str, vocabulary: Dict[str, str]) -> Optional[str]:
+    values = {vocabulary[word] for word in plain_words(text) if word in vocabulary}
+    return values.pop() if len(values) == 1 else None
+
+
+def strict_param_value(param: str, value: str) -> Optional[str]:
+    """Valor canonico de status/acao/urgencia, ou None se desconhecido ou ambiguo."""
+    return _strict_choice(str(value or ""), STRICT_PARAM_WORDS[param])
+
+
 def extract_status(text: str) -> Optional[str]:
-    t = _normalize(text)
-    if "em andamento" in t or "andamento" in t:
-        return "em_andamento"
-    if "conclu" in t or "finaliz" in t or "feito" in t:
-        return "concluido"
-    if "pendente" in t:
-        return "pendente"
-    return None
+    return _strict_choice(text, STATUS_WORDS)
 
 
 def extract_timer_action(text: str) -> Optional[str]:
-    t = _normalize(text)
-    if "iniciar" in t or "começar" in t or "comecar" in t or "start" in t:
-        return "iniciar"
-    if "pausar" in t or "parar" in t or "stop" in t:
-        return "pausar"
-    return None
+    return _strict_choice(text, TIMER_ACTION_WORDS)
+
+
+# Na frase inicial, o novo valor nao pode vir do nome da tarefa ("mudar status da tarefa pendente de aprovação").
+_STATUS_MARKERS = {"para", "como"}
+_STATUS_MARKER_FILLERS = {"o", "a", "status", "de", "em"}
+_TASK_ANCHORS = {"tarefa", "task"}
+
+
+def extract_status_target(text: str) -> Optional[str]:
+    """Novo status so quando indicado explicitamente: "para concluído", "como concluída", "para em andamento".
+
+    "para pendente e concluído" (duas opcoes) e ambiguo -> None.
+    """
+    words = plain_words(text)
+    values = set()
+
+    def status_from(index: int) -> Tuple[Optional[str], int]:
+        while index < len(words) and words[index] in _STATUS_MARKER_FILLERS:
+            index += 1
+        return (STATUS_WORDS.get(words[index]) if index < len(words) else None), index
+
+    for i, word in enumerate(words):
+        if word not in _STATUS_MARKERS:
+            continue
+        value, j = status_from(i + 1)
+        if value is None:
+            continue
+        values.add(value)
+        if j + 1 < len(words) and words[j + 1] in {"e", "ou"}:
+            other, _k = status_from(j + 2)
+            if other:
+                values.add(other)
+    return values.pop() if len(values) == 1 else None
+
+
+def extract_timer_action_target(text: str) -> Optional[str]:
+    """Acao do cronometro so no trecho do comando, antes de "tarefa" ("iniciar cronômetro da tarefa X")."""
+    words = plain_words(text)
+    cut = next((i for i, word in enumerate(words) if word in _TASK_ANCHORS), len(words))
+    return _strict_choice(" ".join(words[:cut]), TIMER_ACTION_WORDS)
 
 
 def extract_free_text_after(text: str, anchors: Tuple[str, ...]) -> Optional[str]:
@@ -207,31 +294,30 @@ class CommandParser:
             cmd = next(c for c in self.commands if c.key == "exit")
             return Match(command=cmd, score=100, params={})
 
-        if _contains_phrase(text, ("criar tarefa", "nova tarefa", "adicionar tarefa")):
-            cmd = next(c for c in self.commands if c.key == "create_task")
-            return Match(command=cmd, score=100, params=self._extract_params(cmd, raw))
+        # Escrita: so quando a frase traz todas as palavras de uma frase do comando, nunca por
+        # semelhanca de letras ("concluir tarefa" nao pode virar "excluir tarefa").
+        write_cmd, ambiguous_write = self._explicit_write_match(text)
+        if ambiguous_write:
+            return None
+        if write_cmd is not None:
+            return Match(command=write_cmd, score=100, params=self._extract_params(write_cmd, raw))
 
-        if _contains_phrase(text, ("criar equipe", "nova equipe", "adicionar equipe")):
-            cmd = next(c for c in self.commands if c.key == "create_team")
-            return Match(command=cmd, score=100, params=self._extract_params(cmd, raw))
-
-        if _contains_phrase(text, ("pegar tarefa", "assumir tarefa", "atribuir tarefa para mim", "atribuir para mim")):
-            cmd = next(c for c in self.commands if c.key == "assign_to_me")
-            return Match(command=cmd, score=100, params=self._extract_params(cmd, raw))
+        read_commands = [c for c in self.commands if c.key != "exit" and not is_write_command(c)]
 
         # Prefer exact phrase matches (avoids fuzzy ties where superset phrases score 100).
-        for cmd in self.commands:
-            if cmd.key == "exit":
-                continue
+        for cmd in read_commands:
             for phrase in cmd.phrases:
                 if _normalize(phrase) == text:
                     params = self._extract_params(cmd, raw)
                     return Match(command=cmd, score=100, params=params)
 
+        # Intencao de escrita sem comando de escrita explicito: ambigua, nao executa nada.
+        if WRITE_INTENT_RE.search(text) and not self._has_read_phrase(text, read_commands):
+            return None
+
+        # Semelhanca aproximada so entre comandos de consulta.
         best: Optional[Tuple[Command, int, int, int]] = None
-        for cmd in self.commands:
-            if cmd.key == "exit":
-                continue
+        for cmd in read_commands:
             for phrase in cmd.phrases:
                 phrase_norm = _normalize(phrase)
                 score = _token_set_ratio(text, phrase_norm)
@@ -250,6 +336,39 @@ class CommandParser:
 
         params = self._extract_params(cmd, raw)
         return Match(command=cmd, score=score, params=params)
+
+    def _explicit_write_match(self, text: str) -> Tuple[Optional[Command], bool]:
+        """Comando de escrita cujas palavras de alguma frase aparecem todas no texto.
+
+        Frase continua vence frase espalhada; empate entre comandos diferentes e ambiguo.
+        Retorna (comando, ambiguo).
+        """
+        words = set(_words(text))
+        candidates = []
+        for cmd in self.commands:
+            if not is_write_command(cmd):
+                continue
+            for phrase in cmd.phrases:
+                phrase_norm = _normalize(phrase)
+                tokens = _words(phrase_norm)
+                if tokens and set(tokens) <= words:
+                    rank = (_contains_phrase(text, (phrase_norm,)), len(tokens))
+                    candidates.append((rank, cmd))
+        if not candidates:
+            return None, False
+        best_rank = max(rank for rank, _cmd in candidates)
+        best = {cmd.key: cmd for rank, cmd in candidates if rank == best_rank}
+        if len(best) > 1:
+            return None, True
+        return next(iter(best.values())), False
+
+    def _has_read_phrase(self, text: str, read_commands: list) -> bool:
+        words = set(_words(text))
+        return any(
+            set(_words(_normalize(phrase))) <= words
+            for cmd in read_commands
+            for phrase in cmd.phrases
+        )
 
     def _extract_params(self, cmd: Command, raw: str) -> Dict[str, str]:
         text = raw or ""
@@ -299,12 +418,12 @@ class CommandParser:
                 params["q"] = q
 
         if cmd.key == "update_status":
-            st = extract_status(text)
+            st = extract_status_target(text)
             if st:
                 params["status"] = st
 
         if cmd.key == "timer":
-            acao = extract_timer_action(text)
+            acao = extract_timer_action_target(text)
             if acao:
                 params["acao"] = acao
 
