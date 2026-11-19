@@ -9,7 +9,13 @@ from typing import Any, Dict, Optional, Tuple
 from flowly_assistant.api_client import FlowlyAPIClient
 from flowly_assistant.api_config import configured_api_base_url
 from flowly_assistant.assistant_core.rest_assistant import assistant_from_http_body, tts_payload
-from flowly_assistant.command_parser import STRICT_PARAM_WORDS, CommandParser, plain_words, strict_param_value
+from flowly_assistant.command_parser import (
+    STRICT_PARAM_WORDS,
+    CommandParser,
+    is_write_command,
+    plain_words,
+    strict_param_value,
+)
 from flowly_assistant.commands import DISABLED_COMMAND_REPLY, DISABLED_COMMANDS
 from flowly_assistant.nlp.moderation import ModerationService
 from flowly_assistant.queues.analytics_queue import AnalyticsQueue
@@ -66,6 +72,47 @@ TASK_ORDINALS = {
 def task_position_refs(text: str) -> set[str]:
     """Posicoes citadas na frase, como palavras inteiras sem acento ("a 7ª" -> {"7a"})."""
     return {word for word in plain_words(text) if word in TASK_POSITION_WORDS or any(ch.isdigit() for ch in word)}
+
+
+# Acao pedida na selecao de tarefa. "para mim" sozinho nao e atribuicao ("mostra os detalhes para mim").
+TASK_ASSIGN_WORDS = ("atribuir", "assumir", "pegar")
+TASK_DETAIL_WORDS = ("detalhe", "detalhes", "informacao", "informacoes", "abrir", "mostrar")
+
+# Palavras que acompanham um pedido sobre a tarefa ja escolhida ("pode atribuir essa pra mim, por favor").
+# Sem numero, ordinal ou nome completo da lista, qualquer outra palavra indica uma tarefa que nao foi reconhecida
+# ("atribuir configurar alerta para mim"): o assistente pede nova escolha e nao usa a tarefa escolhida antes.
+TASK_FOLLOW_UP_WORDS = frozenset({
+    "atribuir", "atribui", "atribua", "assumir", "assume", "assuma", "pegar", "pega", "pegue",
+    "detalhe", "detalhes", "informacao", "informacoes", "abrir", "abre", "abra", "mostrar", "mostra", "mostre",
+    "ver", "veja", "ler", "le", "leia", "fala", "fale", "diga", "diz",
+    "tarefa", "essa", "esse", "esta", "este", "ela", "ele", "isso", "isto", "dessa", "desse", "desta", "deste",
+    "dela", "dele", "nessa", "nesse", "mesma", "mesmo", "selecionada", "escolhida",
+    "para", "pra", "pro", "mim", "me", "eu", "voce", "pode", "poderia", "por", "favor", "gentileza", "obrigado",
+    "obrigada", "quero", "queria", "gostaria", "agora", "entao", "ok", "sim", "a", "o", "as", "os", "um", "uma",
+    "e", "de", "da", "do", "das", "dos", "sobre", "mais", "com",
+})
+
+# Resposta a uma pergunta pendente que e so um comando ("minhas tarefas", "quais são minhas tarefas"):
+# todas as palavras de uma frase do comando e, alem delas, no maximo estas.
+COMMAND_ANSWER_FILLER_WORDS = frozenset({
+    "por", "favor", "quero", "queria", "ver", "me", "mostra", "mostre", "mostrar", "quais", "qual", "sao", "e",
+    "o", "a", "os", "as", "eu", "pode", "agora", "entao", "ok",
+})
+# Rotulo que torna explicito o valor de um campo ("nome Minhas Tarefas"); _normalize_param_value o remove.
+PARAM_VALUE_LABELS = {"nome": "nome", "descricao": "descrição", "equipe": "equipe", "user": "usuário", "task_id": "tarefa"}
+
+
+def command_in_answer(text: str, commands: list) -> Optional[Any]:
+    """Comando que a resposta inteira pede: uma frase completa do comando e, no maximo, palavras de cortesia."""
+    words = plain_words(text)
+    for command in commands:
+        for phrase in command.phrases:
+            phrase_words = plain_words(phrase)
+            if phrase_words and set(phrase_words) <= set(words) and all(
+                word in phrase_words or word in COMMAND_ANSWER_FILLER_WORDS for word in words
+            ):
+                return command
+    return None
 
 
 # Respostas de consulta: reply_text (tela) traz a lista completa; tts.text (fala) resume.
@@ -316,6 +363,24 @@ class MessageAgent:
                 command={"key": command.key},
             )
 
+        # "minhas tarefas" em resposta a "Qual é o nome da equipe?" criava a equipe "Minhas Tarefas". Resposta que e
+        # so um comando nao vira valor de escrita: o fluxo continua pendente e o assistente pergunta o que fazer.
+        if is_write_command(command) and missing[0] not in STRICT_PARAM_WORDS:
+            if command_in_answer(content, self.parser.commands) is not None:
+                self.conversations.save(
+                    conversation_id,
+                    {"command_key": command.key, "params": params, "missing": missing},
+                )
+                return self._awaiting_params_response(
+                    event_id=event_id,
+                    moderation_score=moderation_score,
+                    queue_result=queue_result,
+                    conversation_id=conversation_id,
+                    command_key=command.key,
+                    missing=missing,
+                    text=self._command_answer_question(content, missing[0], command.title),
+                )
+
         value = self._normalize_param_value(missing[0], content)
         if missing[0] in STRICT_PARAM_WORDS and not value:
             # Resposta desconhecida: nada de valor padrao; o fluxo continua pendente e a pergunta se repete.
@@ -464,6 +529,7 @@ class MessageAgent:
         selected_task = next((task for task in tasks if task.get("_id") == selected_id), None)
         position_refs = task_position_refs(content)
         named_tasks = self._tasks_named_in(content, tasks)
+        approximate = False
         if position_refs:
             requested_task = self._task_for_position_refs(position_refs, named_tasks, tasks)
         elif named_tasks:
@@ -471,10 +537,14 @@ class MessageAgent:
             requested_task = named_tasks[0] if len(named_tasks) == 1 else None
         else:
             requested_task = self._select_task_from_text(text_norm, tasks)
-        if requested_task is None and (position_refs or named_tasks):
+            approximate = requested_task is not None  # trecho de nome: seleciona, mas nao autoriza escrita
+        # "atribuir configurar alerta para mim" com a 7 selecionada atribuia a 7: palavra que nao e acao nem
+        # complemento, sem numero ou nome reconhecido, e uma tarefa que o assistente nao identificou.
+        unknown_ref = requested_task is None and any(word not in TASK_FOLLOW_UP_WORDS for word in plain_words(content))
+        if requested_task is None and (position_refs or named_tasks or unknown_ref):
             # "atribuir a 11 para mim" com a 7 selecionada atribuia a 7; "a 11 da Marketing" e
-            # "Marketing e Configurar Alertas" atribuiam a Marketing. Numero/ordinal invalido ou referencias a
-            # tarefas diferentes: descarta a selecao anterior e nao chama a API.
+            # "Marketing e Configurar Alertas" atribuiam a Marketing. Numero/ordinal invalido, referencias a
+            # tarefas diferentes ou tarefa desconhecida: descarta a selecao anterior e nao chama a API.
             self.conversations.save(
                 conversation_id,
                 {key: value for key, value in pending.items() if key != "selected_task_id"},
@@ -497,8 +567,11 @@ class MessageAgent:
         if requested_task:
             selected_task = requested_task
 
-        action = self._task_follow_up_action(text_norm)
-        if selected_task and not action:
+        # Palavras do nome citado ("Pegar feedback") nao decidem a acao.
+        action = self._task_follow_up_action(self._words_outside_names(content, named_tasks))
+        if action == "assign" and approximate:
+            action = None
+        if selected_task and action in (None, "conflict"):
             self.conversations.save(
                 conversation_id,
                 {**pending, "selected_task_id": selected_task.get("_id")},
@@ -507,6 +580,12 @@ class MessageAgent:
                 f"Selecionei {selected_task.get('descricao') or 'essa tarefa'}. "
                 "Voce quer detalhes, atribuir para voce ou cancelar?"
             )
+            if action == "conflict":
+                text = (
+                    "Você pediu detalhes e atribuição na mesma frase. "
+                    f"Selecionei {selected_task.get('descricao') or 'essa tarefa'}. "
+                    "Você quer ver os detalhes ou atribuir para você?"
+                )
             return self._task_conversation_response(
                 event_id=event_id,
                 moderation_score=moderation_score,
@@ -821,11 +900,29 @@ class MessageAgent:
         return any(word in text for word in ("cancelar", "cancele", "sair", "encerrar", "parar"))
 
     def _task_follow_up_action(self, text: str) -> Optional[str]:
-        if any(word in text for word in ("atribuir", "assumir", "pegar", "para mim")):
-            return "assign"
-        if any(word in text for word in ("detalhe", "detalhes", "informacao", "informacoes", "abrir", "mostrar")):
-            return "details"
-        return None
+        """assign, details, conflict (os dois na mesma frase: pergunta antes de escrever) ou None."""
+        assign = any(word in text for word in TASK_ASSIGN_WORDS)
+        details = any(word in text for word in TASK_DETAIL_WORDS)
+        if assign and details:
+            return "conflict"
+        return "assign" if assign else "details" if details else None
+
+    def _words_outside_names(self, content: str, named_tasks: list[Dict[str, Any]]) -> str:
+        """A frase sem acento, sem os nomes completos das tarefas citadas."""
+        words = plain_words(content)
+        for task in named_tasks:
+            title = plain_words(str(task.get("descricao") or ""))
+            if not title:
+                continue
+            kept, index = [], 0
+            while index < len(words):
+                if words[index:index + len(title)] == title:
+                    index += len(title)
+                else:
+                    kept.append(words[index])
+                    index += 1
+            words = kept
+        return " ".join(words)
 
     def _tasks_named_in(self, content: str, tasks: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
         """Tarefas citadas pelo nome completo, em palavras inteiras.
@@ -929,6 +1026,16 @@ class MessageAgent:
             # Sem valor padrao: resposta desconhecida volta vazia e a pergunta se repete.
             return strict_param_value(param, raw) or ""
         return raw
+
+    def _command_answer_question(self, content: str, param: str, title: str) -> str:
+        answer = " ".join(content.split()).strip(" .,;:!?")
+        label = PARAM_VALUE_LABELS.get(param)
+        keep = (
+            f"Para continuar em {title} usando esse valor, diga: {label} {answer}."
+            if label
+            else f"Para continuar em {title}, responda com outras palavras."
+        )
+        return f'"{answer}" também é um comando. {keep} Para trocar de comando, diga cancelar.'
 
     def _invalid_answer_question(self, param: str) -> str:
         return {
