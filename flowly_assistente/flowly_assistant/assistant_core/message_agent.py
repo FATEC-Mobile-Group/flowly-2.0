@@ -35,6 +35,38 @@ CANCEL_FILLER_WORDS = frozenset({
 # Os verbos de cancelamento ficam no is_cancel_request, que exige a frase inteira (preserva "Cancelar assinatura...").
 NEGATION_ANSWER_WORDS = frozenset({"nao", "nunca", "jamais", "nem"})
 
+# Numeros e ordinais citados na selecao de tarefa ("11", "7ª", "sexta", "décima primeira", "onze").
+# Deteccao ampla, interpretacao estreita: se a frase cita uma posicao que nao vira uma unica opcao
+# valida, o assistente pede nova escolha e nunca cai na tarefa selecionada antes.
+# "um"/"uma" ficam de fora porque sao artigos.
+TASK_POSITION_WORDS = frozenset({
+    "primeiro", "primeira", "segundo", "segunda", "terceiro", "terceira", "quarto", "quarta", "quinto", "quinta",
+    "sexto", "sexta", "setimo", "setima", "oitavo", "oitava", "nono", "nona", "decimo", "decima",
+    "vigesimo", "vigesima", "ultimo", "ultima", "penultimo", "penultima",
+    "dois", "duas", "tres", "quatro", "cinco", "seis", "sete", "oito", "nove", "dez", "onze", "doze", "treze",
+    "catorze", "quatorze", "quinze", "dezesseis", "dezessete", "dezoito", "dezenove", "vinte",
+})
+
+
+# Ordinais que a selecao entende (posicao na lista, a partir de 0).
+TASK_ORDINALS = {
+    "primeira": 0,
+    "primeiro": 0,
+    "segunda": 1,
+    "segundo": 1,
+    "terceira": 2,
+    "terceiro": 2,
+    "quarta": 3,
+    "quarto": 3,
+    "quinta": 4,
+    "quinto": 4,
+}
+
+
+def task_position_refs(text: str) -> set[str]:
+    """Posicoes citadas na frase, como palavras inteiras sem acento ("a 7ª" -> {"7a"})."""
+    return {word for word in plain_words(text) if word in TASK_POSITION_WORDS or any(ch.isdigit() for ch in word)}
+
 
 def is_cancel_request(text: str, *, param: Optional[str] = None) -> bool:
     """Frases como "cancelar", "sair" ou "não, deixa pra lá" encerram o fluxo e nunca viram valor de campo."""
@@ -375,7 +407,38 @@ class MessageAgent:
 
         selected_id = pending.get("selected_task_id")
         selected_task = next((task for task in tasks if task.get("_id") == selected_id), None)
-        requested_task = self._select_task_from_text(text_norm, tasks)
+        position_refs = task_position_refs(content)
+        named_tasks = self._tasks_named_in(content, tasks)
+        if position_refs:
+            requested_task = self._task_for_position_refs(position_refs, named_tasks, tasks)
+        elif named_tasks:
+            # Nome completo de uma unica tarefa vale mais que trechos de outros nomes; dois nomes sao conflito.
+            requested_task = named_tasks[0] if len(named_tasks) == 1 else None
+        else:
+            requested_task = self._select_task_from_text(text_norm, tasks)
+        if requested_task is None and (position_refs or named_tasks):
+            # "atribuir a 11 para mim" com a 7 selecionada atribuia a 7; "a 11 da Marketing" e
+            # "Marketing e Configurar Alertas" atribuiam a Marketing. Numero/ordinal invalido ou referencias a
+            # tarefas diferentes: descarta a selecao anterior e nao chama a API.
+            self.conversations.save(
+                conversation_id,
+                {key: value for key, value in pending.items() if key != "selected_task_id"},
+            )
+            options = "; ".join(f"{idx}. {self._task_title(task)}" for idx, task in enumerate(tasks, start=1))
+            text = (
+                f"Não identifiquei uma única tarefa da lista. Opções disponíveis: {options}. "
+                "Diga o número de uma delas ou cancelar."
+            )
+            return self._task_conversation_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                status="awaiting_task_selection",
+                text=text,
+                ok=True,
+                action_executed=False,
+            )
         if requested_task:
             selected_task = requested_task
 
@@ -603,25 +666,51 @@ class MessageAgent:
             return "details"
         return None
 
+    def _tasks_named_in(self, content: str, tasks: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+        """Tarefas citadas pelo nome completo, em palavras inteiras.
+
+        Um nome que so aparece dentro de outro nome citado nao conta ("login" em "revisar cadastro e login").
+        """
+        words = plain_words(content)
+        spans = []
+        for task in tasks:
+            title = plain_words(str(task.get("descricao") or ""))
+            if not title:
+                continue
+            for start in range(len(words) - len(title) + 1):
+                if words[start:start + len(title)] == title:
+                    spans.append((start, start + len(title), task))
+        named = {}
+        for start, end, task in spans:
+            if not any(s <= start and end <= e and e - s > end - start for s, e, _other in spans):
+                named[str(task.get("_id"))] = task
+        return list(named.values())
+
+    def _task_for_position_refs(
+        self, refs: set[str], named: list[Dict[str, Any]], tasks: list[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """Tarefa unica apontada por numeros/ordinais e nomes completos da frase; None se invalida ou em conflito.
+
+        Cada numero/ordinal valido e cada nome dito por inteiro indicam uma tarefa; todas precisam coincidir.
+        Numero fora da lista so e aceito se fizer parte do nome citado ("Sprint 15"), nunca e ignorado.
+        """
+        candidates = {str(task.get("_id")): task for task in named}
+        explained = set().union(*(task_position_refs(str(task.get("descricao") or "")) for task in named))
+        for ref in refs:
+            idx = int(ref) - 1 if ref.isdigit() else TASK_ORDINALS.get(ref)
+            if idx is not None and 0 <= idx < len(tasks):
+                candidates[str(tasks[idx].get("_id"))] = tasks[idx]
+            elif ref not in explained:
+                return None
+        return next(iter(candidates.values())) if len(candidates) == 1 else None
+
     def _select_task_from_text(self, text: str, tasks: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         number_match = re.search(r"\b(\d{1,2})\b", text)
         if number_match:
             idx = int(number_match.group(1)) - 1
             if 0 <= idx < len(tasks):
                 return tasks[idx]
-        ordinals = {
-            "primeira": 0,
-            "primeiro": 0,
-            "segunda": 1,
-            "segundo": 1,
-            "terceira": 2,
-            "terceiro": 2,
-            "quarta": 3,
-            "quarto": 3,
-            "quinta": 4,
-            "quinto": 4,
-        }
-        for word, idx in ordinals.items():
+        for word, idx in TASK_ORDINALS.items():
             if word in text and idx < len(tasks):
                 return tasks[idx]
         for task in tasks:
