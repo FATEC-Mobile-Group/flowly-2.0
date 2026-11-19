@@ -58,6 +58,32 @@ TASKS = [
     {"_id": "6" * 24, "descricao": "Pausar deploy", "status": "pendente", "equipe": {"_id": TEAM_ID, "nome": "Equipe Alfa"}},
 ]
 TASK_ID_BY_NAME = {task["descricao"]: task["_id"] for task in TASKS}
+# Backlog com mais de 10 tarefas: o assistente guarda so as 10 primeiras como opcoes de selecao.
+# Nomes sem numeros nem ordinais, para a escolha depender so do que o usuario diz.
+BACKLOG_TASKS = [
+    {"_id": "b" * 22 + f"{index:02d}", "descricao": name, "status": "pendente", "equipe": {"_id": TEAM_ID, "nome": "Equipe Alfa"}}
+    for index, name in enumerate(
+        (
+            "Ajustar layout do painel", "Atualizar documentação", "Corrigir filtro de busca", "Revisar contrato fictício",
+            "Testar notificações", "Organizar arquivos", "Preparar demonstração", "Configurar alertas",
+            "Validar formulário", "Melhorar acessibilidade", "Traduzir mensagens", "Limpar registros antigos",
+        ),
+        start=1,
+    )
+]
+# Nomes que coincidem com partes da frase: "Marketing", nomes com numero dentro e fora da lista de opcoes,
+# um nome com "e" e um nome ("Login") contido em outro ("Revisar cadastro e login"), que aparece antes na lista.
+NAMED_BACKLOG_TASKS = [
+    {"_id": "c" * 22 + f"{index:02d}", "descricao": name, "status": "pendente", "equipe": {"_id": TEAM_ID, "nome": "Equipe Alfa"}}
+    for index, name in enumerate(
+        (
+            "Ajustar layout do painel", "Atualizar documentação", "Corrigir filtro de busca", "Marketing", "Sprint 15",
+            "Sprint 2", "Configurar alertas", "Login", "Revisar cadastro e login", "Traduzir mensagens",
+            "Sprint 11", "Limpar registros antigos",
+        ),
+        start=1,
+    )
+]
 USERS_BY_TOKEN = {
     "token-admin": {"_id": "d" * 24, "nome": "Admin Ficticio", "tipo": "admin"},
     "token-admin-2": {"_id": "e" * 24, "nome": "Admin Dois", "tipo": "admin"},
@@ -81,6 +107,7 @@ class FakeFlowlyAPI:
 
     def __init__(self):
         self.calls = []
+        self.backlog = []
 
     def writes(self):
         return [call for call in self.calls if call[0] != "GET"]
@@ -94,13 +121,13 @@ class FakeFlowlyAPI:
         if method == "GET" and path in ("/tarefas/minhas", "/tarefas"):
             return TASKS
         if method == "GET" and path == "/tarefas/backlog":
-            return []
+            return self.backlog
         if method == "GET" and path in ("/equipes/minhas", "/equipes"):
             return [{"_id": TEAM_ID, "nome": "Equipe Alfa"}]
         if method == "GET" and path.endswith("/membros"):
             return [{"_id": "u" * 24, "nome": "Pessoa Ficticia"}]
         if method == "GET" and path.endswith("/detalhes"):
-            return {"tarefa": next(t for t in TASKS if t["_id"] == path.split("/")[2])}
+            return {"tarefa": next(t for t in TASKS + self.backlog if t["_id"] == path.split("/")[2])}
         if method in ("POST", "PUT", "DELETE"):
             return {"ok": True}
         raise AssertionError(f"Chamada inesperada à API: {method} {path}")
@@ -386,6 +413,193 @@ class CancelTaskSelectionTests(AssistantFlowTestCase):
         payload, _status = self.send("token-user", "atribuir para mim")
         self.assertTrue(payload["action_executed"])
         self.assertEqual(self.api.writes(), [("PUT", f"/tarefas/{TASKS[1]['_id']}/atribuir-para-mim", None)])
+
+
+# Escolhas que nao apontam para uma unica opcao da lista. Antes da correcao, com uma tarefa ja selecionada,
+# "atribuir a 11 para mim" atribuia a tarefa selecionada antes (e "décima primeira" virava a primeira).
+OUT_OF_RANGE_CHOICES = ("11", "12", "0", "99", "117", "atribuir a 11 para mim", "detalhes da 11", "pegar a 15 para mim")
+INVALID_ORDINAL_CHOICES = (
+    "sexta",
+    "atribuir a sétima para mim",
+    "atribuir a décima primeira para mim",
+    "detalhes da vigésima",
+    "atribuir a última para mim",
+)
+AMBIGUOUS_CHOICES = (
+    "atribuir a 7 ou a 8 para mim",
+    "a 7, quer dizer a 8, atribuir para mim",
+    "detalhes da 2 e da 3",
+    "atribuir a onze para mim",
+    "atribuir a sete para mim",
+    "atribuir a 7ª para mim",
+)
+
+
+class TaskSelectionSafetyTests(AssistantFlowTestCase):
+    """Numero/ordinal invalido ou ambiguo pede nova escolha e nunca reaproveita a tarefa selecionada antes."""
+
+    def setUp(self):
+        super().setUp()
+        self.api.backlog = BACKLOG_TASKS
+
+    def browse(self, select=None):
+        # Cada caso comeca do zero: sem isso, "backlog" seria lido como resposta a selecao do caso anterior.
+        ScopedConversationState(ConversationStateRepository(), USERS_BY_TOKEN["token-user"]["_id"]).clear(CONVERSATION_ID)
+        payload, _status = self.send("token-user", "backlog")
+        self.assertEqual(payload["conversation"]["status"], "browsing_tasks")
+        if select:
+            payload, _status = self.send("token-user", select)
+            self.assertEqual(payload["conversation"]["status"], "awaiting_task_action")
+
+    def assert_asks_again_without_calling_the_api(self, phrase, last_option):
+        before = len(self.api.calls)
+        payload, status = self.send("token-user", phrase)
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload["conversation"]["status"], "awaiting_task_selection", payload["reply_text"])
+        self.assertFalse(payload["action_executed"])
+        # Informa as opcoes disponiveis, numeradas.
+        self.assertIn("1. Ajustar layout do painel", payload["reply_text"])
+        self.assertIn(last_option, payload["reply_text"])
+        # Nenhuma chamada alem da identificacao do usuario (nem escrita, nem detalhes de outra tarefa).
+        self.assertEqual([call for call in self.api.calls[before:] if call[1] != "/users/me"], [])
+        # A selecao anterior foi descartada.
+        self.assertNotIn("selected_task_id", self.pending("token-user"))
+
+    def test_invalid_or_ambiguous_choice_asks_again_and_never_writes(self):
+        for group, phrases in (
+            ("fora do intervalo", OUT_OF_RANGE_CHOICES),
+            ("ordinal invalido", INVALID_ORDINAL_CHOICES),
+            ("ambigua", AMBIGUOUS_CHOICES),
+        ):
+            for phrase in phrases:
+                for selected_before in (None, "7"):
+                    with self.subTest(group=group, phrase=phrase, selected_before=selected_before):
+                        self.browse(select=selected_before)
+                        self.assert_asks_again_without_calling_the_api(phrase, "10. Melhorar acessibilidade")
+                        # Sem nova escolha, "atribuir para mim" tambem nao escreve: so pergunta de novo.
+                        payload, _status = self.send("token-user", "atribuir para mim")
+                        self.assertEqual(payload["conversation"]["status"], "awaiting_task_selection")
+                        self.assert_no_writes()
+
+    def test_ordinal_or_number_beyond_a_short_list_asks_again(self):
+        self.api.backlog = BACKLOG_TASKS[:3]
+        for phrase in ("quinta", "atribuir a quarta para mim", "atribuir a 4 para mim"):
+            with self.subTest(phrase=phrase):
+                self.browse(select="2")
+                self.assert_asks_again_without_calling_the_api(phrase, "3. Corrigir filtro de busca")
+                self.assert_no_writes()
+
+    def test_invalid_or_conflicting_position_never_writes_even_if_a_task_name_matches(self):
+        # Antes: "a 11 da Marketing" atribuia a Marketing; "a sprint 2" atribuia a opcao 2 (outra tarefa).
+        self.api.backlog = NAMED_BACKLOG_TASKS
+        for phrase in (
+            "atribuir a 11 da Marketing para mim",
+            "detalhes da 11 da marketing",
+            "atribuir a décima primeira da marketing para mim",
+            "atribuir a 2 da marketing para mim",
+            "atribuir a sprint 2 para mim",
+            "atribuir a marketing e a sprint 15 para mim",
+            "atribuir a sprint 11 para mim",
+        ):
+            for selected_before in (None, "7"):
+                with self.subTest(phrase=phrase, selected_before=selected_before):
+                    self.browse(select=selected_before)
+                    self.assert_asks_again_without_calling_the_api(phrase, "10. Traduzir mensagens")
+                    self.assert_no_writes()
+
+    def test_task_names_with_numbers_still_work_when_unambiguous(self):
+        self.api.backlog = NAMED_BACKLOG_TASKS
+        marketing, sprint15 = NAMED_BACKLOG_TASKS[3]["_id"], NAMED_BACKLOG_TASKS[4]["_id"]
+        cases = (
+            (("detalhes da sprint 15",), [("GET", f"/tarefas/{sprint15}/detalhes", None)]),
+            (("sprint 15", "detalhes"), [("GET", f"/tarefas/{sprint15}/detalhes", None)]),
+            (("atribuir a sprint 15 para mim",), [("PUT", f"/tarefas/{sprint15}/atribuir-para-mim", None)]),
+            (("7", "atribuir a sprint 15 para mim"), [("PUT", f"/tarefas/{sprint15}/atribuir-para-mim", None)]),
+            (("atribuir a marketing para mim",), [("PUT", f"/tarefas/{marketing}/atribuir-para-mim", None)]),
+            # Numero e nome apontando para a mesma tarefa: sem conflito.
+            (("atribuir a 4 da marketing para mim",), [("PUT", f"/tarefas/{marketing}/atribuir-para-mim", None)]),
+            (("atribuir a 2 para mim",), [("PUT", f"/tarefas/{NAMED_BACKLOG_TASKS[1]['_id']}/atribuir-para-mim", None)]),
+        )
+        for phrases, expected in cases:
+            with self.subTest(phrases=phrases):
+                self.browse()
+                before = len(self.api.calls)
+                for phrase in phrases:
+                    payload, status = self.send("token-user", phrase)
+                    self.assertEqual(status, 200, payload)
+                calls = [call for call in self.api.calls[before:] if call[1] != "/users/me"]
+                self.assertEqual(calls, expected)
+
+    def test_two_task_names_without_numbers_never_write(self):
+        # Antes: o primeiro nome encontrado vencia ("Marketing e Configurar Alertas" atribuia a Marketing).
+        self.api.backlog = NAMED_BACKLOG_TASKS
+        for phrase in (
+            "Atribuir Marketing e Configurar Alertas para mim",
+            "atribuir marketing ou configurar alertas para mim",
+            "detalhes da marketing e da configurar alertas",
+            "atribuir login e revisar cadastro e login para mim",
+        ):
+            for selected_before in (None, "7"):
+                with self.subTest(phrase=phrase, selected_before=selected_before):
+                    self.browse(select=selected_before)
+                    self.assert_asks_again_without_calling_the_api(phrase, "10. Traduzir mensagens")
+                    self.assert_no_writes()
+
+    def test_a_single_task_name_still_selects_that_task(self):
+        self.api.backlog = NAMED_BACKLOG_TASKS
+        marketing, alertas, login, cadastro = (NAMED_BACKLOG_TASKS[i]["_id"] for i in (3, 6, 7, 8))
+        cases = (
+            (("Marketing", "atribuir para mim"), [("PUT", f"/tarefas/{marketing}/atribuir-para-mim", None)]),
+            (("Atribuir Configurar Alertas para mim",), [("PUT", f"/tarefas/{alertas}/atribuir-para-mim", None)]),
+            (("Atribuir a 7 para mim",), [("PUT", f"/tarefas/{alertas}/atribuir-para-mim", None)]),
+            # Nome com "e" continua uma tarefa so; antes, "Login" (antes na lista) era atribuida no lugar.
+            (("atribuir revisar cadastro e login para mim",), [("PUT", f"/tarefas/{cadastro}/atribuir-para-mim", None)]),
+            (("7", "atribuir revisar cadastro e login para mim"), [("PUT", f"/tarefas/{cadastro}/atribuir-para-mim", None)]),
+            (("login", "detalhes"), [("GET", f"/tarefas/{login}/detalhes", None)]),
+        )
+        for phrases, expected in cases:
+            with self.subTest(phrases=phrases):
+                self.browse()
+                before = len(self.api.calls)
+                for phrase in phrases:
+                    payload, status = self.send("token-user", phrase)
+                    self.assertEqual(status, 200, payload)
+                calls = [call for call in self.api.calls[before:] if call[1] != "/users/me"]
+                self.assertEqual(calls, expected)
+
+    def test_negation_and_cancel_still_win_over_an_invalid_choice(self):
+        for phrase in ("não, a 11", "cancelar a 11", "não atribuir a 7 ou a 8"):
+            with self.subTest(phrase=phrase):
+                self.browse(select="7")
+                payload, _status = self.send("token-user", phrase)
+                self.assertEqual(payload["conversation"]["status"], "cancelled")
+                self.assertIsNone(self.pending("token-user"))
+                self.assert_no_writes()
+
+    def test_valid_choices_still_work(self):
+        task7 = BACKLOG_TASKS[6]["_id"]
+        cases = (
+            # (frases, chamadas esperadas apos o "backlog")
+            (("7", "detalhes"), [("GET", f"/tarefas/{task7}/detalhes", None)]),
+            (("7", "detalhes da 7"), [("GET", f"/tarefas/{task7}/detalhes", None)]),
+            (("7", "atribuir para mim"), [("PUT", f"/tarefas/{task7}/atribuir-para-mim", None)]),
+            (("atribuir a 7 para mim",), [("PUT", f"/tarefas/{task7}/atribuir-para-mim", None)]),
+            (("atribuir a terceira para mim",), [("PUT", f"/tarefas/{BACKLOG_TASKS[2]['_id']}/atribuir-para-mim", None)]),
+            (("10", "detalhes"), [("GET", f"/tarefas/{BACKLOG_TASKS[9]['_id']}/detalhes", None)]),
+            (("configurar alertas", "detalhes"), [("GET", f"/tarefas/{BACKLOG_TASKS[7]['_id']}/detalhes", None)]),
+            # Depois de uma escolha invalida, uma valida volta a funcionar normalmente.
+            (("11", "7", "atribuir para mim"), [("PUT", f"/tarefas/{task7}/atribuir-para-mim", None)]),
+        )
+        for phrases, expected in cases:
+            with self.subTest(phrases=phrases):
+                self.api.calls.clear()
+                self.browse()
+                before = len(self.api.calls)
+                for phrase in phrases:
+                    payload, status = self.send("token-user", phrase)
+                    self.assertEqual(status, 200, payload)
+                calls = [call for call in self.api.calls[before:] if call[1] != "/users/me"]
+                self.assertEqual(calls, expected)
 
 
 NEGATIVE_PHRASES = (
