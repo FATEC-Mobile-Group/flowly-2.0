@@ -67,6 +67,20 @@
   box-shadow: 0 0 0 6px rgba(255, 191, 71, 0.16);
 }
 
+.voice-status.starting span {
+  background: #7dd3c0;
+}
+
+.voice-status.speaking span {
+  background: #a855f7;
+  box-shadow: 0 0 0 6px rgba(168, 85, 247, 0.16);
+}
+
+.voice-status.awaiting span {
+  background: #38bdf8;
+  box-shadow: 0 0 0 6px rgba(56, 189, 248, 0.16);
+}
+
 .voice-chat-panel {
   flex: 1;
   min-height: 0;
@@ -137,11 +151,24 @@
 
 .voice-orb-zone {
   display: flex;
+  flex-direction: column;
+  gap: 10px;
   align-items: center;
   justify-content: center;
   min-height: 190px;
   flex-shrink: 0;
   position: relative;
+}
+
+/* Orientacao discreta durante a escuta (concluir x cancelar) e para texto nao confirmado */
+.voice-interaction-hint {
+  margin: 0;
+  max-width: 460px;
+  padding: 0 12px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  text-align: center;
 }
 
 .magic-rings-wrapper {
