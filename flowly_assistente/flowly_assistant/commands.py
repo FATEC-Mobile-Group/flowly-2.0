@@ -5,6 +5,15 @@ from typing import Callable, Dict, List, Literal, Optional
 
 Role = Literal["admin", "user", "any"]
 
+# Comandos reconhecidos mas nunca executados pelo assistente (voz, /api/v1/messages ou /assist).
+# A exclusao continua disponivel na interface normal do Flowly; aqui ela fica desativada ate existir
+# uma confirmacao explicita.
+DISABLED_COMMANDS = frozenset({"delete_task"})
+DISABLED_COMMAND_REPLY = (
+    "Por segurança, o assistente não exclui tarefas. Nada foi excluído. "
+    "Para excluir, use a tela de Tarefas do Flowly."
+)
+
 
 @dataclass(frozen=True)
 class Command:

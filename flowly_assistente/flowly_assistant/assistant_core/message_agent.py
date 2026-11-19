@@ -9,7 +9,8 @@ from typing import Any, Dict, Optional, Tuple
 from flowly_assistant.api_client import FlowlyAPIClient
 from flowly_assistant.api_config import configured_api_base_url
 from flowly_assistant.assistant_core.rest_assistant import assistant_from_http_body, tts_payload
-from flowly_assistant.command_parser import CommandParser
+from flowly_assistant.command_parser import STRICT_PARAM_WORDS, CommandParser, plain_words, strict_param_value
+from flowly_assistant.commands import DISABLED_COMMAND_REPLY, DISABLED_COMMANDS
 from flowly_assistant.nlp.moderation import ModerationService
 from flowly_assistant.queues.analytics_queue import AnalyticsQueue
 from flowly_assistant.storage.analytics_repository import AnalyticsRepository
@@ -17,6 +18,34 @@ from flowly_assistant.storage.conversation_state import ConversationStateReposit
 
 # channelId é o tipo de canal de entrada, nunca uma equipe (a API trata channelId com ObjectId como equipe).
 ALLOWED_CHANNEL_IDS = {"web", "voice-assistant"}
+
+# Desistencia num fluxo pendente: a frase inteira so tem estas palavras (e ao menos uma de cancelamento).
+CANCEL_WORDS = frozenset({
+    "cancelar", "cancela", "cancele", "cancelo", "sair", "sai", "saia", "parar", "pare", "encerrar", "encerra",
+    "encerre", "desistir", "desisto", "esquece", "esqueca", "deixa", "deixe", "nao", "chega", "abortar", "aborta",
+})
+CANCEL_FILLER_WORDS = frozenset({
+    "pode", "por", "favor", "pra", "para", "la", "isso", "tudo", "o", "a", "os", "as", "esse", "essa", "comando",
+    "operacao", "acao", "criacao", "cadastro", "selecao", "tarefa", "equipe", "entao", "ah", "mesmo", "quero",
+    "mais", "eu", "agora", "ja", "melhor", "de", "do", "da", "ok", "ta", "bom", "obrigado", "obrigada",
+})
+
+
+# Negacao numa resposta pendente ou na selecao de tarefa: encerra o fluxo ("Não altere", "nunca mude isso").
+# Os verbos de cancelamento ficam no is_cancel_request, que exige a frase inteira (preserva "Cancelar assinatura...").
+NEGATION_ANSWER_WORDS = frozenset({"nao", "nunca", "jamais", "nem"})
+
+
+def is_cancel_request(text: str, *, param: Optional[str] = None) -> bool:
+    """Frases como "cancelar", "sair" ou "não, deixa pra lá" encerram o fluxo e nunca viram valor de campo."""
+    words = plain_words(text)
+    cancel = {word for word in words if word in CANCEL_WORDS}
+    if not cancel or any(word not in CANCEL_WORDS and word not in CANCEL_FILLER_WORDS for word in words):
+        return False
+    # Na pergunta do responsavel, "não" sozinho significa "sem responsável", e nao desistencia.
+    if param == "user" and cancel <= {"nao"}:
+        return False
+    return True
 
 
 def authenticated_user_id(api: FlowlyAPIClient) -> Optional[str]:
@@ -114,8 +143,21 @@ class MessageAgent:
                 "tts": tts_payload(text, language=str(self.body.get("language") or "pt-BR")),
             }, 201
 
+        if match.command.key in DISABLED_COMMANDS:
+            return self._disabled_command_response(
+                event_id=event["id"],
+                moderation_score=moderation.score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                command_key=match.command.key,
+            )
+
         supplied_params = self.body.get("params") if isinstance(self.body.get("params"), dict) else {}
         merged_params = {**supplied_params, **match.params}
+        # status/acao/urgencia desconhecidos (na frase ou nos params) contam como faltando: o assistente pergunta.
+        for param in STRICT_PARAM_WORDS:
+            if merged_params.get(param):
+                merged_params[param] = strict_param_value(param, merged_params[param]) or ""
         missing = [p for p in match.command.required_params if not merged_params.get(p)]
         if missing:
             self.conversations.save(
@@ -176,13 +218,53 @@ class MessageAgent:
             self.conversations.clear(conversation_id)
             return self._error("invalid_conversation", "Perdi o contexto do comando. Pode repetir?", 400)
 
+        # Estado salvo antes da desativacao (ou forjado) tambem nao executa.
+        if command.key in DISABLED_COMMANDS:
+            return self._disabled_command_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                command_key=command.key,
+            )
+
         params = dict(pending.get("params") or {})
         missing = [p for p in pending.get("missing", command.required_params) if not params.get(p)]
         if not missing:
             self.conversations.clear(conversation_id)
             return self._error("invalid_conversation", "Esse comando já estava completo. Pode repetir?", 400)
 
-        params[missing[0]] = self._normalize_param_value(missing[0], content)
+        if self._wants_to_stop(content, missing[0]):
+            self.conversations.clear(conversation_id)
+            return self._task_conversation_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                status="cancelled",
+                text=f"Tudo bem, cancelei: {command.title}. Nada foi alterado.",
+                ok=True,
+                action_executed=False,
+                command={"key": command.key},
+            )
+
+        value = self._normalize_param_value(missing[0], content)
+        if missing[0] in STRICT_PARAM_WORDS and not value:
+            # Resposta desconhecida: nada de valor padrao; o fluxo continua pendente e a pergunta se repete.
+            self.conversations.save(
+                conversation_id,
+                {"command_key": command.key, "params": params, "missing": missing},
+            )
+            return self._awaiting_params_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                command_key=command.key,
+                missing=missing,
+                text=self._invalid_answer_question(missing[0]),
+            )
+        params[missing[0]] = value
         missing = [p for p in command.required_params if not params.get(p)]
         if missing:
             self.conversations.save(
@@ -267,7 +349,12 @@ class MessageAgent:
         queue_result: Dict[str, Any],
     ) -> Tuple[Dict[str, Any], int]:
         text_norm = self._normalize_text(content)
-        if self._is_cancel(text_norm):
+        # Negacao tambem cancela: "não quero atribuir para mim" nao pode virar atribuicao.
+        if (
+            self._is_cancel(text_norm)
+            or is_cancel_request(content)
+            or bool(NEGATION_ANSWER_WORDS & set(plain_words(content)))
+        ):
             self.conversations.clear(conversation_id)
             text = "Tudo bem. Cancelei a selecao de tarefa e voltei para standby."
             return self._task_conversation_response(
@@ -401,6 +488,39 @@ class MessageAgent:
             "tts": tts_payload(text, language=str(self.body.get("language") or "pt-BR")),
             **extra,
         }, 200 if ok else 400
+
+    def _wants_to_stop(self, content: str, param: str) -> bool:
+        """Desistencia ou negacao numa pergunta pendente: encerra o fluxo e nunca vira valor de campo.
+
+        Sem isso, "Não altere o status" virava status "pendente" (e "Não inicie o cronômetro", acao "pausar").
+        """
+        if param == "user" and self._normalize_param_value("user", content) == "__none__":
+            return False  # na pergunta do responsavel, "não" significa "sem responsável"
+        return is_cancel_request(content, param=param) or bool(NEGATION_ANSWER_WORDS & set(plain_words(content)))
+
+    def _disabled_command_response(
+        self,
+        *,
+        event_id: str,
+        moderation_score: float,
+        queue_result: Dict[str, Any],
+        conversation_id: str,
+        command_key: str,
+    ) -> Tuple[Dict[str, Any], int]:
+        """Comando desativado: limpa o estado pendente e responde sem chamar a API."""
+        self.conversations.clear(conversation_id)
+        return {
+            "ok": False,
+            "error": "command_disabled",
+            "messageId": event_id,
+            "moderation": {"allowed": True, "score": moderation_score},
+            "queue": queue_result,
+            "action_executed": False,
+            "command": {"key": command_key},
+            "conversation": {"id": conversation_id, "status": "cancelled"},
+            "reply_text": DISABLED_COMMAND_REPLY,
+            "tts": tts_payload(DISABLED_COMMAND_REPLY, language=str(self.body.get("language") or "pt-BR")),
+        }, 403
 
     def _compact_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
         equipe = task.get("equipe")
@@ -555,21 +675,17 @@ class MessageAgent:
             return self._strip_spoken_label(self._strip_task_assignment_tail(raw), "task_id")
         if param == "dataEntrega":
             return self._normalize_due_date(raw)
-        if param == "urgencia":
-            if any(word in text for word in ("alta", "urgente", "prioridade alta")):
-                return "alta"
-            if any(word in text for word in ("media", "média", "normal")):
-                return "media"
-            return "baixa"
-        if param == "status":
-            if "andamento" in text:
-                return "em_andamento"
-            if "conclu" in text or "feito" in text or "final" in text:
-                return "concluido"
-            return "pendente"
-        if param == "acao":
-            return "iniciar" if raw.lower().startswith(("i", "come", "start")) else "pausar"
+        if param in STRICT_PARAM_WORDS:
+            # Sem valor padrao: resposta desconhecida volta vazia e a pergunta se repete.
+            return strict_param_value(param, raw) or ""
         return raw
+
+    def _invalid_answer_question(self, param: str) -> str:
+        return {
+            "status": "Não entendi o status. Responda pendente, em andamento ou concluído.",
+            "acao": "Não entendi. Você quer iniciar ou pausar o cronômetro?",
+            "urgencia": "Não entendi a urgência. Responda baixa, média ou alta.",
+        }[param]
 
     def _strip_spoken_label(self, value: str, param: str) -> str:
         text = " ".join((value or "").strip().split()).strip(" :,-")

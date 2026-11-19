@@ -26,6 +26,9 @@ class FlowlyAPIClient:
         }
 
     def request(self, method: str, path: str, *, params: Optional[dict] = None, json: Optional[dict] = None) -> Any:
+        # Ultima barreira: o assistente nunca envia DELETE, venha o pedido de onde vier.
+        if str(method or "").strip().upper() == "DELETE":
+            raise APIError("O assistente não executa exclusões.")
         url = f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
         started = time.monotonic()
         if self.debug:
@@ -155,4 +158,5 @@ class FlowlyAPIClient:
         return self.request("GET", "/tarefas", params=params or None)
 
     def delete_task(self, task_id: str) -> Any:
+        # Bloqueado em request(): mantido so para o modo CLI falhar com mensagem clara.
         return self.request("DELETE", f"/tarefas/{task_id}")
