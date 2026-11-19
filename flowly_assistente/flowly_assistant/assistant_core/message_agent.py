@@ -68,6 +68,42 @@ def task_position_refs(text: str) -> set[str]:
     return {word for word in plain_words(text) if word in TASK_POSITION_WORDS or any(ch.isdigit() for ch in word)}
 
 
+# Respostas de consulta: reply_text (tela) traz a lista completa; tts.text (fala) resume.
+SELECTABLE_TASK_LIMIT = 10  # tarefas guardadas no estado da conversa para selecao
+SPOKEN_TASK_LIMIT = 5
+SPOKEN_NAME_LIMIT = 8
+ACCOUNT_TYPE_LABELS = {"admin": "administrador", "user": "colaborador"}
+URGENCY_LABELS = {"baixa": "baixa", "media": "média", "alta": "alta"}
+
+
+def _count(count: int, singular: str, plural: str) -> str:
+    return f"{count} {singular if count == 1 else plural}"
+
+
+def _dict_items(result: Any) -> list[Dict[str, Any]]:
+    """Itens validos de uma lista da API; qualquer outro formato conta como lista vazia."""
+    return [item for item in result if isinstance(item, dict)] if isinstance(result, list) else []
+
+
+def _item_names(items: list[Dict[str, Any]]) -> list[str]:
+    """So o campo nome: e-mail, foto (URL assinada) e IDs nunca entram no texto."""
+    return [name for name in (str(item.get("nome") or "").strip() for item in items) if name]
+
+
+def _names_text(names: list[str], total: int, *, limit: Optional[int] = None) -> str:
+    """Tela (sem limite): todos os nomes. Fala: os primeiros `limit` e "e mais N" (N inclui itens sem nome)."""
+    shown = names if limit is None else names[:limit]
+    rest = total - len(shown)
+    if rest <= 0:
+        return ", ".join(shown)
+    return ", ".join(shown) + f" e mais {rest}" + (" sem nome" if limit is None else "")
+
+
+def _short_date(value: Any) -> Optional[str]:
+    match = re.match(r"(\d{4})-(\d{2})-(\d{2})", str(value or ""))
+    return f"{match.group(3)}/{match.group(2)}/{match.group(1)}" if match else None
+
+
 def is_cancel_request(text: str, *, param: Optional[str] = None) -> bool:
     """Frases como "cancelar", "sair" ou "não, deixa pra lá" encerram o fluxo e nunca viram valor de campo."""
     words = plain_words(text)
@@ -344,14 +380,14 @@ class MessageAgent:
     def _prepare_follow_up(self, *, conversation_id: str, command_key: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         result = payload.get("result")
         if command_key in {"my_tasks", "backlog", "list_tasks"}:
-            tasks = [task for task in result if isinstance(task, dict)] if isinstance(result, list) else []
-            text = self._tasks_reply_text(tasks)
+            tasks = _dict_items(result)
+            display, spoken = self._tasks_reply(tasks)
             if tasks:
                 self.conversations.save(
                     conversation_id,
                     {
                         "mode": "task_selection",
-                        "tasks": [self._compact_task(task) for task in tasks[:10]],
+                        "tasks": [self._compact_task(task) for task in tasks[:SELECTABLE_TASK_LIMIT]],
                     },
                 )
                 payload["conversation"] = {
@@ -359,15 +395,34 @@ class MessageAgent:
                     "status": "browsing_tasks",
                     "options": ["details", "assign_to_me", "cancel"],
                 }
-            payload["reply_text"] = text
-            payload["tts"] = tts_payload(text, language=str(self.body.get("language") or "pt-BR"))
-            return payload
+            return self._with_reply(payload, display, spoken)
 
+        team_label = str((payload.get("params") or {}).get("_team_label") or "").strip()
         if command_key in {"my_teams", "list_teams"}:
-            teams = [team for team in result if isinstance(team, dict)] if isinstance(result, list) else []
-            text = self._teams_reply_text(teams)
-            payload["reply_text"] = text
-            payload["tts"] = tts_payload(text, language=str(self.body.get("language") or "pt-BR"))
+            display, spoken = self._teams_reply(_dict_items(result))
+        elif command_key == "me":
+            display, spoken = self._profile_reply(result)
+        elif command_key == "task_details":
+            display, spoken = self._task_details_reply(result, follow_up=False)
+        elif command_key == "team_members":
+            display, spoken = self._members_reply(_dict_items(result), team_label)
+        elif command_key in {"list_users", "search_users"}:
+            display, spoken = self._users_reply(_dict_items(result))
+        elif command_key == "team_messages":
+            display, spoken = self._messages_reply(_dict_items(result), team_label)
+        else:
+            return payload
+        return self._with_reply(payload, display, spoken)
+
+    def _with_reply(self, payload: Dict[str, Any], display: str, spoken: str) -> Dict[str, Any]:
+        """reply_text e o texto da tela; tts.text e a fala. Mantem enabled/language ja calculados pelo assistente."""
+        previous = payload.get("tts") if isinstance(payload.get("tts"), dict) else {}
+        payload["reply_text"] = display
+        payload["tts"] = tts_payload(
+            spoken,
+            enabled=bool(previous.get("enabled", True)),
+            language=str(previous.get("language") or self.body.get("language") or "pt-BR"),
+        )
         return payload
 
     def _continue_task_selection(
@@ -496,7 +551,7 @@ class MessageAgent:
                 )
 
             result = self.assistant.api.task_details(str(selected_task["_id"]))
-            text = self._task_details_reply_text(result)
+            text, spoken = self._task_details_reply(result, follow_up=True)
             self.conversations.save(
                 conversation_id,
                 {**pending, "selected_task_id": selected_task.get("_id")},
@@ -508,6 +563,7 @@ class MessageAgent:
                 conversation_id=conversation_id,
                 status="browsing_tasks",
                 text=text,
+                spoken=spoken,
                 ok=True,
                 action_executed=True,
                 result=result,
@@ -538,6 +594,7 @@ class MessageAgent:
         text: str,
         ok: bool,
         action_executed: bool,
+        spoken: Optional[str] = None,
         **extra: Any,
     ) -> Tuple[Dict[str, Any], int]:
         return {
@@ -548,7 +605,7 @@ class MessageAgent:
             "action_executed": action_executed,
             "conversation": {"id": conversation_id, "status": status},
             "reply_text": text,
-            "tts": tts_payload(text, language=str(self.body.get("language") or "pt-BR")),
+            "tts": tts_payload(spoken or text, language=str(self.body.get("language") or "pt-BR")),
             **extra,
         }, 200 if ok else 400
 
@@ -598,31 +655,132 @@ class MessageAgent:
             "user": {"nome": user.get("nome")} if isinstance(user, dict) else user,
         }
 
-    def _tasks_reply_text(self, tasks: list[Dict[str, Any]]) -> str:
+    def _task_summary(self, task: Dict[str, Any], *, spoken: bool) -> str:
+        """Linha de uma tarefa. Fala: nome, status e equipe. Tela: tambem urgencia e data de entrega."""
+        parts = [self._task_title(task), f"status {self._status_label(str(task.get('status') or 'pendente'))}"]
+        urgencia = URGENCY_LABELS.get(str(task.get("urgencia") or "").strip().lower())
+        if urgencia and not spoken:
+            parts.append(f"urgência {urgencia}")
+        equipe = task.get("equipe")
+        if isinstance(equipe, dict) and str(equipe.get("nome") or "").strip():
+            parts.append(f"equipe {str(equipe.get('nome')).strip()}")
+        entrega = None if spoken else _short_date(task.get("dataEntrega"))
+        if entrega:
+            parts.append(f"entrega {entrega}")
+        return ", ".join(parts)
+
+    def _tasks_reply(self, tasks: list[Dict[str, Any]]) -> Tuple[str, str]:
+        """Tela: as opcoes selecionaveis (as mesmas guardadas no estado). Fala: no maximo cinco."""
         if not tasks:
-            return "Nao encontrei tarefas para listar."
-        pieces = [f"Encontrei {len(tasks)} tarefa{'s' if len(tasks) != 1 else ''}."]
-        for idx, task in enumerate(tasks[:5], start=1):
-            equipe = task.get("equipe")
-            equipe_nome = equipe.get("nome") if isinstance(equipe, dict) else None
-            status = self._status_label(str(task.get("status") or "pendente"))
-            team_text = f", equipe {equipe_nome}" if equipe_nome else ""
-            pieces.append(f"{idx}. {self._task_title(task)}, status {status}{team_text}.")
-        pieces.append("Voce pode pedir detalhes, atribuir uma tarefa para voce ou cancelar.")
-        return " ".join(pieces)
+            text = "Não encontrei tarefas para listar."
+            return text, text
+        options = tasks[:SELECTABLE_TASK_LIMIT]
+        header = f"Encontrei {_count(len(tasks), 'tarefa', 'tarefas')}."
+        follow_up = "Você pode pedir detalhes, atribuir uma tarefa para você ou cancelar."
 
-    def _teams_reply_text(self, teams: list[Dict[str, Any]]) -> str:
+        listed = "; ".join(f"{idx}. {self._task_summary(task, spoken=False)}" for idx, task in enumerate(options, start=1))
+        display = f"{header} Opções para seleção: {listed}."
+        outside = len(tasks) - len(options)
+        if outside:
+            verb = "fica" if outside == 1 else "ficam"
+            display += f" Mais {_count(outside, 'tarefa', 'tarefas')} {verb} fora desta seleção; veja todas na tela de Tarefas."
+
+        said = " ".join(
+            f"{idx}. {self._task_summary(task, spoken=True)}." for idx, task in enumerate(options[:SPOKEN_TASK_LIMIT], start=1)
+        )
+        spoken = f"{header} {said}"
+        more_options = len(options) - SPOKEN_TASK_LIMIT
+        if more_options > 0:
+            spoken += f" Há mais {_count(more_options, 'opção', 'opções')} na tela."
+        return f"{display} {follow_up}", f"{spoken} {follow_up}"
+
+    def _teams_reply(self, teams: list[Dict[str, Any]]) -> Tuple[str, str]:
+        """Tela: todos os nomes de equipe. Fala: ate oito e quantas faltam. Membros nunca entram no texto."""
         if not teams:
-            return "Nao encontrei equipes vinculadas a voce."
-        names = [str(team.get("nome") or "").strip() for team in teams if team.get("nome")]
+            text = "Não encontrei equipes vinculadas a você."
+            return text, text
+        names = _item_names(teams)
+        header = f"Você participa de {_count(len(teams), 'equipe', 'equipes')}"
         if not names:
-            return f"Voce participa de {len(teams)} equipe{'s' if len(teams) != 1 else ''}."
-        return f"Voce participa de {len(teams)} equipe{'s' if len(teams) != 1 else ''}: {', '.join(names[:8])}."
+            return f"{header}.", f"{header}."
+        display = f"{header}: {_names_text(names, len(teams))}."
+        spoken = f"{header}: {_names_text(names, len(teams), limit=SPOKEN_NAME_LIMIT)}."
+        if len(teams) > SPOKEN_NAME_LIMIT:
+            spoken += " A lista completa está na tela."
+        return display, spoken
 
-    def _task_details_reply_text(self, result: Any) -> str:
+    def _profile_reply(self, result: Any) -> Tuple[str, str]:
+        """Tela: nome, tipo de conta e e-mail. Fala: nome e tipo. Sem IDs, foto ou campos de biometria."""
+        if not isinstance(result, dict):
+            text = "Não consegui ler os dados do seu perfil."
+            return text, text
+        nome = str(result.get("nome") or "").strip()
+        tipo = ACCOUNT_TYPE_LABELS.get(str(result.get("tipo") or "").strip().lower())
+        email = str(result.get("email") or "").strip()
+        spoken_parts = [part for part in (nome, f"conta de {tipo}" if tipo else "") if part]
+        display_parts = spoken_parts + ([f"e-mail {email}"] if email else [])
+        if not display_parts:
+            text = "Seu perfil não tem nome, tipo de conta ou e-mail para mostrar."
+            return text, text
+        display = "Seu perfil: " + ", ".join(display_parts) + "."
+        spoken = "Seu perfil: " + ", ".join(spoken_parts) + "." if spoken_parts else "Seu perfil está na tela."
+        return display, spoken
+
+    def _members_reply(self, members: list[Dict[str, Any]], team_label: str) -> Tuple[str, str]:
+        """Quantidade e nomes dos membros; sem e-mail, foto ou IDs."""
+        team = f"A equipe {team_label}" if team_label else "A equipe"
+        if not members:
+            text = f"{team} não tem membros para mostrar."
+            return text, text
+        header = f"{team} tem {_count(len(members), 'membro', 'membros')}"
+        names = _item_names(members)
+        if not names:
+            return f"{header}.", f"{header}."
+        display = f"{header}: {_names_text(names, len(members))}."
+        spoken = f"{header}: {_names_text(names, len(members), limit=SPOKEN_NAME_LIMIT)}."
+        if len(members) > SPOKEN_NAME_LIMIT:
+            spoken += " A lista completa está na tela."
+        return display, spoken
+
+    def _users_reply(self, users: list[Dict[str, Any]]) -> Tuple[str, str]:
+        """Listar ou buscar usuarios: quantidade e nomes; o e-mail de terceiros nunca entra no texto."""
+        if not users:
+            text = "Não encontrei usuários."
+            return text, text
+        header = f"Encontrei {_count(len(users), 'usuário', 'usuários')}"
+        names = _item_names(users)
+        if not names:
+            return f"{header}.", f"{header}."
+        display = f"{header}: {_names_text(names, len(users))}."
+        spoken = f"{header}: {_names_text(names, len(users), limit=SPOKEN_NAME_LIMIT)}."
+        if len(users) > SPOKEN_NAME_LIMIT:
+            spoken += " A lista completa está na tela."
+        return display, spoken
+
+    def _messages_reply(self, messages: list[Dict[str, Any]], team_label: str) -> Tuple[str, str]:
+        """Quantidade de mensagens e autor da mais recente; o conteudo do historico nunca e reproduzido."""
+        chat = f"O chat da equipe {team_label}" if team_label else "O chat da equipe"
+        if not messages:
+            text = f"{chat} não tem mensagens."
+            return text, text
+        text = f"{chat} tem {_count(len(messages), 'mensagem', 'mensagens')}."
+        # A API ordena da mais antiga para a mais recente; createdAt desempata se vier fora de ordem.
+        latest = max(enumerate(messages), key=lambda pair: (str(pair[1].get("createdAt") or ""), pair[0]))[1]
+        author = latest.get("user")
+        author_name = str(author.get("nome") or "").strip() if isinstance(author, dict) else ""
+        if author_name:
+            text += f" A mais recente é de {author_name}."
+        return text, text
+
+    def _task_details_reply(self, result: Any, *, follow_up: bool) -> Tuple[str, str]:
+        """Tela: nome, status, equipe, responsavel e detalhes. Fala: sem os detalhes. Sem comentarios nem logs.
+
+        follow_up: so no fluxo de selecao, onde "outra tarefa" e "atribuir" continuam valendo.
+        """
         tarefa = (result or {}).get("tarefa") if isinstance(result, dict) else None
         if not isinstance(tarefa, dict):
-            return "Detalhes carregados."
+            text = "Não consegui ler os detalhes dessa tarefa."
+            return text, text
         equipe = tarefa.get("equipe")
         user = tarefa.get("user")
         parts = [
@@ -635,10 +793,13 @@ class MessageAgent:
             parts.append(f"responsavel {user.get('nome')}")
         elif not user:
             parts.append("sem responsavel")
+        spoken = ". ".join(parts) + "."
         detalhes = str(tarefa.get("detalhes") or "").strip()
-        if detalhes:
-            parts.append(f"detalhes: {detalhes[:180]}")
-        return ". ".join(parts) + ". Voce pode pedir outra tarefa, atribuir para voce ou cancelar."
+        display = ". ".join(parts + [f"detalhes: {detalhes[:180]}"]) + "." if detalhes else spoken
+        if follow_up:
+            suffix = " Voce pode pedir outra tarefa, atribuir para voce ou cancelar."
+            return display + suffix, spoken + suffix
+        return display, spoken
 
     def _task_title(self, task: Any) -> str:
         if not isinstance(task, dict):
