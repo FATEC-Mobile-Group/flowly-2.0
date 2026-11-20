@@ -2,21 +2,39 @@ from __future__ import annotations
 
 import os
 import re
+import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from flowly_assistant.api_client import FlowlyAPIClient
 from flowly_assistant.api_config import configured_api_base_url
-from flowly_assistant.assistant_core.rest_assistant import assistant_from_http_body, tts_payload
+from flowly_assistant.assistant_core.rest_assistant import (
+    PROFILE_UNKNOWN_REPLY,
+    assistant_from_http_body,
+    has_permission,
+    is_object_id,
+    tts_payload,
+)
 from flowly_assistant.command_parser import (
+    NON_DIRECTIVE_FUTURE_WORDS,
+    NON_DIRECTIVE_QUESTION_EXPRESSIONS,
+    NON_DIRECTIVE_QUESTION_WORDS,
     STRICT_PARAM_WORDS,
     CommandParser,
+    extract_status_target,
     is_write_command,
     plain_words,
     strict_param_value,
 )
-from flowly_assistant.commands import DISABLED_COMMAND_REPLY, DISABLED_COMMANDS
+from flowly_assistant.commands import (
+    DISABLED_COMMAND_REPLY,
+    DISABLED_COMMANDS,
+    WRITES_DISABLED_REPLY,
+    Command,
+    assistant_writes_enabled,
+)
 from flowly_assistant.nlp.moderation import ModerationService
 from flowly_assistant.queues.analytics_queue import AnalyticsQueue
 from flowly_assistant.storage.analytics_repository import AnalyticsRepository
@@ -163,6 +181,48 @@ def is_cancel_request(text: str, *, param: Optional[str] = None) -> bool:
     return True
 
 
+# Confirmacao de escrita: toda escrita completa (digitada ou falada; o channelId nao distingue as duas) e
+# preparada sem alterar nada e so executa com uma confirmacao explicita numa mensagem posterior.
+# A frase inteira so pode ter estas palavras e ao menos uma de confirmacao: "sim" sozinho nao confirma.
+CONFIRMATION_WORDS = frozenset({"confirmar", "confirmo", "confirma", "confirme", "confirmado"})
+CONFIRMATION_FILLER_WORDS = frozenset({"sim", "pode", "por", "favor", "ok", "entao", "agora", "isso", "eu"})
+DEFAULT_WRITE_CONFIRMATION_TTL_SEC = 120
+# Consome a confirmacao (rele, confere a operacao e limpa) de forma atomica neste processo.
+_CONFIRMATION_LOCK = threading.Lock()
+
+NON_DIRECTIVE_REPLIES = {
+    "pergunta": (
+        "Isso parece uma pergunta, não um pedido. Não identifiquei uma instrução direta. Nada foi alterado. "
+        "Para executar, faça o pedido diretamente."
+    ),
+    "negacao": "Não identifiquei uma instrução direta para executar agora. Nada foi alterado.",
+    "futuro": "Não identifiquei uma instrução direta para executar agora. Nada foi alterado.",
+    "conflito": (
+        "Sua mensagem pede mais de uma ação, incluindo uma alteração. Nada foi alterado. Peça uma ação por vez."
+    ),
+}
+
+
+def is_confirmation(text: str) -> bool:
+    """Confirmacao explicita: "confirmar", "sim, confirmo", "pode confirmar". Negacao, pergunta ("confirmar?") ou
+    qualquer outro conteudo nao confirma."""
+    words = plain_words(text)
+    return "?" not in (text or "") and bool(set(words) & CONFIRMATION_WORDS) and all(
+        word in CONFIRMATION_WORDS or word in CONFIRMATION_FILLER_WORDS for word in words
+    )
+
+
+def is_non_directive_text(text: str) -> bool:
+    """Pergunta, intencao futura ou "sem": descreve uma acao, mas nao a pede agora."""
+    words = plain_words(text)
+    joined = f" {' '.join(words)} "
+    return (
+        "sem" in words
+        or bool(set(words) & (NON_DIRECTIVE_QUESTION_WORDS | NON_DIRECTIVE_FUTURE_WORDS))
+        or any(f" {expression} " in joined for expression in NON_DIRECTIVE_QUESTION_EXPRESSIONS)
+    )
+
+
 def authenticated_user_id(api: FlowlyAPIClient) -> Optional[str]:
     """Identidade confiável: o dono do JWT segundo a API (/users/me), nunca o userId do body."""
     try:
@@ -187,6 +247,7 @@ class MessageAgent:
         self.parser = CommandParser(threshold=int(os.getenv("FLOWLY_MATCH_THRESHOLD", "78")))
         self.assistant = assistant_from_http_body(body, token, debug=debug)
         self.conversations = ConversationStateRepository()
+        self.user_id: Optional[str] = None
 
     def handle_message(self) -> Tuple[Dict[str, Any], int]:
         content = str(self.body.get("content") or self.body.get("utterance") or self.body.get("text") or "").strip()
@@ -205,6 +266,7 @@ class MessageAgent:
         user_id = authenticated_user_id(self.assistant.api)
         if not user_id:
             return self._error("unauthorized", "Autenticação inválida.", 401)
+        self.user_id = user_id
         self.conversations = ScopedConversationState(self.conversations, user_id)
 
         moderation = self.moderation.moderate(content)
@@ -241,9 +303,17 @@ class MessageAgent:
                 queue_result=queue_result,
             )
 
-        match = self.parser.match(content)
+        match = None if is_confirmation(content) else self.parser.match(content)
         if match is None or match.command.key == "exit":
             text = "Mensagem recebida. Não identifiquei uma ação imediata."
+            reason = None if match is not None else self.parser.non_directive_reason(content)
+            if reason:
+                text = NON_DIRECTIVE_REPLIES[reason]
+                if reason in ("pergunta", "conflito"):
+                    text = self._status_read_hint(content) or text
+            elif match is None and is_confirmation(content):
+                # Confirmacao repetida, antiga ou de outra conversa: nao ha nada guardado para executar.
+                text = "Não há nenhuma operação aguardando confirmação. Nada foi alterado."
             if match is not None and match.command.key == "exit":
                 text = "Encerrando. Assistente em standby."
                 self.conversations.clear(conversation_id)
@@ -267,7 +337,19 @@ class MessageAgent:
                 command_key=match.command.key,
             )
 
+        if is_write_command(match.command) and not assistant_writes_enabled():
+            # Chave temporaria desligada: nem pergunta campos nem prepara resumo.
+            return self._writes_disabled_response(
+                event_id=event["id"],
+                moderation_score=moderation.score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                command_key=match.command.key,
+            )
+
         supplied_params = self.body.get("params") if isinstance(self.body.get("params"), dict) else {}
+        # Rotulos internos (_task_label etc.) vem so da resolucao no servidor: o cliente nao escolhe o resumo.
+        supplied_params = {k: v for k, v in supplied_params.items() if not str(k).startswith("_")}
         merged_params = {**supplied_params, **match.params}
         # status/acao/urgencia desconhecidos (na frase ou nos params) contam como faltando: o assistente pergunta.
         for param in STRICT_PARAM_WORDS:
@@ -288,6 +370,17 @@ class MessageAgent:
                 command_key=match.command.key,
                 missing=missing,
                 text=text,
+            )
+
+        if is_write_command(match.command):
+            # Escrita completa numa unica frase: prepara (so leituras) e pede confirmacao; nada e alterado aqui.
+            return self._request_write_confirmation(
+                conversation_id=conversation_id,
+                command=match.command,
+                params=merged_params,
+                event_id=event["id"],
+                moderation_score=moderation.score,
+                queue_result=queue_result,
             )
 
         command_payload, command_status = self.assistant.handle(content, supplied_params)
@@ -326,6 +419,15 @@ class MessageAgent:
                 moderation_score=moderation_score,
                 queue_result=queue_result,
             )
+        if pending.get("mode") == "write_confirmation":
+            return self._continue_write_confirmation(
+                conversation_id=conversation_id,
+                pending=pending,
+                content=content,
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+            )
 
         command_key = str(pending.get("command_key") or "")
         command = next((cmd for cmd in self.parser.commands if cmd.key == command_key), None)
@@ -336,6 +438,15 @@ class MessageAgent:
         # Estado salvo antes da desativacao (ou forjado) tambem nao executa.
         if command.key in DISABLED_COMMANDS:
             return self._disabled_command_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                command_key=command.key,
+            )
+        # Pergunta de escrita aberta antes do desligamento: encerra sem usar a resposta.
+        if is_write_command(command) and not assistant_writes_enabled():
+            return self._writes_disabled_response(
                 event_id=event_id,
                 moderation_score=moderation_score,
                 queue_result=queue_result,
@@ -381,6 +492,23 @@ class MessageAgent:
                     text=self._command_answer_question(content, missing[0], command.title),
                 )
 
+        # "confirmar" enquanto o assistente ainda pergunta um campo nao confirma nada e nunca vira valor
+        # (equipe "Confirmar"): a pergunta se repete e a confirmacao so vale depois do resumo.
+        if is_confirmation(content):
+            self.conversations.save(
+                conversation_id,
+                {"command_key": command.key, "params": params, "missing": missing},
+            )
+            return self._awaiting_params_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                command_key=command.key,
+                missing=missing,
+                text="Ainda não há nada para confirmar. " + self._question_for_param(missing[0], command.key),
+            )
+
         value = self._normalize_param_value(missing[0], content)
         if missing[0] in STRICT_PARAM_WORDS and not value:
             # Resposta desconhecida: nada de valor padrao; o fluxo continua pendente e a pergunta se repete.
@@ -413,6 +541,25 @@ class MessageAgent:
                 missing=missing,
             text=self._question_for_param(missing[0], command.key),
             )
+
+        if is_write_command(command):
+            # Ultima resposta de um fluxo de escrita: usa os valores coletados (sem reinterpretar a frase),
+            # resolve os alvos e mostra o resumo. Nada e alterado sem a confirmacao seguinte.
+            response, response_status = self._request_write_confirmation(
+                conversation_id=conversation_id,
+                command=command,
+                params=params,
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+            )
+            if not response.get("ok"):
+                self.conversations.save(
+                    conversation_id,
+                    {"command_key": command.key, "params": params, "missing": response.get("missing") or []},
+                )
+                response["conversation"] = {"id": conversation_id, "status": "awaiting_params"}
+            return response, response_status
 
         utterance = f"{command.title} " + " ".join(f"{key} {value}" for key, value in params.items())
         command_payload, command_status = self.assistant.handle(utterance, params)
@@ -490,6 +637,298 @@ class MessageAgent:
         )
         return payload
 
+    # --- Confirmacao de escrita -------------------------------------------------------------------------------
+
+    def _request_write_confirmation(
+        self,
+        *,
+        conversation_id: str,
+        command: Command,
+        params: Dict[str, Any],
+        event_id: str,
+        moderation_score: float,
+        queue_result: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], int]:
+        """Valida permissao e valores e resolve os alvos (so GET); guarda a operacao e pede confirmacao."""
+        payload, status = self.assistant.prepare_write(command, params)
+        if not payload.get("ok"):
+            return {
+                "messageId": event_id,
+                "moderation": {"allowed": True, "score": moderation_score},
+                "queue": queue_result,
+                "action_executed": False,
+                **payload,
+            }, status
+        resolved = dict(payload.get("params") or {})
+        self._fill_target_labels(resolved)
+        return self._store_write_confirmation(
+            conversation_id=conversation_id,
+            command=command,
+            params=resolved,
+            event_id=event_id,
+            moderation_score=moderation_score,
+            queue_result=queue_result,
+        )
+
+    def _request_selection_assign_confirmation(
+        self,
+        *,
+        conversation_id: str,
+        task: Dict[str, Any],
+        event_id: str,
+        moderation_score: float,
+        queue_result: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], int]:
+        """Atribuicao pedida na lista de tarefas: o alvo ja e o ID da lista; confere a permissao antes do resumo."""
+        command = next(cmd for cmd in self.parser.commands if cmd.key == "assign_to_me")
+        user_type = self.assistant._detect_user_type()
+        # Fail-closed como no prepare_write: sem perfil identificado tambem nao prepara.
+        if not user_type or not has_permission(user_type, command.role_required):
+            self.conversations.clear(conversation_id)
+            return self._task_conversation_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                status="cancelled",
+                text=PROFILE_UNKNOWN_REPLY if not user_type else "Você não tem permissão para esse comando. Nada foi alterado.",
+                ok=False,
+                action_executed=False,
+                error="user_type_unknown" if not user_type else "forbidden",
+            )[0], 403
+        equipe = task.get("equipe")
+        team_name = str(equipe.get("nome") or "").strip() if isinstance(equipe, dict) else ""
+        label = f"{self._task_title(task)} (equipe {team_name})" if team_name else self._task_title(task)
+        return self._store_write_confirmation(
+            conversation_id=conversation_id,
+            command=command,
+            params={"task_id": str(task.get("_id") or ""), "_task_label": label},
+            event_id=event_id,
+            moderation_score=moderation_score,
+            queue_result=queue_result,
+        )
+
+    def _store_write_confirmation(
+        self,
+        *,
+        conversation_id: str,
+        command: Command,
+        params: Dict[str, str],
+        event_id: str,
+        moderation_score: float,
+        queue_result: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], int]:
+        summary = self._write_summary(command.key, params)
+        operation_id = str(uuid.uuid4())
+        ttl = self._confirmation_ttl()
+        # Vinculo: usuario (chave do estado e owner_id), conversa (chave) e operacao (operation_id de uso unico).
+        self.conversations.save(
+            conversation_id,
+            {
+                "mode": "write_confirmation",
+                "owner_id": self.user_id,
+                "operation_id": operation_id,
+                "command_key": command.key,
+                "params": params,
+                "summary": summary,
+                "expires_at": time.time() + ttl,
+            },
+        )
+        text = (
+            f"Confirme a operação: {summary}. Nada foi alterado ainda. "
+            'Para executar, diga "confirmar". Para desistir, diga "cancelar".'
+        )
+        return {
+            "ok": True,
+            "messageId": event_id,
+            "moderation": {"allowed": True, "score": moderation_score},
+            "queue": queue_result,
+            "action_executed": False,
+            "command": {"key": command.key, "title": command.title},
+            "conversation": {
+                "id": conversation_id,
+                "status": "awaiting_confirmation",
+                "command": command.key,
+                "operation_id": operation_id,
+                "expires_in": ttl,
+                "summary": summary,
+            },
+            "reply_text": text,
+            "tts": tts_payload(text, language=str(self.body.get("language") or "pt-BR")),
+        }, 200
+
+    def _continue_write_confirmation(
+        self,
+        *,
+        conversation_id: str,
+        pending: Dict[str, Any],
+        content: str,
+        event_id: str,
+        moderation_score: float,
+        queue_result: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], int]:
+        summary = str(pending.get("summary") or "a operação pendente")
+        command_key = str(pending.get("command_key") or "")
+        command = next((cmd for cmd in self.parser.commands if cmd.key == command_key), None)
+
+        def finish(status: str, text: str, **extra: Any) -> Tuple[Dict[str, Any], int]:
+            return self._task_conversation_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                status=status,
+                text=text,
+                ok=True,
+                action_executed=False,
+                command={"key": command_key},
+                **extra,
+            )
+
+        if not assistant_writes_enabled():
+            # Resumo preparado antes do desligamento: nem "confirmar" executa; a operacao e descartada.
+            return self._writes_disabled_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                command_key=command_key,
+            )
+        if command is None or not is_write_command(command) or pending.get("owner_id") != self.user_id:
+            self.conversations.clear(conversation_id)
+            return finish("cancelled", "Não encontrei uma operação válida para confirmar. Nada foi alterado.")
+        if time.time() > float(pending.get("expires_at") or 0):
+            self.conversations.clear(conversation_id)
+            return finish(
+                "expired",
+                f"O pedido expirou antes da confirmação: {summary}. Nada foi alterado. "
+                "Se ainda quiser, faça o pedido de novo.",
+            )
+        client_operation = str(self.body.get("operationId") or self.body.get("operation_id") or "").strip()
+        if client_operation and client_operation != pending.get("operation_id"):
+            self.conversations.clear(conversation_id)
+            return finish(
+                "cancelled",
+                "Essa confirmação não corresponde à operação pendente. Cancelei a operação e nada foi alterado.",
+            )
+        if not is_confirmation(content):
+            # Negativa, outro comando, "sim" sozinho ou qualquer frase ambigua: cancela sem executar.
+            self.conversations.clear(conversation_id)
+            if is_cancel_request(content) or NEGATION_ANSWER_WORDS & set(plain_words(content)):
+                return finish("cancelled", f"Tudo bem, cancelei: {summary}. Nada foi alterado.")
+            return finish(
+                "cancelled",
+                f"Não recebi uma confirmação explícita, então cancelei: {summary}. Nada foi alterado. "
+                'Para executar, faça o pedido de novo e responda "confirmar".',
+            )
+
+        claimed = self._claim_write_confirmation(conversation_id, str(pending.get("operation_id") or ""))
+        if claimed is None:
+            return finish("cancelled", "Essa operação já foi confirmada ou cancelada. Nada foi executado de novo.")
+
+        payload, status = self.assistant.execute_prepared(command, dict(claimed.get("params") or {}))
+        if not payload.get("ok"):
+            response, _ = self._task_conversation_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                status="failed",
+                text=str(payload.get("reply_text") or "Não consegui concluir essa ação agora."),
+                ok=False,
+                action_executed=False,
+                command={"key": command.key},
+                error=payload.get("error"),
+            )
+            return response, status
+        return self._task_conversation_response(
+            event_id=event_id,
+            moderation_score=moderation_score,
+            queue_result=queue_result,
+            conversation_id=conversation_id,
+            status="completed",
+            text=f"Confirmado. Operação concluída: {summary}.",
+            ok=True,
+            action_executed=True,
+            command={"key": command.key, "title": command.title},
+            params=payload.get("params"),
+            result=payload.get("result"),
+        )
+
+    def _claim_write_confirmation(self, conversation_id: str, operation_id: str) -> Optional[Dict[str, Any]]:
+        """Uso unico: rele o estado, confere a operacao e o remove antes de executar (confirmacao duplicada = None)."""
+        with _CONFIRMATION_LOCK:
+            current = self.conversations.get(conversation_id)
+            if (
+                not operation_id
+                or not current
+                or current.get("mode") != "write_confirmation"
+                or current.get("operation_id") != operation_id
+            ):
+                return None
+            self.conversations.clear(conversation_id)
+            return current
+
+    def _confirmation_ttl(self) -> int:
+        try:
+            ttl = int(os.getenv("FLOWLY_WRITE_CONFIRMATION_TTL_SEC", str(DEFAULT_WRITE_CONFIRMATION_TTL_SEC)))
+        except ValueError:
+            ttl = DEFAULT_WRITE_CONFIRMATION_TTL_SEC
+        return ttl if ttl > 0 else DEFAULT_WRITE_CONFIRMATION_TTL_SEC
+
+    def _fill_target_labels(self, params: Dict[str, str]) -> None:
+        """Alvo informado ja como ID (params do cliente): busca o nome real so com leituras, para o resumo."""
+        try:
+            if is_object_id(params.get("task_id", "")) and not params.get("_task_label"):
+                details = self.assistant.api.task_details(params["task_id"])
+                tarefa = (details or {}).get("tarefa") if isinstance(details, dict) else None
+                if isinstance(tarefa, dict) and tarefa.get("descricao"):
+                    params["_task_label"] = str(tarefa["descricao"]).strip()
+            team_id = params.get("equipe") or params.get("team_id") or ""
+            if is_object_id(team_id) and not params.get("_team_label"):
+                team = next(
+                    (t for t in _dict_items(self.assistant.api.list_my_teams()) if str(t.get("_id") or "") == team_id),
+                    None,
+                )
+                if team and team.get("nome"):
+                    params["_team_label"] = str(team["nome"]).strip()
+        except Exception:
+            return  # sem nome, o resumo diz "indicada"; a execucao continua exigindo a confirmacao
+
+    def _write_summary(self, command_key: str, params: Dict[str, str]) -> str:
+        """Resumo do que sera executado, com os alvos reais resolvidos (sem IDs nem e-mail de terceiros)."""
+        task = params.get("_task_label")
+        task_name = f'tarefa "{task}"' if task else "tarefa indicada"
+        task_text, of_task, in_task = f"a {task_name}", f"da {task_name}", f"na {task_name}"
+        if command_key == "create_team":
+            return f'criar a equipe "{self.assistant._title_case_name(params.get("nome", ""))}"'
+        if command_key == "create_task":
+            team = params.get("_team_label")
+            user_label = str(params.get("_user_label") or "").split(" (")[0].strip()
+            if params.get("user") == "__none__":
+                user_label = "sem responsável"
+            parts = [
+                f'criar a tarefa "{params.get("nome", "")}"',
+                f'na equipe "{team}"' if team else "na equipe indicada",
+                f"com entrega em {_short_date(params.get('dataEntrega')) or params.get('dataEntrega', '')}",
+                f"urgência {URGENCY_LABELS.get(params.get('urgencia', ''), params.get('urgencia', ''))}",
+                f"responsável: {user_label or 'usuário indicado'}",
+            ]
+            return ", ".join(parts)
+        if command_key == "assign_to_me":
+            return f"atribuir {task_text} para você"
+        if command_key == "update_status":
+            return f"mudar o status {of_task} para {self._status_label(params.get('status', ''))}"
+        if command_key == "timer":
+            verbo = "iniciar" if params.get("acao") == "iniciar" else "pausar"
+            return f"{verbo} o cronômetro {of_task}"
+        if command_key == "add_comment":
+            return f'comentar {in_task}: "{params.get("texto", "")}"'
+        if command_key == "add_subtask":
+            return f'adicionar a subtarefa "{params.get("descricao", "")}" {in_task}'
+        command = next((cmd for cmd in self.parser.commands if cmd.key == command_key), None)
+        return command.title if command else command_key
+
     def _continue_task_selection(
         self,
         *,
@@ -529,6 +968,22 @@ class MessageAgent:
         selected_task = next((task for task in tasks if task.get("_id") == selected_id), None)
         position_refs = task_position_refs(content)
         named_tasks = self._tasks_named_in(content, tasks)
+        # "como pegar a 3?", "vou pegar a 3 amanhã", "sem pegar a 3": descreve a atribuicao, mas nao a pede.
+        words_outside = self._words_outside_names(content, named_tasks)
+        if self._task_follow_up_action(words_outside) in ("assign", "conflict") and is_non_directive_text(words_outside):
+            return self._task_conversation_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                status="awaiting_task_action" if selected_task else "awaiting_task_selection",
+                text=(
+                    "Não identifiquei um pedido direto para atribuir uma tarefa. Nada foi alterado. "
+                    "Para atribuir, diga por exemplo: atribuir a tarefa 1 para mim."
+                ),
+                ok=True,
+                action_executed=False,
+            )
         approximate = False
         if position_refs:
             requested_task = self._task_for_position_refs(position_refs, named_tasks, tasks)
@@ -608,6 +1063,31 @@ class MessageAgent:
                 text=text,
                 ok=True,
                 action_executed=False,
+            )
+
+        if action == "assign" and not assistant_writes_enabled():
+            # Chave desligada: a lista e a tarefa escolhida continuam valendo para consultas (detalhes).
+            self.conversations.save(conversation_id, {**pending, "selected_task_id": selected_task.get("_id")})
+            return self._writes_disabled_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                command_key="assign_to_me",
+                clear=False,
+                status="awaiting_task_action",
+            )
+
+        # Atribuir sem confirmacao so quando a tarefa ja tinha sido selecionada e mostrada ("Selecionei X" ou os
+        # detalhes) e esta mensagem e a resposta a essa escolha. Numero ou nome dito agora (sujeito a erro de
+        # transcricao, "3" x "13") passa pelo resumo com o nome da tarefa e pela confirmacao explicita.
+        if action == "assign" and str(selected_task.get("_id")) != str(selected_id or ""):
+            return self._request_selection_assign_confirmation(
+                conversation_id=conversation_id,
+                task=selected_task,
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
             )
 
         try:
@@ -719,6 +1199,46 @@ class MessageAgent:
             "conversation": {"id": conversation_id, "status": "cancelled"},
             "reply_text": DISABLED_COMMAND_REPLY,
             "tts": tts_payload(DISABLED_COMMAND_REPLY, language=str(self.body.get("language") or "pt-BR")),
+        }, 403
+
+    def _status_read_hint(self, content: str) -> Optional[str]:
+        """"Qual o status da tarefa X?" / "ver status da tarefa X": consulta, nao alteracao. Sugere o comando de
+        leitura. Frases com um novo status ("como mudar ... para concluído") mantem a resposta de pergunta."""
+        if "status" not in plain_words(content) or extract_status_target(content):
+            return None
+        found = re.search(r"\btarefa\s+(.+)$", " ".join(content.split()), flags=re.IGNORECASE)
+        name = found.group(1).strip(" ?!.,;:\"'") if found else ""
+        example = f'"detalhes da tarefa {name}"' if name else '"detalhes da tarefa" seguido do nome da tarefa'
+        return (
+            "Entendi como uma consulta, não como um pedido de alteração. Nada foi alterado. "
+            f"Para ver o status, diga: {example}."
+        )
+
+    def _writes_disabled_response(
+        self,
+        *,
+        event_id: str,
+        moderation_score: float,
+        queue_result: Dict[str, Any],
+        conversation_id: str,
+        command_key: str,
+        clear: bool = True,
+        status: str = "cancelled",
+    ) -> Tuple[Dict[str, Any], int]:
+        """Escritas desligadas pela chave temporaria: responde sem chamar a API e descarta o fluxo de escrita."""
+        if clear:
+            self.conversations.clear(conversation_id)
+        return {
+            "ok": False,
+            "error": "assistant_writes_disabled",
+            "messageId": event_id,
+            "moderation": {"allowed": True, "score": moderation_score},
+            "queue": queue_result,
+            "action_executed": False,
+            "command": {"key": command_key},
+            "conversation": {"id": conversation_id, "status": status},
+            "reply_text": WRITES_DISABLED_REPLY,
+            "tts": tts_payload(WRITES_DISABLED_REPLY, language=str(self.body.get("language") or "pt-BR")),
         }, 403
 
     def _compact_task(self, task: Dict[str, Any]) -> Dict[str, Any]:

@@ -80,6 +80,7 @@ class ConversationIdentityTests(unittest.TestCase):
             {
                 "FLOWLY_CONVERSATION_STORE": os.path.join(tmp.name, "state.json"),
                 "FLOWLY_API_BASE_URL": "https://api.flowly.test/api",
+                "FLOWLY_ASSISTANT_WRITES_ENABLED": "true",  # identidade nos fluxos de escrita (chave ligada)
             },
         )
         env.start()

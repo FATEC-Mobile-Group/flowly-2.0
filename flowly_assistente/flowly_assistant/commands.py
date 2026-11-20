@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Literal, Optional
 
 Role = Literal["admin", "user", "any"]
+
+# Chave temporaria (fail-closed): escritas pelo assistente so com FLOWLY_ASSISTANT_WRITES_ENABLED=true.
+# Ausente, vazia ou qualquer outro valor = desligadas. Fica desligada em producao ate existirem confirmacao
+# compartilhada entre instancias e idempotencia; lida a cada chamada, sem cache.
+WRITES_ENABLED_ENV = "FLOWLY_ASSISTANT_WRITES_ENABLED"
+WRITES_DISABLED_REPLY = (
+    "As alterações pelo assistente estão temporariamente indisponíveis. Nada foi alterado. "
+    "Você pode fazer essa alteração pelas telas do Flowly; as consultas pelo assistente continuam funcionando."
+)
+
+
+def assistant_writes_enabled() -> bool:
+    return str(os.getenv(WRITES_ENABLED_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 # Comandos reconhecidos mas nunca executados pelo assistente (voz, /api/v1/messages ou /assist).
 # A exclusao continua disponivel na interface normal do Flowly; aqui ela fica desativada ate existir

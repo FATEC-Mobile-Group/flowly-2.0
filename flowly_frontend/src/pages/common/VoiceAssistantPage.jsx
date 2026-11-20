@@ -19,6 +19,7 @@ const initialMessages = [
 // Estados da conversa em que o assistente fez uma pergunta e espera a proxima fala.
 const AWAITING_CONVERSATION = new Set([
   'awaiting_params',
+  'awaiting_confirmation',
   'awaiting_task_selection',
   'awaiting_task_action',
   'browsing_tasks',
