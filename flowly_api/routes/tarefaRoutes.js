@@ -44,7 +44,13 @@ router.put('/:id/atribuir-para-mim', isUser, tarefaController.atribuirParaMim);
 router.get('/:id/detalhes', tarefaController.detalhesTarefa);
 
 // ALL: adicionar comentário
-router.post('/:id/comentarios', ensureObjectBody, tarefaController.adicionarComentario);
+// Com Idempotency-Key: comentario protegido (transacao com chave e log). Sem o cabecalho: fluxo atual, inalterado.
+router.post(
+  '/:id/comentarios',
+  ensureObjectBody,
+  comIdempotenciaOpcional(tarefaController.adicionarComentarioIdempotente),
+  tarefaController.adicionarComentario
+);
 
 // ALL: adicionar e alterar subtarefa
 router.post('/:id/subtarefas', ensureObjectBody, tarefaController.adicionarSubtarefa);

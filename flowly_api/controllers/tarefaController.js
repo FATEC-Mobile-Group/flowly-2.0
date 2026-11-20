@@ -47,12 +47,14 @@ const pausarCronometroAtivo = async (tarefa, userId, motivo = 'cronometro_pausad
   return Math.max(tempoDecorrido, 0);
 };
 
-const getEquipeIdsAcessiveis = async (req) => {
+// session: so no caminho transacional idempotente (consulta dentro da transacao). Sem ela, consulta de sempre.
+const getEquipeIdsAcessiveis = async (req, session) => {
   const filtroEquipes = req.user.tipo === 'admin'
     ? { $or: [{ membros: req.user.id }, { createdBy: req.user.id }] }
     : { membros: req.user.id };
 
-  const equipes = await Equipe.find(filtroEquipes).select('_id');
+  const consulta = Equipe.find(filtroEquipes).select('_id');
+  const equipes = await (session ? consulta.session(session) : consulta);
   return equipes.map((equipe) => equipe._id);
 };
 
@@ -64,8 +66,8 @@ const OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
 const identificadorInvalido = (value) =>
   value !== undefined && value !== null && value !== '' && typeof value !== 'string';
 
-const montarFiltroTarefasAcessiveis = async (req, filtroBase = {}) => {
-  const equipeIds = await getEquipeIdsAcessiveis(req);
+const montarFiltroTarefasAcessiveis = async (req, filtroBase = {}, session) => {
+  const equipeIds = await getEquipeIdsAcessiveis(req, session);
   if (equipeIds.length === 0) {
     return null;
   }
@@ -470,6 +472,111 @@ exports.adicionarComentario = async (req, res) => {
   } catch (err) {
     console.error('Erro ao adicionar comentário:', err);
     res.status(500).json({ erro: 'Erro ao adicionar comentário' });
+  }
+};
+
+// ---------------------------------------------------------------------------------------------------------
+// Comentario protegido por Idempotency-Key (so com o cabecalho; ver middlewares/idempotencyOptIn.js).
+// Mesmas regras e mensagens do adicionarComentario acima. Na MESMA transacao: conferencia de acesso, comentario,
+// log e conclusao da chave. A resposta e montada de novo depois do commit, com o acesso conferido outra vez.
+
+const ROTA_COMENTARIO = '/api/tarefas/:id/comentarios';
+// Mensagens identicas as do fluxo legado (inclusive o texto do 404, que hoje sai com a codificacao quebrada em
+// todas as rotas de tarefa: corrigir em separado, para todas juntas).
+const MENSAGENS_COMENTARIO = {
+  texto_vazio: { status: 400, erro: 'Texto do comentário vazio' },
+  tarefa_nao_encontrada: { status: 404, erro: 'Tarefa nÃ£o encontrada' },
+};
+const RESPOSTAS_IDEMPOTENCIA_COMENTARIO = {
+  invalid: { status: 400, erro: 'Chave de idempotência inválida.' },
+  conflict: { status: 422, erro: 'Esta chave de idempotência já foi usada com outro pedido.' },
+  in_progress: { status: 409, erro: 'Este comentário ainda está sendo enviado. Tente novamente em instantes.' },
+  unknown: {
+    status: 409,
+    erro: 'Não foi possível confirmar se o comentário foi publicado. Verifique a tarefa antes de tentar de novo.',
+  },
+  unavailable: { status: 503, erro: 'Serviço temporariamente indisponível.' },
+};
+
+const responderComentarioSemRecurso = (res, resposta) => {
+  if (resposta.outcome === 'failed') {
+    if (resposta.replayed) res.set('Idempotency-Replayed', 'true');
+    const conhecida = MENSAGENS_COMENTARIO[resposta.code];
+    if (conhecida && conhecida.status === resposta.statusCode) {
+      return res.status(conhecida.status).json({ erro: conhecida.erro });
+    }
+    return res.status(500).json({ erro: 'Erro ao adicionar comentário' });
+  }
+  const conhecida = RESPOSTAS_IDEMPOTENCIA_COMENTARIO[resposta.outcome];
+  if (!conhecida) {
+    return res.status(500).json({ erro: 'Erro ao adicionar comentário' });
+  }
+  if (resposta.outcome === 'in_progress' || resposta.outcome === 'unavailable') {
+    res.set('Retry-After', '2');
+  }
+  return res.status(conhecida.status).json({ erro: conhecida.erro, code: resposta.code });
+};
+
+exports.adicionarComentarioIdempotente = async (req, res) => {
+  try {
+    const { texto } = req.body;
+    // Sem banco, antes de reivindicar a chave: pedido malformado nao consome a chave.
+    if (typeof texto !== 'string' || !texto) {
+      return res.status(400).json({ erro: MENSAGENS_COMENTARIO.texto_vazio.erro });
+    }
+    const tarefaId = req.params.id;
+    if (typeof tarefaId !== 'string' || !OBJECT_ID_PATTERN.test(tarefaId)) {
+      // ID fora do formato: 404 (no legado, vira erro de conversao e 500).
+      return res.status(404).json({ erro: MENSAGENS_COMENTARIO.tarefa_nao_encontrada.erro });
+    }
+    const autorId = String(req.user.id); // so do JWT verificado; nunca do corpo
+
+    const resposta = await obterServicoIdempotenciaTarefa().execute(
+      {
+        userId: autorId,
+        key: req.get('Idempotency-Key'),
+        method: 'POST',
+        route: ROTA_COMENTARIO,
+        params: { id: tarefaId },
+        body: { texto },
+      },
+      // Pode rodar mais de uma vez (withTransaction repete em erro transitorio): toda leitura e gravacao usa a
+      // session; nenhum efeito fora da transacao.
+      async (session) => {
+        const filtro = await montarFiltroTarefasAcessiveis(req, { _id: tarefaId }, session);
+        const tarefa = filtro ? await Tarefa.findOne(filtro).select('_id').session(session) : null;
+        if (!tarefa) {
+          throw new IdempotentRequestError(404, 'tarefa_nao_encontrada');
+        }
+        const comentario = new Comment({ texto, user: autorId, tarefa: tarefaId });
+        await comentario.save({ session });
+        // Com session o log nao engole erro: se falhar, comentario e chave voltam juntos.
+        await logActivity('comentario', 'Comentário adicionado', autorId, tarefaId, { session });
+        return { statusCode: 201, resourceType: 'comentario', resourceId: comentario._id };
+      }
+    );
+
+    if (resposta.outcome !== 'executed' && resposta.outcome !== 'replayed') {
+      return responderComentarioSemRecurso(res, resposta);
+    }
+
+    // Revalida o acesso a tarefa antes de devolver dados (numa repeticao a pessoa pode ter saido da equipe).
+    const filtro = await montarFiltroTarefasAcessiveis(req, { _id: tarefaId });
+    const tarefa = filtro ? await Tarefa.findOne(filtro).select('_id') : null;
+    if (!tarefa) {
+      return res.status(404).json({ erro: MENSAGENS_COMENTARIO.tarefa_nao_encontrada.erro });
+    }
+    const comentario = await Comment.findOne({ _id: resposta.result.resourceId, tarefa: tarefaId }).populate('user', 'nome');
+    if (!comentario) {
+      return res.status(404).json({ erro: 'Comentário não encontrado' });
+    }
+    if (resposta.outcome === 'replayed') {
+      res.set('Idempotency-Replayed', 'true');
+    }
+    return res.status(resposta.statusCode).json(comentario);
+  } catch (err) {
+    console.error('Erro ao adicionar comentário (idempotente):', err?.name);
+    return res.status(500).json({ erro: 'Erro ao adicionar comentário' });
   }
 };
 
