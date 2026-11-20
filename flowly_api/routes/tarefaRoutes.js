@@ -5,14 +5,22 @@ const upload = require('../middlewares/upload');
 const moderateUpload = require('../middlewares/moderateUpload');
 const { isAdmin, isUser } = require('../middlewares/roles');
 const ensureObjectBody = require('../middlewares/ensureObjectBody');
+const { comIdempotenciaOpcional } = require('../middlewares/idempotencyOptIn');
 const { uploadLimiter } = require('../middlewares/rateLimiters');
 const tarefaController = require('../controllers/tarefaController');
 
 // Todas as rotas requerem autenticação
 router.use(auth);
 
-// ADMIN: criar tarefa
-router.post('/', isAdmin, ensureObjectBody, tarefaController.criarTarefa);
+// ADMIN: criar tarefa. Com Idempotency-Key: criacao protegida (transacao com chave e log). Sem o cabecalho:
+// fluxo atual, inalterado.
+router.post(
+  '/',
+  isAdmin,
+  ensureObjectBody,
+  comIdempotenciaOpcional(tarefaController.criarTarefaIdempotente),
+  tarefaController.criarTarefa
+);
 
 // ADMIN: listar todas as tarefas ou por user
 router.get('/', isAdmin, tarefaController.listarTarefas);

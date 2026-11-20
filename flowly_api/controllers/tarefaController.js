@@ -7,6 +7,7 @@ const logActivity = require('../utils/activityLogger');
 const { notifyUsers } = require('../utils/notificationService');
 const bucket = require('../services/storage');
 const { getSignedUrl } = require('../services/storage');
+const { createIdempotencyService, IdempotentRequestError } = require('../services/idempotencyService');
 
 const assinarAnexosTarefa = async (tarefa) => {
   const tarefaObject = typeof tarefa.toObject === 'function' ? tarefa.toObject() : tarefa;
@@ -142,6 +143,175 @@ exports.criarTarefa = async (req, res) => {
     }
     console.error('Erro ao criar tarefa:', err);
     res.status(500).json({ erro: 'Erro ao criar tarefa' });
+  }
+};
+
+// ---------------------------------------------------------------------------------------------------------
+// Criacao protegida por Idempotency-Key (so com o cabecalho; ver middlewares/idempotencyOptIn.js).
+// Mesmas regras e mensagens do criarTarefa acima. Na MESMA transacao: conclusao da chave, tarefa e log de
+// criacao; se qualquer um falhar, nada fica gravado. O registro da chave guarda so status, tipo e ID; a resposta
+// e montada de novo depois do commit (URLs assinadas novas, acesso conferido de novo).
+
+const ROTA_CRIAR_TAREFA = '/api/tarefas';
+const MENSAGENS_CRIAR_TAREFA = {
+  equipe_obrigatoria: 'Equipe é obrigatória',
+  equipe_invalida: 'Equipe inválida',
+  user_invalido: 'User inválido',
+  usuario_fora_da_equipe: 'Usuário não pertence à equipe selecionada',
+  dados_invalidos: 'Dados da tarefa inválidos.',
+};
+const RESPOSTAS_IDEMPOTENCIA_TAREFA = {
+  invalid: { status: 400, erro: 'Chave de idempotência inválida.' },
+  conflict: { status: 422, erro: 'Esta chave de idempotência já foi usada com outro pedido.' },
+  in_progress: { status: 409, erro: 'Esta criação ainda está em andamento. Tente novamente em instantes.' },
+  unknown: {
+    status: 409,
+    erro: 'Não foi possível confirmar se a tarefa foi criada. Verifique a lista de tarefas antes de tentar de novo.',
+  },
+  unavailable: { status: 503, erro: 'Serviço temporariamente indisponível.' },
+};
+
+let servicoIdempotenciaTarefa;
+const obterServicoIdempotenciaTarefa = () => {
+  if (!servicoIdempotenciaTarefa) {
+    servicoIdempotenciaTarefa = createIdempotencyService();
+  }
+  return servicoIdempotenciaTarefa;
+};
+
+const novaTarefaDoPedido = (corpo, criadorId, userId) => {
+  const { descricao, detalhes, dataEntrega, equipe, tempoEstimado, urgencia, tags, subtarefas } = corpo;
+  return new Tarefa({
+    descricao,
+    detalhes,
+    dataEntrega,
+    createdBy: criadorId,
+    user: userId,
+    equipe,
+    tempoEstimado,
+    urgencia,
+    tags: tags || [],
+    subtarefas: subtarefas || [],
+  });
+};
+
+// Validacao sem banco (mesmas regras do criarTarefa). Roda antes de reivindicar a chave: um pedido malformado
+// responde 400 sem consumir a chave. IDs fora do formato viram 400 aqui (no legado, viram erro de conversao).
+const validarFormatoNovaTarefa = async (corpo, criadorId) => {
+  const { user, equipe } = corpo;
+  if (!equipe) return { codigo: 'equipe_obrigatoria' };
+  if (typeof equipe !== 'string' || !OBJECT_ID_PATTERN.test(equipe)) return { codigo: 'equipe_invalida' };
+  if (identificadorInvalido(user)) return { codigo: 'user_invalido' };
+  const userId = user && String(user).trim() ? String(user).trim() : null;
+  if (userId && !OBJECT_ID_PATTERN.test(userId)) return { codigo: 'user_invalido' };
+  try {
+    await novaTarefaDoPedido(corpo, criadorId, userId).validate();
+  } catch (err) {
+    if (err.name === 'ValidationError') return { codigo: 'dados_invalidos' };
+    throw err;
+  }
+  return { userId };
+};
+
+const responderCriacaoSemTarefa = (res, resposta) => {
+  if (resposta.outcome === 'failed') {
+    if (resposta.replayed) res.set('Idempotency-Replayed', 'true');
+    const mensagem = MENSAGENS_CRIAR_TAREFA[resposta.code];
+    if (mensagem) {
+      return res.status(resposta.statusCode).json({ erro: mensagem });
+    }
+    return res.status(500).json({ erro: 'Erro ao criar tarefa' });
+  }
+  const conhecida = RESPOSTAS_IDEMPOTENCIA_TAREFA[resposta.outcome];
+  if (!conhecida) {
+    return res.status(500).json({ erro: 'Erro ao criar tarefa' });
+  }
+  if (resposta.outcome === 'in_progress' || resposta.outcome === 'unavailable') {
+    res.set('Retry-After', '2');
+  }
+  return res.status(conhecida.status).json({ erro: conhecida.erro, code: resposta.code });
+};
+
+exports.criarTarefaIdempotente = async (req, res) => {
+  try {
+    const criadorId = String(req.user.id); // so do JWT verificado; nunca do corpo
+    const formato = await validarFormatoNovaTarefa(req.body, criadorId);
+    if (formato.codigo) {
+      return res.status(400).json({ erro: MENSAGENS_CRIAR_TAREFA[formato.codigo] });
+    }
+    const { descricao, detalhes, dataEntrega, user, equipe, tempoEstimado, urgencia, tags, subtarefas } = req.body;
+
+    const resposta = await obterServicoIdempotenciaTarefa().execute(
+      {
+        userId: criadorId,
+        key: req.get('Idempotency-Key'),
+        method: 'POST',
+        route: ROTA_CRIAR_TAREFA,
+        body: { descricao, detalhes, dataEntrega, user, equipe, tempoEstimado, urgencia, tags, subtarefas },
+      },
+      // Pode rodar mais de uma vez (withTransaction repete em erro transitorio): toda leitura e gravacao usa a
+      // session; nenhum efeito fora da transacao (sem notificacao, socket ou URL assinada aqui dentro).
+      async (session) => {
+        const equipeDoc = await Equipe.findOne({
+          _id: equipe,
+          $or: [{ membros: criadorId }, { createdBy: criadorId }],
+        })
+          .select('membros nome')
+          .session(session);
+        if (!equipeDoc) {
+          throw new IdempotentRequestError(400, 'equipe_invalida');
+        }
+
+        let usuario = null;
+        if (formato.userId) {
+          usuario = await User.findById(formato.userId).select('tipo nome').session(session);
+          if (!usuario || usuario.tipo !== 'user') {
+            throw new IdempotentRequestError(400, 'user_invalido');
+          }
+          const pertenceEquipe = equipeDoc.membros.some((membroId) => String(membroId) === String(usuario._id));
+          if (!pertenceEquipe) {
+            throw new IdempotentRequestError(400, 'usuario_fora_da_equipe');
+          }
+        }
+
+        const tarefa = novaTarefaDoPedido(req.body, criadorId, formato.userId);
+        try {
+          await tarefa.save({ session });
+        } catch (err) {
+          if (err.name === 'ValidationError') {
+            throw new IdempotentRequestError(400, 'dados_invalidos');
+          }
+          throw err;
+        }
+
+        const descricaoCriacao = usuario
+          ? `Tarefa criada e atribuída a ${usuario.nome}`
+          : 'Tarefa criada sem responsável e enviada ao backlog';
+        // Com session o log nao engole erro: se falhar, a transacao aborta e a tarefa nao fica sem log.
+        await logActivity('criacao', descricaoCriacao, criadorId, tarefa._id, { session });
+
+        return { statusCode: 201, resourceType: 'tarefa', resourceId: tarefa._id };
+      }
+    );
+
+    if (resposta.outcome !== 'executed' && resposta.outcome !== 'replayed') {
+      return responderCriacaoSemTarefa(res, resposta);
+    }
+
+    // Revalida o acesso antes de devolver dados: numa repeticao a equipe ou a tarefa podem ter mudado.
+    // Sessao e papel de admin ja foram conferidos pelo auth/isAdmin nesta mesma requisicao.
+    const filtro = await montarFiltroTarefasAcessiveis(req, { _id: resposta.result.resourceId });
+    const tarefa = filtro ? await Tarefa.findOne(filtro) : null;
+    if (!tarefa) {
+      return res.status(404).json({ erro: 'Tarefa não encontrada' });
+    }
+    if (resposta.outcome === 'replayed') {
+      res.set('Idempotency-Replayed', 'true');
+    }
+    return res.status(resposta.statusCode).json(await assinarAnexosTarefa(tarefa));
+  } catch (err) {
+    console.error('Erro ao criar tarefa (idempotente):', err?.name);
+    return res.status(500).json({ erro: 'Erro ao criar tarefa' });
   }
 };
 
