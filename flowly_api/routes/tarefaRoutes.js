@@ -38,7 +38,14 @@ router.get('/minhas', isUser, tarefaController.minhasTarefas);
 router.get('/backlog', isUser, tarefaController.listarBacklog);
 
 // USER: autoatribuir tarefa do backlog
-router.put('/:id/atribuir-para-mim', isUser, tarefaController.atribuirParaMim);
+// Com Idempotency-Key: atribuicao protegida (condicional, na transacao com chave, log e notificacao; emissao so
+// apos o commit). Sem o cabecalho: fluxo atual, inalterado.
+router.put(
+  '/:id/atribuir-para-mim',
+  isUser,
+  comIdempotenciaOpcional(tarefaController.atribuirParaMimIdempotente),
+  tarefaController.atribuirParaMim
+);
 
 // ALL: detalhes da tarefa (comentários, logs etc)
 router.get('/:id/detalhes', tarefaController.detalhesTarefa);

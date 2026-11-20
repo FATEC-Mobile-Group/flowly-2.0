@@ -4,7 +4,7 @@ const Equipe = require('../models/Equipe');
 const Comment = require('../models/Comment');
 const ActivityLog = require('../models/ActivityLog');
 const logActivity = require('../utils/activityLogger');
-const { notifyUsers } = require('../utils/notificationService');
+const { notifyUsers, persistNotifications, emitNotifications } = require('../utils/notificationService');
 const bucket = require('../services/storage');
 const { getSignedUrl } = require('../services/storage');
 const { createIdempotencyService, IdempotentRequestError } = require('../services/idempotencyService');
@@ -827,8 +827,16 @@ exports.atribuirParaMim = async (req, res) => {
       return res.status(403).json({ erro: 'Você não pertence à equipe desta tarefa' });
     }
 
-    tarefa.user = req.user.id;
-    await tarefa.save();
+    // Atribuicao condicional: so grava se a tarefa ainda estiver sem responsavel no momento da gravacao. Antes,
+    // um save() sem condicao deixava duas requisicoes simultaneas "assumirem" a mesma tarefa (a ultima vencia).
+    // Quem perde a corrida recebe o mesmo 409 de "ja tem responsavel", sem log nem notificacao.
+    const atribuicao = await Tarefa.updateOne(
+      { _id: tarefa._id, equipe: tarefa.equipe, user: null },
+      { $set: { user: req.user.id } }
+    );
+    if (!atribuicao || atribuicao.matchedCount !== 1) {
+      return res.status(409).json({ erro: 'Esta tarefa já possui responsável' });
+    }
 
     await logActivity(
       'atualizacao_geral',
@@ -857,6 +865,170 @@ exports.atribuirParaMim = async (req, res) => {
   } catch (err) {
     console.error('Erro ao atribuir tarefa:', err);
     res.status(500).json({ erro: 'Erro ao atribuir tarefa' });
+  }
+};
+
+// ---------------------------------------------------------------------------------------------------------
+// Atribuicao protegida por Idempotency-Key (so com o cabecalho; ver middlewares/idempotencyOptIn.js).
+// Mesmas regras e mensagens do atribuirParaMim acima. Na MESMA transacao: conferencias, atribuicao condicional,
+// log, notificacao ao admin e conclusao da chave. A emissao por Socket.IO sai so depois do commit (afterCommit),
+// uma unica vez; repeticoes da chave nao gravam nem emitem de novo.
+//
+// Concorrencia: a atribuicao e condicional - updateOne({ _id, equipe, user: null }, { $set: { user } }) - entao
+// so quem encontra a tarefa ainda sem responsavel a assume; quem perde recebe 409. O fluxo legado usa a mesma
+// condicao (sem transacao), entao nenhum dos dois caminhos sobrescreve o responsavel definido pelo outro.
+
+const ROTA_ATRIBUIR = '/api/tarefas/:id/atribuir-para-mim';
+// Mensagens identicas as do fluxo legado (inclusive as duas versoes do 404).
+const MENSAGENS_ATRIBUIR = {
+  tarefa_sem_equipes: { status: 404, erro: 'Tarefa nÃ£o encontrada' },
+  tarefa_nao_encontrada: { status: 404, erro: 'Tarefa não encontrada' },
+  tarefa_ja_atribuida: { status: 409, erro: 'Esta tarefa já possui responsável' },
+  equipe_nao_encontrada: { status: 400, erro: 'Equipe da tarefa não encontrada' },
+  fora_da_equipe: { status: 403, erro: 'Você não pertence à equipe desta tarefa' },
+};
+const RESPOSTAS_IDEMPOTENCIA_ATRIBUIR = {
+  invalid: { status: 400, erro: 'Chave de idempotência inválida.' },
+  conflict: { status: 422, erro: 'Esta chave de idempotência já foi usada com outro pedido.' },
+  in_progress: { status: 409, erro: 'Esta atribuição ainda está em andamento. Tente novamente em instantes.' },
+  unknown: {
+    status: 409,
+    erro: 'Não foi possível confirmar se a tarefa foi atribuída. Verifique a tarefa antes de tentar de novo.',
+  },
+  unavailable: { status: 503, erro: 'Serviço temporariamente indisponível.' },
+};
+
+const responderAtribuicaoSemRecurso = (res, resposta) => {
+  if (resposta.outcome === 'failed') {
+    if (resposta.replayed) res.set('Idempotency-Replayed', 'true');
+    const conhecida = MENSAGENS_ATRIBUIR[resposta.code];
+    if (conhecida && conhecida.status === resposta.statusCode) {
+      return res.status(conhecida.status).json({ erro: conhecida.erro });
+    }
+    return res.status(500).json({ erro: 'Erro ao atribuir tarefa' });
+  }
+  const conhecida = RESPOSTAS_IDEMPOTENCIA_ATRIBUIR[resposta.outcome];
+  if (!conhecida) {
+    return res.status(500).json({ erro: 'Erro ao atribuir tarefa' });
+  }
+  if (resposta.outcome === 'in_progress' || resposta.outcome === 'unavailable') {
+    res.set('Retry-After', '2');
+  }
+  return res.status(conhecida.status).json({ erro: conhecida.erro, code: resposta.code });
+};
+
+exports.atribuirParaMimIdempotente = async (req, res) => {
+  try {
+    const tarefaId = req.params.id;
+    // Sem banco, antes de reivindicar a chave: ID fora do formato responde 404 (no legado, erro de conversao e 500).
+    if (typeof tarefaId !== 'string' || !OBJECT_ID_PATTERN.test(tarefaId)) {
+      return res.status(404).json({ erro: MENSAGENS_ATRIBUIR.tarefa_nao_encontrada.erro });
+    }
+    const usuarioId = String(req.user.id); // so do JWT verificado; nunca do corpo
+
+    const resposta = await obterServicoIdempotenciaTarefa().execute(
+      {
+        userId: usuarioId,
+        key: req.get('Idempotency-Key'),
+        method: 'PUT',
+        route: ROTA_ATRIBUIR,
+        params: { id: tarefaId },
+        body: {},
+      },
+      // Pode rodar mais de uma vez (withTransaction repete em erro transitorio, inclusive WriteConflict com outra
+      // atribuicao da mesma tarefa): toda leitura e gravacao usa a session; nada e emitido aqui dentro.
+      async (session) => {
+        const filtro = await montarFiltroTarefasAcessiveis(req, { _id: tarefaId }, session);
+        if (!filtro) {
+          throw new IdempotentRequestError(404, 'tarefa_sem_equipes');
+        }
+        const tarefa = await Tarefa.findOne(filtro).select('equipe createdBy descricao user').session(session);
+        if (!tarefa) {
+          throw new IdempotentRequestError(404, 'tarefa_nao_encontrada');
+        }
+        if (tarefa.user) {
+          throw new IdempotentRequestError(409, 'tarefa_ja_atribuida');
+        }
+        const equipe = await Equipe.findById(tarefa.equipe).select('membros createdBy nome').session(session);
+        if (!equipe) {
+          throw new IdempotentRequestError(400, 'equipe_nao_encontrada');
+        }
+        if (!equipe.membros.some((membroId) => String(membroId) === usuarioId)) {
+          throw new IdempotentRequestError(403, 'fora_da_equipe');
+        }
+
+        // Atribuicao condicional: so se a tarefa ainda estiver sem responsavel no momento da gravacao.
+        const atribuicao = await Tarefa.updateOne(
+          { _id: tarefa._id, equipe: tarefa.equipe, user: null },
+          { $set: { user: usuarioId } },
+          { session }
+        );
+        if (!atribuicao || atribuicao.matchedCount !== 1) {
+          throw new IdempotentRequestError(409, 'tarefa_ja_atribuida');
+        }
+
+        // Com session o log nao engole erro: se falhar, a atribuicao volta junto.
+        await logActivity(
+          'atualizacao_geral',
+          'Tarefa atribuída automaticamente para o colaborador',
+          usuarioId,
+          tarefa._id,
+          { session }
+        );
+
+        let notificacoes = [];
+        const notificarAdmin = tarefa.createdBy || equipe.createdBy;
+        if (notificarAdmin && String(notificarAdmin) !== usuarioId) {
+          const usuario = await User.findById(usuarioId).select('nome').session(session);
+          notificacoes = await persistNotifications(
+            {
+              userIds: [notificarAdmin],
+              texto: `${usuario?.nome || 'Um colaborador'} pegou a tarefa "${tarefa.descricao}" do backlog`,
+              tipo: 'task',
+              origemId: tarefa._id,
+              metadata: { tarefaId: tarefa._id, acao: 'atribuir_para_mim' },
+            },
+            { session }
+          );
+        }
+
+        return {
+          statusCode: 200,
+          resourceType: 'tarefa',
+          resourceId: tarefa._id,
+          // So depois do commit e so a desta tentativa (a que entrou); repeticoes da chave nao emitem.
+          afterCommit: () => emitNotifications(notificacoes),
+        };
+      }
+    );
+
+    if (resposta.outcome !== 'executed' && resposta.outcome !== 'replayed') {
+      return responderAtribuicaoSemRecurso(res, resposta);
+    }
+
+    // Revalida o acesso antes de devolver dados e confere que a tarefa continua com quem a assumiu.
+    const filtro = await montarFiltroTarefasAcessiveis(req, { _id: tarefaId });
+    if (!filtro) {
+      return res.status(404).json({ erro: MENSAGENS_ATRIBUIR.tarefa_sem_equipes.erro });
+    }
+    const tarefaAtualizada = await Tarefa.findOne(filtro).populate('user', 'nome').populate('equipe', 'nome');
+    if (!tarefaAtualizada) {
+      return res.status(404).json({ erro: MENSAGENS_ATRIBUIR.tarefa_nao_encontrada.erro });
+    }
+    const responsavelAtual = tarefaAtualizada.user?._id || tarefaAtualizada.user;
+    if (String(responsavelAtual || '') !== usuarioId) {
+      // A tarefa mudou de responsavel depois (ex.: reatribuida pelo admin): nao confirma uma atribuicao que nao vale mais.
+      return res.status(409).json({ erro: MENSAGENS_ATRIBUIR.tarefa_ja_atribuida.erro });
+    }
+    if (resposta.outcome === 'replayed') {
+      res.set('Idempotency-Replayed', 'true');
+    }
+    return res
+      .status(resposta.statusCode)
+      .json({ msg: 'Tarefa atribuída com sucesso', tarefa: await assinarAnexosTarefa(tarefaAtualizada) });
+  } catch (err) {
+    console.error('Erro ao atribuir tarefa (idempotente):', err?.name);
+    return res.status(500).json({ erro: 'Erro ao atribuir tarefa' });
   }
 };
 
