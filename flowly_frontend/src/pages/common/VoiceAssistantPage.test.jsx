@@ -768,6 +768,45 @@ describe('Voz do assistente e estados', () => {
     expect(statusText()).toBe('Standby');
   });
 
+  test('pedido de confirmacao de escrita mostra Aguardando resposta ate confirmar, cancelar ou o standby', async () => {
+    const summary = 'Confirme a operação: criar a equipe "Marketing". Nada foi alterado ainda. '
+      + 'Para executar, diga "confirmar". Para desistir, diga "cancelar".';
+    replyFor = (content) => {
+      if (content === 'criar equipe marketing') {
+        return { ok: true, reply_text: summary, conversation: { status: 'awaiting_confirmation', operation_id: 'op-1' } };
+      }
+      if (content === 'confirmar') {
+        return { ok: true, reply_text: 'Confirmado. Operação concluída.', conversation: { status: 'completed' } };
+      }
+      return { ok: true, reply_text: 'Tudo bem, cancelei. Nada foi alterado.', conversation: { status: 'cancelled' } };
+    };
+    render(<VoiceAssistantPage />);
+    sendTyped('criar equipe marketing');
+    await flush();
+    expect(screen.getByText(summary)).toBeInTheDocument();
+    expect(statusText()).toBe('Aguardando resposta');
+
+    sendTyped('confirmar');
+    await flush();
+    expect(statusText()).toBe('Standby');
+
+    sendTyped('criar equipe marketing');
+    await flush();
+    expect(statusText()).toBe('Aguardando resposta');
+    sendTyped('cancelar');
+    await flush();
+    expect(statusText()).toBe('Standby');
+
+    sendTyped('criar equipe marketing');
+    await flush();
+    fireEvent.click(screen.getByTitle('Standby'));
+    await flush();
+    expect(statusText()).toBe('Standby');
+    // O frontend so repassa as falas; quem decide e executa e o backend, uma mensagem por vez.
+    expect(sentCommands()).toEqual(['criar equipe marketing', 'confirmar', 'criar equipe marketing', 'cancelar',
+      'criar equipe marketing']);
+  });
+
   test('standby durante o processamento: a resposta aparece, nao e falada e nada e reenviado', async () => {
     render(<VoiceAssistantPage />);
     sendTyped('meu perfil');

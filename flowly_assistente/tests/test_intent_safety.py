@@ -136,11 +136,12 @@ class AssignNeedsExplicitIntentTests(TaskSelectionIntentTestCase):
             (("7", "assumir essa tarefa"), 7),
             (("7", "pegar essa tarefa para mim"), 7),
             (("7", "detalhes", "atribuir para mim"), 7),
-            (("atribuir a 3 para mim",), 3),
-            (("7", "atribuir a 3 para mim"), 3),
-            (("pegar a 2 para mim",), 2),
-            (("atribuir configurar alertas para mim",), 8),
-            (("7", "atribuir configurar alertas para mim"), 8),
+            # Tarefa citada agora por numero ou nome: resumo com o nome e confirmacao explicita antes do PUT.
+            (("atribuir a 3 para mim", "confirmar"), 3),
+            (("7", "atribuir a 3 para mim", "confirmar"), 3),
+            (("pegar a 2 para mim", "confirmar"), 2),
+            (("atribuir configurar alertas para mim", "confirmar"), 8),
+            (("7", "atribuir configurar alertas para mim", "confirmar"), 8),
         ):
             with self.subTest(steps=steps):
                 self.browse()
@@ -168,7 +169,11 @@ class AssignNeedsExplicitIntentTests(TaskSelectionIntentTestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.browse(select="3")
-                _payload, _status, writes, _reads = self.say(phrase)
+                payload, _status, writes, _reads = self.say(phrase)
+                self.assertEqual((writes, payload["conversation"]["status"]), ([], "awaiting_confirmation"))
+                task_name = next(t["descricao"] for t in ACTION_NAMED_TASKS if t["_id"] == task_id)
+                self.assertIn(f'"{task_name}', payload["reply_text"])
+                _payload, _status, writes, _reads = self.say("confirmar")
                 self.assertEqual(writes, [assign_call(task_id)])
 
 
@@ -208,6 +213,8 @@ class UnknownReferenceNeverReusesSelectionTests(TaskSelectionIntentTestCase):
         _payload, _status, writes, _reads = self.say("atribuir para mim")
         self.assertEqual(writes, [])  # a 7 foi descartada: sem nova escolha nao ha alvo
         payload, _status, writes, _reads = self.say("atribuir a 8 para mim")
+        self.assertEqual(writes, [])
+        payload, _status, writes, _reads = self.say("confirmar")
         self.assertEqual(writes, [assign_call(TASK[8])], payload["reply_text"])
 
         self.browse(select="7")
@@ -295,6 +302,10 @@ class CommandIsNotAParamValueTests(AssistantFlowTestCase):
                 self.ask_team_name()
                 for answer in answers:
                     payload, _status = self.send("token-admin", answer)
+                self.assertEqual(payload["conversation"]["status"], "awaiting_confirmation")
+                self.assertIn(f'"{name}"', payload["reply_text"])
+                self.assertEqual(self.api.writes(), [])
+                payload, _status = self.send("token-admin", "confirmar")
                 self.assertTrue(payload["action_executed"], payload["reply_text"])
                 self.assertEqual(self.api.writes(), [("POST", "/equipes", {"nome": name, "membros": []})])
                 self.assertIsNone(self.pending("token-admin"))
@@ -333,13 +344,12 @@ class CommandIsNotAParamValueTests(AssistantFlowTestCase):
         self.assertEqual(payload["conversation"]["next_param"], "user")
         params = self.pending("token-admin")["params"]
         self.assertEqual((params["nome"], params["descricao"]), ("Relatório de vendas", "Consolidar o backlog do mês"))
-        # A etapa final da criacao por voz tem um defeito anterior, igual na main e registrado em
-        # test_command_safety (a equipe informada em separado nao e resolvida): aqui so se cancela.
+        # A etapa final (resolucao da equipe, resumo e confirmacao) e coberta em test_write_confirmation.
         self.send("token-admin", "cancelar")
         self.assert_no_writes()
 
         self.api.calls.clear()
-        for step in ("adicionar comentário", "Relatório final", "revisar o relatório amanhã"):
+        for step in ("adicionar comentário", "Relatório final", "revisar o relatório amanhã", "confirmar"):
             payload, _status = self.send("token-user", step)
         self.assertTrue(payload["action_executed"], payload["reply_text"])
         self.assertEqual(

@@ -6,6 +6,10 @@ from typing import Any, Dict, Optional
 
 import requests
 
+from flowly_assistant.commands import WRITES_DISABLED_REPLY, assistant_writes_enabled
+
+READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
 
 class APIError(RuntimeError):
     """Erro ao chamar a API Flowly."""
@@ -29,6 +33,10 @@ class FlowlyAPIClient:
         # Ultima barreira: o assistente nunca envia DELETE, venha o pedido de onde vier.
         if str(method or "").strip().upper() == "DELETE":
             raise APIError("O assistente não executa exclusões.")
+        # Ultima barreira da chave temporaria: com escritas desligadas, nada alem de leitura sai daqui,
+        # venha de confirmacao, selecao de tarefa, CLI ou qualquer outro caminho.
+        if str(method or "").strip().upper() not in READ_METHODS and not assistant_writes_enabled():
+            raise APIError(WRITES_DISABLED_REPLY)
         url = f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
         started = time.monotonic()
         if self.debug:

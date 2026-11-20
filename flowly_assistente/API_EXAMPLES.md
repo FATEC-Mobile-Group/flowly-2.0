@@ -123,8 +123,13 @@ def test_command_add_comment():
 
 
 def test_command_update_status():
-    """Executa comando: atualizar status."""
-    print("\n=== Comando: Atualizar Status ===")
+    """Escrita pela rota legada: sempre recusada.
+
+    POST / e /assist so respondem consultas. Esperado: HTTP 403 com "error": "write_requires_confirmation";
+    nada e alterado. Escritas pelo assistente usam POST /api/v1/messages (resumo + "confirmar") e ficam
+    desligadas por padrao (FLOWLY_ASSISTANT_WRITES_ENABLED; nao usar "true" em producao).
+    """
+    print("\n=== Comando: Atualizar Status (recusado na rota legada) ===")
     payload = {
         "utterance": "mudar status para em andamento",
         "token": "seu_jwt_token_aqui",

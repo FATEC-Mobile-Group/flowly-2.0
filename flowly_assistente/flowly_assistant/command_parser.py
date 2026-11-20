@@ -45,6 +45,17 @@ WRITE_INTENT_RE = re.compile(
 )
 
 
+# Palavras ANTES do verbo de escrita que indicam que a frase nao e uma ordem (sem acento, minusculas).
+# "quero", "pode", "por favor" continuam sendo pedidos diretos ("quero criar uma tarefa").
+NON_DIRECTIVE_QUESTION_WORDS = frozenset({"como", "quando", "onde", "qual", "quais", "porque", "posso", "consigo", "sera"})
+NON_DIRECTIVE_QUESTION_EXPRESSIONS = ("por que", "pra que", "para que", "o que", "da pra", "e possivel")
+NON_DIRECTIVE_FUTURE_WORDS = frozenset({
+    "vou", "vamos", "vai", "vao", "irei", "iremos", "ia", "iria", "iriamos", "pretendo", "pretende", "pensei", "talvez",
+})
+# Verbo de consulta antes do de escrita ("listar ou criar equipe"): duas intencoes, nenhuma executa.
+READ_VERBS = frozenset({"listar", "lista", "mostrar", "mostra", "ver", "abrir", "buscar", "procurar", "consultar"})
+
+
 def is_write_command(command: Command) -> bool:
     return (command.method or "").strip().upper() in WRITE_METHODS
 
@@ -300,6 +311,9 @@ class CommandParser:
         if ambiguous_write:
             return None
         if write_cmd is not None:
+            # Pergunta, negacao com "sem", intencao futura ou pedido de consulta junto: nao e uma ordem.
+            if self._non_directive_reason(text, write_cmd):
+                return None
             return Match(command=write_cmd, score=100, params=self._extract_params(write_cmd, raw))
 
         read_commands = [c for c in self.commands if c.key != "exit" and not is_write_command(c)]
@@ -361,6 +375,44 @@ class CommandParser:
         if len(best) > 1:
             return None, True
         return next(iter(best.values())), False
+
+    def non_directive_reason(self, utterance: str) -> Optional[str]:
+        """Motivo pelo qual uma frase com palavras de escrita NAO e uma ordem direta (ou None).
+
+        "pergunta" ("como criar equipe"), "negacao" ("sem criar equipe"), "futuro" ("vou criar equipe amanha")
+        ou "conflito" ("listar ou criar equipe"). Negacoes como "nao"/"nunca" ja barram tudo em _has_negation.
+        """
+        text = _normalize(utterance)
+        if not text or _has_negation(text):
+            return None
+        write_cmd, ambiguous_write = self._explicit_write_match(text)
+        if write_cmd is None or ambiguous_write:
+            return None
+        return self._non_directive_reason(text, write_cmd)
+
+    def _non_directive_reason(self, text: str, write_cmd: Command) -> Optional[str]:
+        words = plain_words(text)
+        inicio = None
+        for phrase in write_cmd.phrases:
+            tokens = plain_words(phrase)
+            if tokens and set(tokens) <= set(words):
+                # Posicao do verbo: primeira palavra da frase do comando ("marcar" em "marcar como").
+                posicao = words.index(tokens[0])
+                inicio = posicao if inicio is None else min(inicio, posicao)
+        antes = words[:inicio or 0]
+        antes_texto = " ".join(antes)
+        if "sem" in antes:
+            return "negacao"
+        if set(antes) & NON_DIRECTIVE_QUESTION_WORDS or any(
+            f" {expr} " in f" {antes_texto} " for expr in NON_DIRECTIVE_QUESTION_EXPRESSIONS
+        ):
+            return "pergunta"
+        if set(antes) & NON_DIRECTIVE_FUTURE_WORDS:
+            return "futuro"
+        read_commands = [c for c in self.commands if c.key != "exit" and not is_write_command(c)]
+        if set(antes) & READ_VERBS or self._has_read_phrase(text, read_commands):
+            return "conflito"
+        return None
 
     def _has_read_phrase(self, text: str, read_commands: list) -> bool:
         words = set(_words(text))

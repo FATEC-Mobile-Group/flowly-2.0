@@ -142,6 +142,9 @@ class AssistantFlowTestCase(unittest.TestCase):
             {
                 "FLOWLY_CONVERSATION_STORE": os.path.join(tmp.name, "state.json"),
                 "FLOWLY_API_BASE_URL": "https://api.flowly.test/api",
+                # Estes testes cobrem o fluxo de escrita com a chave temporaria LIGADA (reativacao futura);
+                # o padrao desligado e coberto em test_write_kill_switch.
+                "FLOWLY_ASSISTANT_WRITES_ENABLED": "true",
             },
         )
         env.start()
@@ -373,16 +376,18 @@ class CancelPendingFlowTests(AssistantFlowTestCase):
     def test_plain_no_at_assignee_step_still_means_no_assignee(self):
         self.start_creation(answers=len(self.CREATE_ANSWERS))
         payload, _status = self.send("token-admin", "não")
-        self.assertNotEqual(payload["conversation"]["status"], "cancelled")
-        self.assertNotIn("Nada foi alterado", payload["reply_text"])
+        # "não" aqui e "sem responsável": o fluxo segue para o resumo (nao cancela) e nada e escrito antes do confirmar.
+        self.assertEqual(payload["conversation"]["status"], "awaiting_confirmation")
+        self.assertIn("sem responsável", payload["reply_text"])
+        self.assertEqual(self.pending("token-admin")["params"]["user"], "__none__")
+        self.assert_no_writes()
+        payload, _status = self.send("token-admin", "confirmar")
+        self.assertTrue(payload["action_executed"], payload["reply_text"])
         self.assertNotIn("DELETE", [call[0] for call in self.api.calls])
         posts = [call for call in self.api.writes() if call[:2] == ("POST", "/tarefas")]
-        if posts:
-            self.assertNotIn("user", posts[-1][2])
-        else:
-            # Defeito anterior a esta correcao (igual na main): a etapa final ainda nao resolve a equipe
-            # informada em separado. Mesmo assim o "não" ficou registrado como "sem responsável".
-            self.assertEqual(self.pending("token-admin")["params"]["user"], "__none__")
+        self.assertEqual(len(posts), 1)
+        self.assertNotIn("user", posts[-1][2])
+        self.assertEqual(posts[-1][2]["equipe"], TEAM_ID)
 
     def test_cancel_of_one_user_does_not_touch_the_pending_creation_of_another(self):
         self.start_creation(answers=1, token="token-admin")
@@ -513,12 +518,13 @@ class TaskSelectionSafetyTests(AssistantFlowTestCase):
         cases = (
             (("detalhes da sprint 15",), [("GET", f"/tarefas/{sprint15}/detalhes", None)]),
             (("sprint 15", "detalhes"), [("GET", f"/tarefas/{sprint15}/detalhes", None)]),
-            (("atribuir a sprint 15 para mim",), [("PUT", f"/tarefas/{sprint15}/atribuir-para-mim", None)]),
-            (("7", "atribuir a sprint 15 para mim"), [("PUT", f"/tarefas/{sprint15}/atribuir-para-mim", None)]),
-            (("atribuir a marketing para mim",), [("PUT", f"/tarefas/{marketing}/atribuir-para-mim", None)]),
+            # Tarefa citada agora (numero ou nome): resumo com o nome e confirmacao explicita antes do PUT.
+            (("atribuir a sprint 15 para mim", "confirmar"), [("PUT", f"/tarefas/{sprint15}/atribuir-para-mim", None)]),
+            (("7", "atribuir a sprint 15 para mim", "confirmar"), [("PUT", f"/tarefas/{sprint15}/atribuir-para-mim", None)]),
+            (("atribuir a marketing para mim", "confirmar"), [("PUT", f"/tarefas/{marketing}/atribuir-para-mim", None)]),
             # Numero e nome apontando para a mesma tarefa: sem conflito.
-            (("atribuir a 4 da marketing para mim",), [("PUT", f"/tarefas/{marketing}/atribuir-para-mim", None)]),
-            (("atribuir a 2 para mim",), [("PUT", f"/tarefas/{NAMED_BACKLOG_TASKS[1]['_id']}/atribuir-para-mim", None)]),
+            (("atribuir a 4 da marketing para mim", "confirmar"), [("PUT", f"/tarefas/{marketing}/atribuir-para-mim", None)]),
+            (("atribuir a 2 para mim", "confirmar"), [("PUT", f"/tarefas/{NAMED_BACKLOG_TASKS[1]['_id']}/atribuir-para-mim", None)]),
         )
         for phrases, expected in cases:
             with self.subTest(phrases=phrases):
@@ -550,11 +556,11 @@ class TaskSelectionSafetyTests(AssistantFlowTestCase):
         marketing, alertas, login, cadastro = (NAMED_BACKLOG_TASKS[i]["_id"] for i in (3, 6, 7, 8))
         cases = (
             (("Marketing", "atribuir para mim"), [("PUT", f"/tarefas/{marketing}/atribuir-para-mim", None)]),
-            (("Atribuir Configurar Alertas para mim",), [("PUT", f"/tarefas/{alertas}/atribuir-para-mim", None)]),
-            (("Atribuir a 7 para mim",), [("PUT", f"/tarefas/{alertas}/atribuir-para-mim", None)]),
+            (("Atribuir Configurar Alertas para mim", "confirmar"), [("PUT", f"/tarefas/{alertas}/atribuir-para-mim", None)]),
+            (("Atribuir a 7 para mim", "confirmar"), [("PUT", f"/tarefas/{alertas}/atribuir-para-mim", None)]),
             # Nome com "e" continua uma tarefa so; antes, "Login" (antes na lista) era atribuida no lugar.
-            (("atribuir revisar cadastro e login para mim",), [("PUT", f"/tarefas/{cadastro}/atribuir-para-mim", None)]),
-            (("7", "atribuir revisar cadastro e login para mim"), [("PUT", f"/tarefas/{cadastro}/atribuir-para-mim", None)]),
+            (("atribuir revisar cadastro e login para mim", "confirmar"), [("PUT", f"/tarefas/{cadastro}/atribuir-para-mim", None)]),
+            (("7", "atribuir revisar cadastro e login para mim", "confirmar"), [("PUT", f"/tarefas/{cadastro}/atribuir-para-mim", None)]),
             (("login", "detalhes"), [("GET", f"/tarefas/{login}/detalhes", None)]),
         )
         for phrases, expected in cases:
@@ -583,8 +589,8 @@ class TaskSelectionSafetyTests(AssistantFlowTestCase):
             (("7", "detalhes"), [("GET", f"/tarefas/{task7}/detalhes", None)]),
             (("7", "detalhes da 7"), [("GET", f"/tarefas/{task7}/detalhes", None)]),
             (("7", "atribuir para mim"), [("PUT", f"/tarefas/{task7}/atribuir-para-mim", None)]),
-            (("atribuir a 7 para mim",), [("PUT", f"/tarefas/{task7}/atribuir-para-mim", None)]),
-            (("atribuir a terceira para mim",), [("PUT", f"/tarefas/{BACKLOG_TASKS[2]['_id']}/atribuir-para-mim", None)]),
+            (("atribuir a 7 para mim", "confirmar"), [("PUT", f"/tarefas/{task7}/atribuir-para-mim", None)]),
+            (("atribuir a terceira para mim", "confirmar"), [("PUT", f"/tarefas/{BACKLOG_TASKS[2]['_id']}/atribuir-para-mim", None)]),
             (("10", "detalhes"), [("GET", f"/tarefas/{BACKLOG_TASKS[9]['_id']}/detalhes", None)]),
             (("configurar alertas", "detalhes"), [("GET", f"/tarefas/{BACKLOG_TASKS[7]['_id']}/detalhes", None)]),
             # Depois de uma escolha invalida, uma valida volta a funcionar normalmente.
@@ -710,11 +716,11 @@ class NegativePhraseTests(AssistantFlowTestCase):
     def test_positive_answers_still_complete_the_same_flows(self):
         task = TASKS[0]["_id"]
         cases = (
-            ("token-user", ["mudar status", "relatório final", "concluído"],
+            ("token-user", ["mudar status", "relatório final", "concluído", "confirmar"],
              ("PUT", f"/tarefas/{task}/status", {"status": "concluido"})),
-            ("token-user", ["cronômetro", "relatório final", "iniciar"],
+            ("token-user", ["cronômetro", "relatório final", "iniciar", "confirmar"],
              ("PUT", f"/tarefas/{task}/cronometro", {"acao": "iniciar"})),
-            ("token-admin", ["criar equipe", "Marketing"],
+            ("token-admin", ["criar equipe", "Marketing", "confirmar"],
              ("POST", "/equipes", {"nome": "Marketing", "membros": []})),
         )
         for token, steps, expected_write in cases:
@@ -805,8 +811,8 @@ class StrictParamFlowTests(AssistantFlowTestCase):
     def test_valid_answer_after_an_unknown_one_completes(self):
         task = TASKS[0]["_id"]
         for steps, expected_write in (
-            (["mudar status", "relatório final", "Hmm", "Em andamento"], ("PUT", f"/tarefas/{task}/status", {"status": "em_andamento"})),
-            (["cronômetro", "relatório final", "talvez", "Pausar"], ("PUT", f"/tarefas/{task}/cronometro", {"acao": "pausar"})),
+            (["mudar status", "relatório final", "Hmm", "Em andamento", "confirmar"], ("PUT", f"/tarefas/{task}/status", {"status": "em_andamento"})),
+            (["cronômetro", "relatório final", "talvez", "Pausar", "confirmar"], ("PUT", f"/tarefas/{task}/cronometro", {"acao": "pausar"})),
         ):
             with self.subTest(steps=steps):
                 self.api.calls.clear()
@@ -839,30 +845,39 @@ class StrictParamFlowTests(AssistantFlowTestCase):
         body = {"conversationId": CONVERSATION_ID, "content": "mudar status da tarefa relatório final", "params": {"status": "hmm"}}
         raw, _status, _headers = function.flowly_http(FakeRequest("/api/v1/messages", body, "token-user"))
         self.assertEqual(json.loads(raw)["conversation"]["next_param"], "status")
-        for utterance, params in (
-            ("mudar status da tarefa relatório final", {"status": "hmm"}),
-            ("cronômetro da tarefa relatório final", {"acao": "talvez"}),
+        for utterance, params, param in (
+            ("mudar status da tarefa relatório final", {"status": "hmm"}, "status"),
+            ("cronômetro da tarefa relatório final", {"acao": "talvez"}, "acao"),
             ("criar tarefa", {"nome": "X", "descricao": "Y", "dataEntrega": "2026-12-01", "urgencia": "xyz",
-                              "equipe": TEAM_ID, "user": "__none__"}),
+                              "equipe": TEAM_ID, "user": "__none__"}, "urgencia"),
         ):
             with self.subTest(utterance=utterance, params=params):
                 token = "token-admin" if utterance == "criar tarefa" else "token-user"
+                ScopedConversationState(ConversationStateRepository(), USERS_BY_TOKEN[token]["_id"]).clear(CONVERSATION_ID)
+                body = {"conversationId": CONVERSATION_ID, "content": utterance, "params": params}
+                raw, _status, _headers = function.flowly_http(FakeRequest("/api/v1/messages", body, token))
+                self.assertEqual(json.loads(raw)["conversation"]["next_param"], param)
+                # Na rota legada, sem estado nem confirmacao, nenhuma escrita chega a ser validada ou executada.
                 raw, status, _headers = function.flowly_http(
                     FakeRequest("/assist", {"utterance": utterance, "params": params}, token))
                 payload = json.loads(raw)
-                self.assertEqual((status, payload["error"]), (400, "invalid_params"))
+                self.assertEqual((status, payload["error"]), (403, "write_requires_confirmation"))
                 self.assertIn("Nada foi alterado", payload["reply_text"])
         self.assert_no_writes()
 
     def test_valid_values_in_the_initial_phrase_or_params_still_write(self):
         task = TASKS[0]["_id"]
-        payload, _status = self.send("token-user", "mudar status da tarefa relatório final para concluído")
-        self.assertTrue(payload["action_executed"], payload)
-        payload, _status = self.send("token-user", "iniciar cronômetro da tarefa relatório final")
-        self.assertTrue(payload["action_executed"], payload)
-        raw, status, _headers = function.flowly_http(FakeRequest(
-            "/assist", {"utterance": "mudar status da tarefa relatório final", "params": {"status": "Em andamento"}}, "token-user"))
-        self.assertEqual(status, 200, raw)
+        for phrase in ("mudar status da tarefa relatório final para concluído", "iniciar cronômetro da tarefa relatório final"):
+            payload, _status = self.send("token-user", phrase)
+            self.assertEqual(payload["conversation"]["status"], "awaiting_confirmation")
+            self.assertFalse(payload["action_executed"], payload)
+            payload, _status = self.send("token-user", "confirmar")
+            self.assertTrue(payload["action_executed"], payload)
+        body = {"conversationId": CONVERSATION_ID, "content": "mudar status da tarefa relatório final",
+                "params": {"status": "Em andamento"}}
+        raw, status, _headers = function.flowly_http(FakeRequest("/api/v1/messages", body, "token-user"))
+        self.assertEqual(json.loads(raw)["conversation"]["status"], "awaiting_confirmation", raw)
+        self.send("token-user", "confirmar")
         self.assertEqual(self.api.writes(), [
             ("PUT", f"/tarefas/{task}/status", {"status": "concluido"}),
             ("PUT", f"/tarefas/{task}/cronometro", {"acao": "iniciar"}),
@@ -872,8 +887,8 @@ class StrictParamFlowTests(AssistantFlowTestCase):
     def test_words_in_the_task_name_do_not_override_the_answer(self):
         # Antes: "Iniciar migração" + pausar virava PUT iniciar; "Revisão concluída" + pendente virava PUT concluido.
         for steps, expected_write in (
-            (["cronômetro", "iniciar migração", "pausar"], ("PUT", f"/tarefas/{TASKS[2]['_id']}/cronometro", {"acao": "pausar"})),
-            (["mudar status", "revisão concluída", "pendente"], ("PUT", f"/tarefas/{TASKS[3]['_id']}/status", {"status": "pendente"})),
+            (["cronômetro", "iniciar migração", "pausar", "confirmar"], ("PUT", f"/tarefas/{TASKS[2]['_id']}/cronometro", {"acao": "pausar"})),
+            (["mudar status", "revisão concluída", "pendente", "confirmar"], ("PUT", f"/tarefas/{TASKS[3]['_id']}/status", {"status": "pendente"})),
         ):
             with self.subTest(steps=steps):
                 self.api.calls.clear()
@@ -944,13 +959,13 @@ class TaskNameIsNotAValueTests(AssistantFlowTestCase):
 
     def test_after_asking_the_named_task_gets_the_value_the_user_chose(self):
         for steps, expected_write in (
-            (["mudar status da tarefa pendente de aprovação", "concluído"],
+            (["mudar status da tarefa pendente de aprovação", "concluído", "confirmar"],
              ("PUT", f"/tarefas/{TASK_ID_BY_NAME['Pendente de aprovação']}/status", {"status": "concluido"})),
-            (["atualizar status da tarefa revisão concluída", "em andamento"],
+            (["atualizar status da tarefa revisão concluída", "em andamento", "confirmar"],
              ("PUT", f"/tarefas/{TASK_ID_BY_NAME['Revisão concluída']}/status", {"status": "em_andamento"})),
-            (["cronômetro da tarefa iniciar migração", "pausar"],
+            (["cronômetro da tarefa iniciar migração", "pausar", "confirmar"],
              ("PUT", f"/tarefas/{TASK_ID_BY_NAME['Iniciar migração']}/cronometro", {"acao": "pausar"})),
-            (["cronômetro da tarefa pausar deploy", "iniciar"],
+            (["cronômetro da tarefa pausar deploy", "iniciar", "confirmar"],
              ("PUT", f"/tarefas/{TASK_ID_BY_NAME['Pausar deploy']}/cronometro", {"acao": "iniciar"})),
         ):
             with self.subTest(steps=steps):
@@ -976,6 +991,9 @@ class TaskNameIsNotAValueTests(AssistantFlowTestCase):
             with self.subTest(phrase=phrase):
                 self.api.calls.clear()
                 payload, _status = self.send("token-user", phrase)
+                self.assertEqual(payload["conversation"]["status"], "awaiting_confirmation")
+                self.assert_no_writes()
+                payload, _status = self.send("token-user", "confirmar")
                 self.assertTrue(payload["action_executed"], payload)
                 self.assertEqual(self.api.writes(), [expected_write])
 

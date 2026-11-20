@@ -8,11 +8,29 @@ from typing import Any, Dict, Optional, Tuple
 
 from flowly_assistant.api_client import APIError, FlowlyAPIClient
 from flowly_assistant.api_config import configured_api_base_url
-from flowly_assistant.command_parser import STRICT_PARAM_WORDS, CommandParser, Match, strict_param_value
-from flowly_assistant.commands import DISABLED_COMMAND_REPLY, DISABLED_COMMANDS
+from flowly_assistant.command_parser import (
+    STRICT_PARAM_WORDS,
+    CommandParser,
+    Match,
+    is_write_command,
+    strict_param_value,
+)
+from flowly_assistant.commands import (
+    DISABLED_COMMAND_REPLY,
+    DISABLED_COMMANDS,
+    WRITES_DISABLED_REPLY,
+    Command,
+    assistant_writes_enabled,
+)
 
 
 OBJ_ID_RE = re.compile(r"\b[a-fA-F0-9]{24}\b")
+WRITE_REQUIRES_CONFIRMATION_REPLY = (
+    "Por segurança, alterações pelo assistente só são feitas na conversa, com resumo e confirmação. "
+    "Nada foi alterado."
+)
+PROFILE_UNKNOWN_REPLY = "Não consegui confirmar o seu perfil agora, então nada foi alterado. Tente de novo em instantes."
+INTERNAL_ERROR_REPLY = "Ocorreu um erro inesperado. Nada foi alterado."
 
 
 def normalize(text: str) -> str:
@@ -122,6 +140,17 @@ class RestAssistant:
         if match.command.key in DISABLED_COMMANDS:
             return self._error("command_disabled", DISABLED_COMMAND_REPLY, 403, command={"key": match.command.key})
 
+        # handle() executa sem estado nem confirmacao (rota legada /assist e o ultimo passo das consultas com
+        # perguntas): so leituras. Escritas passam por prepare_write + execute_prepared, apos a confirmacao em
+        # /api/v1/messages. Vale para qualquer frase e qualquer params enviado pelo cliente.
+        if is_write_command(match.command):
+            return self._error(
+                "write_requires_confirmation",
+                WRITE_REQUIRES_CONFIRMATION_REPLY,
+                403,
+                command={"key": match.command.key},
+            )
+
         if user_type and not has_permission(user_type, match.command.role_required):
             return self._error("forbidden", "Você não tem permissão para esse comando.", 403)
 
@@ -183,6 +212,75 @@ class RestAssistant:
             }
         )
 
+    def prepare_write(self, command: Command, params: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+        """Valida e resolve uma escrita SEM executar: permissao, valores, parametros e alvos (so leituras na API)."""
+        if not assistant_writes_enabled():
+            return self._error("assistant_writes_disabled", WRITES_DISABLED_REPLY, 403, command={"key": command.key})
+        if command.key in DISABLED_COMMANDS:
+            return self._error("command_disabled", DISABLED_COMMAND_REPLY, 403, command={"key": command.key})
+        user_type = self._detect_user_type()
+        if not user_type:  # fail-closed: sem perfil identificado (falha no /users/me ou tipo ausente), nao prepara
+            return self._error("user_type_unknown", PROFILE_UNKNOWN_REPLY, 403)
+        if not has_permission(user_type, command.role_required):
+            return self._error("forbidden", "Você não tem permissão para esse comando.", 403)
+        resolved = {str(k): str(v) for k, v in params.items() if v is not None}
+        invalid = []
+        for param in STRICT_PARAM_WORDS:
+            if resolved.get(param):
+                value = strict_param_value(param, resolved[param])
+                if value is None:
+                    invalid.append(param)
+                else:
+                    resolved[param] = value
+        if invalid:
+            return self._error("invalid_params", "Não entendi: " + ", ".join(invalid) + ". Nada foi alterado.", 400, invalid=invalid)
+        missing = [p for p in command.required_params if not resolved.get(p)]
+        if missing:
+            return self._error("missing_params", "Faltam informações para esse comando. Nada foi alterado.", 400, missing=missing)
+        try:
+            self._resolve_refs(resolved, user_type)
+        except APIError as exc:
+            return self._error("api_error", str(exc), 400, message=str(exc))
+        except Exception as exc:
+            # Erro inesperado: resposta JSON segura, sem detalhes internos; nada foi alterado.
+            if self.debug:
+                print(f"[ASSISTANT] internal_error (preparo): {type(exc).__name__}")
+            return self._error("internal_error", INTERNAL_ERROR_REPLY, 500)
+        return self._ok({"command": {"key": command.key, "title": command.title}, "user_type": user_type, "params": resolved})
+
+    def execute_prepared(self, command: Command, params: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+        """Executa uma escrita ja preparada e confirmada; refaz a verificacao de permissao antes de escrever."""
+        if not assistant_writes_enabled():  # confirmacao preparada antes do desligamento tambem para aqui
+            return self._error("assistant_writes_disabled", WRITES_DISABLED_REPLY, 403, command={"key": command.key})
+        if command.key in DISABLED_COMMANDS:
+            return self._error("command_disabled", DISABLED_COMMAND_REPLY, 403, command={"key": command.key})
+        user_type = self._detect_user_type()
+        if not user_type:  # fail-closed: perfil nao identificado no momento da confirmacao, nao executa
+            return self._error("user_type_unknown", PROFILE_UNKNOWN_REPLY, 403)
+        if not has_permission(user_type, command.role_required):
+            return self._error("forbidden", "Você não tem permissão para esse comando.", 403)
+        # Alvos ja resolvidos no preparo: executa exatamente o que foi resumido, sem nova interpretacao de nomes.
+        resolved = {str(k): str(v) for k, v in params.items() if v is not None}
+        try:
+            result = self._execute(Match(command=command, score=100, params=resolved), resolved)
+        except APIError as exc:
+            return self._error("api_error", str(exc), 400, message=str(exc))
+        except Exception as exc:
+            if self.debug:
+                print(f"[ASSISTANT] internal_error (execucao): {type(exc).__name__}")
+            return self._error("internal_error", "Ocorreu um erro inesperado.", 500)
+        text = reply_text(command.key, result)
+        return self._ok(
+            {
+                "command": {"key": command.key, "title": command.title},
+                "user_type": user_type,
+                "params": resolved,
+                "result": coerce_jsonable(result),
+                "reply_text": text,
+                "tts": tts_payload(text, enabled=self.tts_enabled, language=self.language),
+            }
+        )
+
     def _detect_user_type(self) -> Optional[str]:
         try:
             me = self.api.me()
@@ -223,14 +321,9 @@ class RestAssistant:
     def _resolve_team_ref(self, ref: str) -> Tuple[str, str]:
         query = normalize(ref)
         if query in {"eu", "mim", "para mim", "pra mim", "eu mesmo", "eu mesma"}:
-            me = self.api.me()
-            user_id = str((me or {}).get("_id") or (me or {}).get("id") or "").strip()
-            name = str((me or {}).get("nome") or "voce").strip()
-            if not user_id:
-                raise APIError("Nao consegui identificar seu usuario")
-            if team_id and not self._is_user_in_team(user_id, team_id):
-                raise APIError("Voce nao esta na equipe alvo")
-            return user_id, name
+            # Uma pessoa nao e uma equipe. Este trecho devolvia o ID do usuario como equipe e quebrava antes
+            # disso (team_id usado sem existir neste metodo); a equipe precisa ser dita pelo nome.
+            raise APIError("Não entendi qual equipe. Diga o nome da equipe. Nada foi alterado.")
         if len(query) < 2:
             raise APIError("Nome da equipe inválido")
 

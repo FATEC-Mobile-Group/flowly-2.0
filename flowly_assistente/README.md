@@ -2,7 +2,20 @@
 
 Compatível com **Google Cloud Functions** para frontend web/mobile.
 
-Assistente virtual que interpreta comandos em linguagem natural (pt-BR) e executa ações no backend Flowly.
+Assistente virtual que interpreta comandos em linguagem natural (pt-BR) e consulta o backend Flowly.
+
+## Segurança das alterações (escritas)
+
+- **Desligadas por padrão.** Criar, atribuir, mudar status, cronômetro, comentário e subtarefa pelo assistente só
+  funcionam com `FLOWLY_ASSISTANT_WRITES_ENABLED=true`. Ausente, vazia ou com qualquer outro valor, o assistente responde
+  que as alterações estão temporariamente indisponíveis e não envia POST, PUT, PATCH ou DELETE à API.
+- **Não use `FLOWLY_ASSISTANT_WRITES_ENABLED=true` em produção** enquanto a confirmação não for compartilhada entre
+  instâncias e as escritas não forem idempotentes. Hoje o estado da conversa fica em um arquivo local por instância.
+- Com a variável ligada, toda escrita mostra um resumo e só executa com "confirmar" em uma mensagem seguinte.
+- Exclusão nunca é feita pelo assistente.
+- `POST /api/v1/messages` é a rota usada pelo frontend. `POST /assist` e `POST /` (legado) continuam disponíveis só para
+  **consultas**: nunca executam escritas, com qualquer valor da variável.
+- Nada disso afeta as operações normais feitas pelas telas do Flowly, que usam a API principal diretamente.
 
 ## Requisitos
 
@@ -60,6 +73,9 @@ python main.py --cli
 ```
 
 ### HTTP API (Web/Mobile Frontend)
+
+O frontend usa `POST /api/v1/messages` (seção "API v1" abaixo). A rota legada `/assist` responde apenas consultas:
+
 ```javascript
 const response = await fetch('https://seu-cloud-function/assist', {
   method: 'POST',
@@ -211,6 +227,9 @@ FLOWLY_CORS_ORIGIN=*
 
 # Debug
 FLOWLY_DEBUG=false
+
+# Escritas pelo assistente: desligadas se ausente. Não usar "true" em produção (ver "Segurança das alterações").
+FLOWLY_ASSISTANT_WRITES_ENABLED=false
 ```
 
 **Ver todas**: `.env.example`
@@ -221,7 +240,7 @@ FLOWLY_DEBUG=false
 flowly_assistente/
 ├── flowly_assistant/
 │   ├── assistant_core/
-│   │   ├── rest_assistant.py # Caso de uso REST stateless legado (/assist)
+│   │   ├── rest_assistant.py # Consultas (/assist legado) e preparo/execução de escritas confirmadas
 │   │   └── message_agent.py  # Fluxo REST v1: moderação, comando e fila
 │   ├── assistant.py          # CLI local com voz/microfone
 │   ├── api_client.py         # Cliente da API Flowly
@@ -235,7 +254,7 @@ flowly_assistente/
 │   ├── workers/              # Worker use cases
 │   └── settings.py           # Configurações
 ├── main.py                 # Entrypoint (Cloud Fn + CLI)
-├── function.py             # Adaptador HTTP: /health e /assist
+├── function.py             # Adaptador HTTP: /health, /api/v1/messages, /standby e /assist (só consultas)
 ├── worker.py               # Entrypoint Celery
 ├── requirements.txt        # Dependências
 ├── Dockerfile              # Para Google Cloud Run
@@ -244,13 +263,15 @@ flowly_assistente/
 
 ## API v1 orientada a eventos
 
-Além do endpoint legado `/assist`, o agente expõe a arquitetura pedida para voz/PLN:
+Além do endpoint legado `/assist` (só consultas), o agente expõe a arquitetura pedida para voz/PLN:
 
-- `POST /api/v1/messages`
-  - recebe `userId`, `channelId`, `content`
+- `POST /api/v1/messages` (rota usada pelo frontend)
+  - recebe `channelId` e `content`; a identidade vem do token (`userId` do corpo é ignorado)
   - executa moderação síncrona
   - publica evento de analytics se a mensagem for segura
-  - classifica comando e aciona a API backend quando houver ação imediata
+  - classifica o comando e executa consultas na API backend
+  - escritas: desligadas por padrão; com `FLOWLY_ASSISTANT_WRITES_ENABLED=true`, resumo + "confirmar"
+    (status `awaiting_confirmation`)
 
 - `GET /api/v1/admin/insights`
   - rota protegida para administradores

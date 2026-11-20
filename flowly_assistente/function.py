@@ -51,9 +51,10 @@ def flowly_http(request):
 
     Supported routes:
       GET  / or /health
-      POST / or /assist
+      POST / or /assist           (legado: so consultas; escritas sempre recusadas)
       POST /standby
-      POST /api/v1/messages
+      POST /api/v1/messages       (rota do frontend; escritas desligadas por padrao, ver
+                                   FLOWLY_ASSISTANT_WRITES_ENABLED)
       POST /api/v1/uploads/moderate
       GET  /api/v1/admin/insights
     """
