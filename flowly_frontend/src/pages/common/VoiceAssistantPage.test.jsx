@@ -17,12 +17,16 @@ class FakeRecognition {
 
   static startError = null;
 
+  static withoutAudioStart = false;
+
   constructor() {
     this.start = vi.fn(() => {
       if (FakeRecognition.startError) throw FakeRecognition.startError;
     });
     this.stop = vi.fn();
     this.abort = vi.fn();
+    // O Chrome anuncia o evento audiostart; alguns navegadores nao.
+    if (!FakeRecognition.withoutAudioStart) this.onaudiostart = null;
     FakeRecognition.instances.push(this);
   }
 }
@@ -65,6 +69,7 @@ beforeAll(async () => {
 beforeEach(() => {
   FakeRecognition.instances = [];
   FakeRecognition.startError = null;
+  FakeRecognition.withoutAudioStart = false;
   requests = [];
   pendingReplies = [];
   replyFor = () => null;
@@ -103,6 +108,7 @@ function startListening() {
   fireEvent.click(screen.getByRole('button', { name: 'Iniciar escuta' }));
   const session = lastSession();
   fire(session.onstart);
+  fire(session.onaudiostart);
   return session;
 }
 
@@ -599,7 +605,9 @@ describe('R5: inicio e encerramento', () => {
     expect(lastSession().start).toHaveBeenCalledTimes(1);
     expect(statusText()).toBe('Iniciando');
     fire(lastSession().onstart);
-    expect(statusText()).toBe('Ouvindo');
+    expect(statusText()).toBe('Iniciando');
+    fire(lastSession().onaudiostart);
+    expect(statusText()).toBe('Ouvindo — pode falar');
   });
 
   test('dois cliques no mesmo ciclo de renderizacao tambem criam uma unica sessao', () => {
@@ -804,9 +812,10 @@ describe('Concluir x cancelar: identificacao para a pessoa', () => {
     render(<VoiceAssistantPage />);
     fireEvent.click(button('Iniciar escuta'));
     expect(button('Cancelar escuta')).toBeInTheDocument();
-    expect(hint()).toHaveTextContent('Abrindo o microfone. "Cancelar escuta" descarta sem enviar.');
+    expect(hint()).toHaveTextContent('Abrindo o microfone: espere aparecer "Ouvindo — pode falar". "Cancelar escuta" descarta sem enviar.');
 
     fire(lastSession().onstart);
+    fire(lastSession().onaudiostart);
     const conclude = button('Concluir fala');
     const cancel = button('Cancelar escuta');
     expect(conclude).toHaveAttribute('title', 'Concluir fala');
@@ -880,7 +889,7 @@ describe('Fluxo normal simulado', () => {
 
     for (const phrase of ['meu perfil', 'listar equipes']) {
       const session = startListening();
-      expect(statusText()).toBe('Ouvindo');
+      expect(statusText()).toBe('Ouvindo — pode falar');
       fire(session.onresult, resultEvent([[phrase, true]]));
       fire(session.onend);
       await flush();
@@ -898,5 +907,189 @@ describe('Fluxo normal simulado', () => {
     ]);
     expect(statusText()).toBe('Standby');
     expect(input()).toHaveValue('');
+  });
+});
+
+describe('Prontidao real do microfone: "Ouvindo" so com o audio chegando', () => {
+  const hintText = () => document.querySelector('.voice-interaction-hint')?.textContent || '';
+  const clickStart = () => fireEvent.click(screen.getByRole('button', { name: 'Iniciar escuta' }));
+  // Relogio falso so nestes testes: o atraso entre onstart e onaudiostart chegou a 11 s em sessoes reais.
+  const withFakeClock = async (run) => {
+    vi.useFakeTimers();
+    try {
+      await run();
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+  const advance = (ms) => act(() => {
+    vi.advanceTimersByTime(ms);
+  });
+
+  test('onstart imediato e audiostart segundos depois: Iniciando ate o audio, depois Ouvindo', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      clickStart();
+      const session = lastSession();
+      fire(session.onstart);
+      expect(statusText()).toBe('Iniciando');
+      expect(screen.getByRole('button', { name: 'Iniciando escuta' })).toBeInTheDocument();
+      expect(hintText()).toMatch(/espere aparecer "Ouvindo — pode falar"/);
+
+      advance(3000);
+      expect(statusText()).toBe('Iniciando');
+      expect(hintText()).toMatch(/ainda está abrindo o microfone/);
+
+      advance(3000); // 6 s depois do onstart, como nas sessoes reais mais lentas
+      fire(session.onaudiostart);
+      expect(statusText()).toBe('Ouvindo — pode falar');
+      expect(screen.getByRole('button', { name: 'Concluir fala' })).toBeInTheDocument();
+      expect(hintText()).toMatch(/concluir a fala/);
+
+      // O prazo de abertura nao derruba uma sessao que ja abriu o microfone.
+      advance(20000);
+      expect(statusText()).toBe('Ouvindo — pode falar');
+      fire(session.onresult, resultEvent([['meu perfil', true]]));
+      fire(session.onend);
+      expect(sentCommands()).toEqual(['meu perfil']);
+      expect(session.abort).not.toHaveBeenCalled();
+    });
+  });
+
+  test('clicar na estrela durante Iniciando nao conclui nem abre outra sessao', () => {
+    render(<VoiceAssistantPage />);
+    clickStart();
+    const session = lastSession();
+    fire(session.onstart);
+    fireEvent.click(screen.getByRole('button', { name: 'Iniciando escuta' }));
+
+    expect(session.stop).not.toHaveBeenCalled();
+    expect(session.abort).not.toHaveBeenCalled();
+    expect(FakeRecognition.instances).toHaveLength(1);
+    expect(statusText()).toBe('Iniciando');
+  });
+
+  test('cancelar durante a inicializacao descarta, e eventos tardios dessa sessao nao mudam nada', async () => {
+    render(<VoiceAssistantPage />);
+    clickStart();
+    const first = lastSession();
+    fire(first.onstart);
+    const late = { audio: first.onaudiostart, result: first.onresult, end: first.onend };
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar escuta' }));
+    expect(first.abort).toHaveBeenCalledTimes(1);
+    expect(statusText()).toBe('Standby');
+
+    // Nova sessao ainda iniciando: o audiostart atrasado da sessao cancelada nao a marca como pronta.
+    clickStart();
+    const second = lastSession();
+    fire(second.onstart);
+    fire(late.audio);
+    fire(late.result, resultEvent([['atribuir a 1 para mim', true]]));
+    fire(late.end);
+    expect(statusText()).toBe('Iniciando');
+    expect(sentCommands()).toEqual([]);
+
+    fire(second.onaudiostart);
+    fire(second.onresult, resultEvent([['meu perfil', true]]));
+    fire(second.onend);
+    await flush();
+    expect(sentCommands()).toEqual(['meu perfil']);
+  });
+
+  test('sem audiostart: prazo encerra com aviso claro, nada enviado e microfone livre', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      clickStart();
+      const session = lastSession();
+      const late = { result: session.onresult, end: session.onend };
+      fire(session.onstart);
+      advance(11999);
+      expect(session.abort).not.toHaveBeenCalled();
+      advance(1);
+
+      expect(session.abort).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/O navegador não abriu o microfone a tempo. Nada foi enviado/)).toBeInTheDocument();
+      expect(statusText()).toBe('Standby');
+      fire(late.result, resultEvent([['meu perfil', true]]));
+      fire(late.end);
+      expect(sentCommands()).toEqual([]);
+
+      // Recuperacao: a proxima tentativa abre uma sessao nova normalmente.
+      const next = startListening();
+      fire(next.onresult, resultEvent([['meu perfil', true]]));
+      fire(next.onend);
+      expect(sentCommands()).toEqual(['meu perfil']);
+    });
+  });
+
+  test('navegador encerra antes de abrir o microfone: aviso proprio e nada enviado', async () => {
+    render(<VoiceAssistantPage />);
+    clickStart();
+    const session = lastSession();
+    fire(session.onstart);
+    fire(session.onend);
+    await flush();
+
+    expect(screen.getByText(/encerrou a escuta antes de abrir o microfone/)).toBeInTheDocument();
+    expect(sentCommands()).toEqual([]);
+    expect(statusText()).toBe('Standby');
+  });
+
+  test('fala ou resultado antes do audiostart tambem confirmam a captura', async () => {
+    render(<VoiceAssistantPage />);
+    clickStart();
+    let session = lastSession();
+    fire(session.onstart);
+    fire(session.onspeechstart);
+    expect(statusText()).toBe('Ouvindo — pode falar');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar escuta' }));
+
+    clickStart();
+    session = lastSession();
+    fire(session.onstart);
+    fire(session.onresult, resultEvent([['listar', false]]));
+    expect(statusText()).toBe('Ouvindo — pode falar');
+    fire(session.onresult, resultEvent([['listar equipes', true]]));
+    fire(session.onend);
+    await flush();
+    expect(sentCommands()).toEqual(['listar equipes']);
+  });
+
+  test('navegador sem o evento audiostart: onstart vale como captura iniciada', async () => {
+    FakeRecognition.withoutAudioStart = true;
+    render(<VoiceAssistantPage />);
+    clickStart();
+    const session = lastSession();
+    // Sem audiostart para esperar, o onstart ja libera a fala.
+    fire(session.onstart);
+    expect(statusText()).toBe('Ouvindo — pode falar');
+
+    fire(session.onresult, resultEvent([['meu perfil', true]]));
+    fire(session.onend);
+    await flush();
+    expect(sentCommands()).toEqual(['meu perfil']);
+  });
+
+  test('resultado final valido depois de atraso longo: um unico envio, mesmo com eventos repetidos', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      clickStart();
+      const session = lastSession();
+      const late = { result: session.onresult, end: session.onend, audio: session.onaudiostart };
+      fire(session.onstart);
+      advance(10900); // atraso maximo medido: 11 s
+      fire(session.onaudiostart);
+      fire(session.onaudiostart);
+      fire(session.onresult, resultEvent([['meu', false]]));
+      fire(session.onresult, resultEvent([['meu perfil', true]]));
+      fire(session.onend);
+      fire(late.result, resultEvent([['meu perfil', true]]));
+      fire(late.end);
+      fire(late.audio);
+      advance(5000);
+
+      expect(sentCommands()).toEqual(['meu perfil']);
+      expect(statusText()).toBe('Processando');
+    });
   });
 });

@@ -25,7 +25,7 @@ const AWAITING_CONVERSATION = new Set([
 ]);
 const STATUS_LABELS = {
   starting: 'Iniciando',
-  listening: 'Ouvindo',
+  listening: 'Ouvindo — pode falar',
   processing: 'Processando',
   speaking: 'Falando',
   awaiting: 'Aguardando resposta',
@@ -33,6 +33,10 @@ const STATUS_LABELS = {
 };
 // Depois de Concluir (stop), o navegador deveria encerrar logo; sem onend, a sessao e fechada assim mesmo.
 const FINISH_TIMEOUT_MS = 4000;
+// Prontidao real: no Chrome o onstart chega antes da captura; o audio so esta disponivel no onaudiostart.
+// Medido em 29 sessoes reais (Chrome 157): onaudiostart de 1,1 s a 11 s depois do onstart.
+const SLOW_START_HINT_MS = 3000;
+const AUDIO_START_TIMEOUT_MS = 12000;
 // Falhas seguidas antes de sugerir outro caminho (sem novas tentativas automaticas).
 const FAILURE_HINT_AFTER = 3;
 
@@ -40,7 +44,7 @@ const FAILURE_HINT_AFTER = 3;
 function recognitionErrorMessage(error) {
   switch (error) {
     case 'no-speech':
-      return 'Não ouvi nenhuma fala. Toque no microfone, espere aparecer "Ouvindo" e fale perto do microfone.';
+      return 'Não ouvi nenhuma fala. Toque no microfone, espere aparecer "Ouvindo — pode falar" e fale perto do microfone.';
     case 'audio-capture':
       return 'Não encontrei um microfone funcionando. Confira se ele está conectado e escolhido no navegador.';
     case 'not-allowed':
@@ -57,6 +61,10 @@ function recognitionErrorMessage(error) {
       return 'A escuta foi interrompida pelo navegador. Toque no microfone para tentar de novo.';
     case 'start-failed':
       return 'Não consegui ligar o microfone agora. Tente de novo em instantes ou digite o comando.';
+    case 'audio-start-timeout':
+      return 'O navegador não abriu o microfone a tempo. Nada foi enviado. Toque no microfone para tentar de novo ou digite o comando.';
+    case 'audio-not-started':
+      return 'O navegador encerrou a escuta antes de abrir o microfone. Nada foi enviado. Toque no microfone para tentar de novo.';
     default:
       return 'Não consegui ouvir agora. Tente novamente ou digite o comando.';
   }
@@ -117,13 +125,16 @@ const GeminiStar = ({ status, listening }) => {
 function VoiceAssistantPage() {
   const [messages, setMessages] = useState(initialMessages);
   const [draft, setDraft] = useState('');
-  // Microfone: idle, starting (start pedido), listening (onstart) ou finishing (Concluir, aguardando o final).
+  // Microfone: idle, starting (start pedido, captura ainda nao confirmada), listening (audio chegando:
+  // onaudiostart, ou onstart em navegador sem esse evento) ou finishing (Concluir, aguardando o final).
   const [mic, setMic] = useState('idle');
   const [processing, setProcessing] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [awaitingReply, setAwaitingReply] = useState(false);
   // Texto ouvido sem confirmacao do navegador, posto no campo para a pessoa conferir antes de enviar.
   const [recoveredText, setRecoveredText] = useState('');
+  // Microfone demorando para abrir (mais de alguns segundos em "Iniciando").
+  const [slowStart, setSlowStart] = useState(false);
   const [rainbowActive, setRainbowActive] = useState(false);
   // Sessao de reconhecimento atual. Eventos de sessoes encerradas, canceladas ou substituidas sao ignorados.
   const sessionRef = useRef(null);
@@ -203,10 +214,14 @@ function VoiceAssistantPage() {
     if (!session || session.closed) return;
     session.closed = true;
     clearTimeout(session.finishTimer);
+    clearTimeout(session.readyTimer);
+    clearTimeout(session.slowTimer);
     if (sessionRef.current === session) sessionRef.current = null;
 
     const { recognition } = session;
     recognition.onstart = null;
+    recognition.onaudiostart = null;
+    recognition.onsoundstart = null;
     recognition.onspeechstart = null;
     recognition.onresult = null;
     recognition.onerror = null;
@@ -223,6 +238,7 @@ function VoiceAssistantPage() {
     // A transcricao sai do campo e o texto digitado antes da escuta volta.
     if (draftRef.current.source === 'voice') updateDraft(session.typedDraft);
     setMic('idle');
+    setSlowStart(false);
   }, [updateDraft]);
 
   const enterStandby = useCallback(async ({ silent = false, keepSpeech = false } = {}) => {
@@ -299,7 +315,7 @@ function VoiceAssistantPage() {
 
   // Fim da sessao (onend, erro ou prazo do Concluir): envia so o resultado final; o resto e recuperavel.
   const concludeSession = useCallback((session, { error = null, abort = false } = {}) => {
-    const { finalText, interimText, typedDraft, speechDetected } = session;
+    const { finalText, interimText, typedDraft, speechDetected, ready } = session;
     releaseSession(session, { abort });
 
     // Tudo o que o navegador entregou e final: e o comando, mesmo que um erro chegue depois dele.
@@ -324,6 +340,8 @@ function VoiceAssistantPage() {
       addMessage('assistant', recognitionErrorMessage(error), { error: true });
     } else if (speechDetected) {
       addMessage('assistant', 'Ouvi sua voz, mas o navegador não conseguiu transcrever. Fale de novo, perto do microfone, ou digite o comando.', { error: true });
+    } else if (!ready) {
+      addMessage('assistant', recognitionErrorMessage('audio-not-started'), { error: true });
     } else {
       addMessage('assistant', recognitionErrorMessage('no-speech'), { error: true });
     }
@@ -331,7 +349,7 @@ function VoiceAssistantPage() {
     if (failuresRef.current === FAILURE_HINT_AFTER) {
       addMessage(
         'assistant',
-        'O reconhecimento de voz falhou 3 vezes seguidas. Fale logo depois de aparecer "Ouvindo", perto do microfone e sem a voz do assistente tocando, ou digite o comando.',
+        'O reconhecimento de voz falhou 3 vezes seguidas. Fale só depois de aparecer "Ouvindo — pode falar", perto do microfone e sem a voz do assistente tocando, ou digite o comando.',
         { error: true },
       );
     }
@@ -347,12 +365,24 @@ function VoiceAssistantPage() {
       recognition: null,
       closed: false,
       finishTimer: null,
+      readyTimer: null,
+      slowTimer: null,
+      ready: false,
       finalText: '',
       interimText: '',
       speechDetected: false,
       typedDraft: draftRef.current.source === 'typed' ? draftRef.current.text : '',
     };
     const isCurrent = () => sessionRef.current === session && !session.closed;
+    // Microfone realmente captando: so entao a tela pede para a pessoa falar.
+    const markReady = () => {
+      if (!isCurrent() || session.ready) return;
+      session.ready = true;
+      clearTimeout(session.readyTimer);
+      clearTimeout(session.slowTimer);
+      setSlowStart(false);
+      if (!session.finishing) setMic('listening');
+    };
 
     let recognition;
     try {
@@ -365,19 +395,36 @@ function VoiceAssistantPage() {
     recognition.lang = 'pt-BR';
     recognition.continuous = false;
     recognition.interimResults = true;
+    // Navegador sem o evento audiostart: o onstart e o melhor sinal disponivel de que a captura comecou.
+    const reportsAudioStart = 'onaudiostart' in recognition;
     session.recognition = recognition;
     sessionRef.current = session;
 
     recognition.onstart = () => {
-      if (isCurrent() && !session.finishing) setMic('listening');
+      if (!isCurrent()) return;
+      if (!reportsAudioStart) {
+        markReady();
+        return;
+      }
+      // Servico iniciado, microfone ainda nao: continua "Iniciando" e espera o audiostart, com prazo.
+      session.readyTimer = setTimeout(() => {
+        if (isCurrent() && !session.ready) concludeSession(session, { error: 'audio-start-timeout', abort: true });
+      }, AUDIO_START_TIMEOUT_MS);
     };
 
+    recognition.onaudiostart = markReady;
+    // Som, fala ou resultado so existem com o audio chegando: tambem confirmam a captura.
+    recognition.onsoundstart = markReady;
+
     recognition.onspeechstart = () => {
-      if (isCurrent()) session.speechDetected = true;
+      if (!isCurrent()) return;
+      session.speechDetected = true;
+      markReady();
     };
 
     recognition.onresult = (event) => {
       if (!isCurrent()) return;
+      markReady();
       // A lista de resultados e cumulativa: refazer o texto a cada evento evita repetir ou perder trechos.
       const finals = [];
       const interims = [];
@@ -402,6 +449,10 @@ function VoiceAssistantPage() {
     };
 
     setMic('starting');
+    // Abertura demorada (ou pedido de permissao): a tela avisa para esperar, sem encerrar.
+    session.slowTimer = setTimeout(() => {
+      if (isCurrent() && !session.ready) setSlowStart(true);
+    }, SLOW_START_HINT_MS);
     try {
       recognition.start();
     } catch (error) {
@@ -479,7 +530,9 @@ function VoiceAssistantPage() {
   // Orientacao visivel (mouse, teclado e toque) sobre concluir x cancelar e sobre o texto nao confirmado.
   let interactionHint = '';
   if (mic === 'starting') {
-    interactionHint = 'Abrindo o microfone. "Cancelar escuta" descarta sem enviar.';
+    interactionHint = slowStart
+      ? 'O navegador ainda está abrindo o microfone (pode estar pedindo permissão). Espere aparecer "Ouvindo — pode falar" ou use "Cancelar escuta".'
+      : 'Abrindo o microfone: espere aparecer "Ouvindo — pode falar". "Cancelar escuta" descarta sem enviar.';
   } else if (mic === 'listening') {
     interactionHint = 'Toque de novo na estrela para concluir a fala e enviar o que o navegador confirmar. "Cancelar escuta" descarta sem enviar.';
   } else if (mic === 'finishing') {
