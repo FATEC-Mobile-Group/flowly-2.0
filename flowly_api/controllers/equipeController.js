@@ -3,6 +3,7 @@ const User = require('../models/User');
 const Message = require('../models/Message'); 
 const mongoose = require('mongoose');
 const { getSignedUrl } = require('../services/storage');
+const { createIdempotencyService, IdempotentRequestError } = require('../services/idempotencyService');
 
 const assinarFotoUsuarioMensagem = async (message) => {
   const messageObject = typeof message.toObject === 'function' ? message.toObject() : message;
@@ -105,6 +106,119 @@ exports.criarEquipe = async (req, res) => {
   } catch (err) {
     console.error('Erro ao criar equipe:', err);
     res.status(500).json({ erro: "Erro ao criar equipe" });
+  }
+};
+
+// ---------------------------------------------------------------------------------------------------------
+// Criacao protegida por Idempotency-Key (so com o cabecalho; ver middlewares/idempotencyOptIn.js).
+// Mesmas regras e mensagens do criarEquipe acima; a equipe e gravada na mesma transacao que conclui a chave.
+// O registro da chave guarda so status, tipo e ID; a resposta e montada de novo a cada vez (URLs assinadas novas).
+
+const ROTA_CRIAR_EQUIPE = '/api/equipes';
+const MENSAGENS_CRIAR_EQUIPE = {
+  nome_obrigatorio: 'O nome da equipe é obrigatório',
+  membros_invalidos: 'Existem membros com identificadores inválidos',
+  membros_nao_usuarios: 'Alguns membros não são usuarios válidos',
+};
+const RESPOSTAS_IDEMPOTENCIA = {
+  invalid: { status: 400, erro: 'Chave de idempotência inválida.' },
+  conflict: { status: 422, erro: 'Esta chave de idempotência já foi usada com outro pedido.' },
+  in_progress: { status: 409, erro: 'Esta criação ainda está em andamento. Tente novamente em instantes.' },
+  unknown: {
+    status: 409,
+    erro: 'Não foi possível confirmar se a equipe foi criada. Verifique a lista de equipes antes de tentar de novo.',
+  },
+  unavailable: { status: 503, erro: 'Serviço temporariamente indisponível.' },
+};
+
+let servicoIdempotencia;
+const obterServicoIdempotencia = () => {
+  if (!servicoIdempotencia) {
+    servicoIdempotencia = createIdempotencyService();
+  }
+  return servicoIdempotencia;
+};
+
+// Validacao de formato (sem banco), identica a do criarEquipe. Roda antes de reivindicar a chave: um pedido
+// malformado responde 400 sem consumir a chave.
+const validarFormatoNovaEquipe = ({ nome, membros }) => {
+  if (!nomeEquipeValido(nome)) {
+    return { codigo: 'nome_obrigatorio' };
+  }
+  const membrosArray = Array.isArray(membros) ? membros : [];
+  const membrosUnicos = [...new Set(membrosArray.map((id) => String(id).trim()))].filter(Boolean);
+  if (membrosUnicos.some((id) => !mongoose.isValidObjectId(id))) {
+    return { codigo: 'membros_invalidos' };
+  }
+  return { membrosUnicos };
+};
+
+const responderSemEquipe = (res, resposta) => {
+  if (resposta.outcome === 'failed') {
+    if (resposta.replayed) res.set('Idempotency-Replayed', 'true');
+    const mensagem = MENSAGENS_CRIAR_EQUIPE[resposta.code];
+    if (mensagem) {
+      return res.status(resposta.statusCode).json({ erro: mensagem });
+    }
+    return res.status(500).json({ erro: 'Erro ao criar equipe' });
+  }
+  const conhecida = RESPOSTAS_IDEMPOTENCIA[resposta.outcome];
+  if (!conhecida) {
+    return res.status(500).json({ erro: 'Erro ao criar equipe' });
+  }
+  if (resposta.outcome === 'in_progress' || resposta.outcome === 'unavailable') {
+    res.set('Retry-After', '2');
+  }
+  return res.status(conhecida.status).json({ erro: conhecida.erro, code: resposta.code });
+};
+
+exports.criarEquipeIdempotente = async (req, res) => {
+  try {
+    const formato = validarFormatoNovaEquipe(req.body);
+    if (formato.codigo) {
+      return res.status(400).json({ erro: MENSAGENS_CRIAR_EQUIPE[formato.codigo] });
+    }
+    const usuarioId = String(req.user.id); // so do JWT verificado; nunca do corpo
+    const { nome, membros } = req.body;
+
+    const resposta = await obterServicoIdempotencia().execute(
+      { userId: usuarioId, key: req.get('Idempotency-Key'), method: 'POST', route: ROTA_CRIAR_EQUIPE, body: { nome, membros } },
+      // Pode rodar mais de uma vez (withTransaction repete em erro transitorio): tudo com a session, sem
+      // efeito fora da transacao.
+      async (session) => {
+        const usuarios = await User.find({ _id: { $in: formato.membrosUnicos }, tipo: 'user' })
+          .select('_id')
+          .session(session);
+        if (usuarios.length !== formato.membrosUnicos.length) {
+          throw new IdempotentRequestError(400, 'membros_nao_usuarios');
+        }
+        const membrosComCriador = [...new Set([...formato.membrosUnicos, usuarioId])];
+        const novaEquipe = new Equipe({ nome: formatarNomeEquipe(nome), membros: membrosComCriador, createdBy: usuarioId });
+        await novaEquipe.save({ session });
+        return { statusCode: 201, resourceType: 'equipe', resourceId: novaEquipe._id };
+      }
+    );
+
+    if (resposta.outcome !== 'executed' && resposta.outcome !== 'replayed') {
+      return responderSemEquipe(res, resposta);
+    }
+
+    // Revalida o acesso antes de devolver dados: numa repeticao a equipe pode ter mudado ou sido excluida.
+    // O papel de admin e a sessao ja foram conferidos pelo auth/isAdmin nesta mesma requisicao.
+    const equipe = await Equipe.findOne({
+      _id: resposta.result.resourceId,
+      $or: [{ membros: usuarioId }, { createdBy: usuarioId }],
+    }).populate('membros', 'nome email fotoPerfil');
+    if (!equipe) {
+      return res.status(404).json({ erro: 'Equipe não encontrada' });
+    }
+    if (resposta.outcome === 'replayed') {
+      res.set('Idempotency-Replayed', 'true');
+    }
+    return res.status(resposta.statusCode).json(await assinarFotosMembrosEquipe(equipe));
+  } catch (err) {
+    console.error('Erro ao criar equipe (idempotente):', err?.name);
+    return res.status(500).json({ erro: 'Erro ao criar equipe' });
   }
 };
 
