@@ -53,7 +53,14 @@ router.post(
 );
 
 // ALL: adicionar e alterar subtarefa
-router.post('/:id/subtarefas', ensureObjectBody, tarefaController.adicionarSubtarefa);
+// Com Idempotency-Key: inclusao protegida ($push atomico na transacao, com chave e log). Sem o cabecalho: fluxo
+// atual, inalterado.
+router.post(
+  '/:id/subtarefas',
+  ensureObjectBody,
+  comIdempotenciaOpcional(tarefaController.adicionarSubtarefaIdempotente),
+  tarefaController.adicionarSubtarefa
+);
 router.put('/:id/subtarefas/:subId', tarefaController.toggleSubtarefa);
 
 // ALL: Upload de anexo (suporta multipart/form-data)

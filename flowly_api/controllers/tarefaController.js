@@ -603,6 +603,138 @@ exports.adicionarSubtarefa = async (req, res) => {
   }
 };
 
+// ---------------------------------------------------------------------------------------------------------
+// Subtarefa protegida por Idempotency-Key (so com o cabecalho; ver middlewares/idempotencyOptIn.js).
+// Mesmas regras e mensagens do adicionarSubtarefa acima. Na MESMA transacao: conferencia de acesso, inclusao,
+// log e conclusao da chave.
+//
+// Concorrencia: em vez de carregar a tarefa, mexer no array e salvar, faz uma atualizacao atomica com o
+// filtro de acesso: { $push: subtarefa, $inc: { __v: 1 } } - exatamente o que o save() legado envia para um
+// push. Nada e regravado, entao inclusoes simultaneas (com chaves diferentes ou pelo fluxo legado) nao se
+// sobrescrevem; o $inc de __v mantem a mesma regra de versao que o legado usa no toggle de subtarefa (que
+// falha com VersionError, sem perder dados, se o array mudou depois de ele carregar a tarefa).
+
+const ROTA_SUBTAREFA = '/api/tarefas/:id/subtarefas';
+// Mensagens identicas as do fluxo legado, inclusive as duas versoes do 404 (a de codificacao quebrada quando a
+// pessoa nao tem nenhuma equipe acessivel; a correta quando a tarefa nao e encontrada).
+const MENSAGENS_SUBTAREFA = {
+  descricao_obrigatoria: { status: 400, erro: 'Obrigatório fornecer descrição' },
+  tarefa_sem_equipes: { status: 404, erro: 'Tarefa nÃ£o encontrada' },
+  tarefa_nao_encontrada: { status: 404, erro: 'Tarefa não encontrada' },
+};
+const RESPOSTAS_IDEMPOTENCIA_SUBTAREFA = {
+  invalid: { status: 400, erro: 'Chave de idempotência inválida.' },
+  conflict: { status: 422, erro: 'Esta chave de idempotência já foi usada com outro pedido.' },
+  in_progress: { status: 409, erro: 'Esta subtarefa ainda está sendo adicionada. Tente novamente em instantes.' },
+  unknown: {
+    status: 409,
+    erro: 'Não foi possível confirmar se a subtarefa foi adicionada. Verifique a tarefa antes de tentar de novo.',
+  },
+  unavailable: { status: 503, erro: 'Serviço temporariamente indisponível.' },
+};
+
+// Subtarefa criada e validada pelo schema real (defaults e _id), por meio de um documento pai temporario.
+const novaSubtarefaValidada = (descricao) => {
+  const pai = new Tarefa({ subtarefas: [{ descricao, concluida: false }] });
+  const erro = pai.validateSync(['subtarefas']);
+  if (erro) {
+    return null;
+  }
+  return pai.subtarefas[0].toObject();
+};
+
+const responderSubtarefaSemRecurso = (res, resposta) => {
+  if (resposta.outcome === 'failed') {
+    if (resposta.replayed) res.set('Idempotency-Replayed', 'true');
+    const conhecida = MENSAGENS_SUBTAREFA[resposta.code];
+    if (conhecida && conhecida.status === resposta.statusCode) {
+      return res.status(conhecida.status).json({ erro: conhecida.erro });
+    }
+    return res.status(500).json({ erro: 'Erro ao adicionar subtarefa' });
+  }
+  const conhecida = RESPOSTAS_IDEMPOTENCIA_SUBTAREFA[resposta.outcome];
+  if (!conhecida) {
+    return res.status(500).json({ erro: 'Erro ao adicionar subtarefa' });
+  }
+  if (resposta.outcome === 'in_progress' || resposta.outcome === 'unavailable') {
+    res.set('Retry-After', '2');
+  }
+  return res.status(conhecida.status).json({ erro: conhecida.erro, code: resposta.code });
+};
+
+exports.adicionarSubtarefaIdempotente = async (req, res) => {
+  try {
+    const { descricao } = req.body;
+    // Sem banco, antes de reivindicar a chave: pedido malformado nao consome a chave.
+    if (typeof descricao !== 'string' || !descricao || !novaSubtarefaValidada(descricao)) {
+      return res.status(400).json({ erro: MENSAGENS_SUBTAREFA.descricao_obrigatoria.erro });
+    }
+    const tarefaId = req.params.id;
+    if (typeof tarefaId !== 'string' || !OBJECT_ID_PATTERN.test(tarefaId)) {
+      // ID fora do formato: 404 (no legado, vira erro de conversao e 500).
+      return res.status(404).json({ erro: MENSAGENS_SUBTAREFA.tarefa_nao_encontrada.erro });
+    }
+    const autorId = String(req.user.id); // so do JWT verificado; nunca do corpo
+
+    const resposta = await obterServicoIdempotenciaTarefa().execute(
+      {
+        userId: autorId,
+        key: req.get('Idempotency-Key'),
+        method: 'POST',
+        route: ROTA_SUBTAREFA,
+        params: { id: tarefaId },
+        body: { descricao },
+      },
+      // Pode rodar mais de uma vez (withTransaction repete em erro transitorio, inclusive WriteConflict com outra
+      // inclusao na mesma tarefa): toda leitura e gravacao usa a session; nenhum efeito fora da transacao.
+      async (session) => {
+        const filtro = await montarFiltroTarefasAcessiveis(req, { _id: tarefaId }, session);
+        if (!filtro) {
+          throw new IdempotentRequestError(404, 'tarefa_sem_equipes');
+        }
+        const subtarefa = novaSubtarefaValidada(descricao);
+        // Acesso e existencia conferidos na propria atualizacao (o filtro restringe as equipes acessiveis).
+        const resultado = await Tarefa.updateOne(
+          filtro,
+          { $push: { subtarefas: subtarefa }, $inc: { __v: 1 } },
+          { session, runValidators: true }
+        );
+        if (!resultado || resultado.matchedCount !== 1) {
+          throw new IdempotentRequestError(404, 'tarefa_nao_encontrada');
+        }
+        // Com session o log nao engole erro: se falhar, a subtarefa e a chave voltam juntas.
+        await logActivity('nova_subtarefa', `Subtarefa '${descricao}' adicionada`, autorId, tarefaId, { session });
+        return { statusCode: 201, resourceType: 'subtarefa', resourceId: subtarefa._id };
+      }
+    );
+
+    if (resposta.outcome !== 'executed' && resposta.outcome !== 'replayed') {
+      return responderSubtarefaSemRecurso(res, resposta);
+    }
+
+    // Revalida o acesso antes de devolver dados (numa repeticao a pessoa pode ter saido da equipe) e monta a
+    // resposta de agora: a tarefa atualizada, com URLs de anexos assinadas na hora.
+    const filtro = await montarFiltroTarefasAcessiveis(req, { _id: tarefaId });
+    if (!filtro) {
+      return res.status(404).json({ erro: MENSAGENS_SUBTAREFA.tarefa_sem_equipes.erro });
+    }
+    const tarefa = await Tarefa.findOne(filtro);
+    if (!tarefa) {
+      return res.status(404).json({ erro: MENSAGENS_SUBTAREFA.tarefa_nao_encontrada.erro });
+    }
+    if (!tarefa.subtarefas.id(resposta.result.resourceId)) {
+      return res.status(404).json({ erro: 'Subtarefa não encontrada' });
+    }
+    if (resposta.outcome === 'replayed') {
+      res.set('Idempotency-Replayed', 'true');
+    }
+    return res.status(resposta.statusCode).json(await assinarAnexosTarefa(tarefa));
+  } catch (err) {
+    console.error('Erro ao adicionar subtarefa (idempotente):', err?.name);
+    return res.status(500).json({ erro: 'Erro ao adicionar subtarefa' });
+  }
+};
+
 // ALL: toggle subtask
 exports.toggleSubtarefa = async (req, res) => {
   try {
