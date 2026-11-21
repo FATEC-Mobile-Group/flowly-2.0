@@ -14,6 +14,7 @@ const userRoutes = require('./routes/userRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const storageRoutes = require('./routes/storageRoutes');
 const faceRoutes = require('./routes/faceRoutes');
+const assistantOperationRoutes = require('./routes/assistantOperationRoutes');
 
 const app = express();
 
@@ -55,6 +56,8 @@ app.use('/api/users', userRoutes);
 app.use('/api/notificacoes', notificationRoutes);
 app.use('/api/storage', storageRoutes);
 app.use('/api/face', faceRoutes);
+// Interno (assistente -> API): segredo proprio + JWT/sessao do usuario. Ver routes/assistantOperationRoutes.js.
+app.use('/api/assistant/operations', assistantOperationRoutes);
 
 // 404 Handler
 app.use((req, res) => {
