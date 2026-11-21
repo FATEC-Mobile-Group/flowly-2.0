@@ -82,7 +82,15 @@ router.post(
 );
 
 // USER: atualizar status da tarefa
-router.put('/:id/status', isUser, ensureObjectBody, tarefaController.atualizarStatusUser);
+// Com Idempotency-Key: atualizacao protegida (condicional, na transacao com chave, logs e notificacao; emissao so
+// apos o commit). Sem o cabecalho: fluxo atual, inalterado.
+router.put(
+  '/:id/status',
+  isUser,
+  ensureObjectBody,
+  comIdempotenciaOpcional(tarefaController.atualizarStatusUserIdempotente),
+  tarefaController.atualizarStatusUser
+);
 
 // USER: controlar cronômetro
 router.put('/:id/cronometro', isUser, ensureObjectBody, tarefaController.controlarCronometro);

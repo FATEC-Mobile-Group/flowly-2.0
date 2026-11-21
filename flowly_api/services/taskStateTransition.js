@@ -5,8 +5,8 @@
 // campos lidos que a transicao usou. matchedCount 0 = outra escrita mudou a tarefa entre a leitura e a gravacao:
 // rele, revalida o responsavel, recalcula e tenta de novo, no maximo MAX_TENTATIVAS vezes.
 //
-// As partes puras (criterios, calculo da pausa, montagem do update) nao dependem do fluxo legado e podem ser
-// reaproveitadas pelo caminho com Idempotency-Key, dentro de transacao.
+// As partes puras (criterios, calculo da pausa/status, montagem do update) nao dependem do fluxo legado: o caminho
+// com Idempotency-Key as usa dentro da transacao, sem o laco de executarTransicao (la quem repete e o withTransaction).
 const Tarefa = require('../models/Tarefa');
 
 // 3 tentativas: um conflito exige outra escrita confirmada na mesma tarefa entre a nossa leitura e a nossa gravacao
@@ -104,6 +104,16 @@ const calcularPausa = (tarefa, agora) => {
   return { minutos, set };
 };
 
+// Transicao de status (legado e caminho com Idempotency-Key): mudar para outro status que nao em_andamento pausa o
+// cronometro ativo e remove o inicio; em_andamento nao inicia nem pausa. Pode lancar TaskTimerInconsistentError.
+const calcularTransicaoStatus = (tarefa, status, agora) => {
+  if (!tarefa.cronometroAtivo || status === 'em_andamento') {
+    return { set: { status } };
+  }
+  const pausa = calcularPausa(tarefa, agora);
+  return { set: { ...pausa.set, status }, unset: ['ultimaAtualizacaoCronometro'], pausa };
+};
+
 const mesmoValor = (a, b) => {
   if (a instanceof Date || b instanceof Date) {
     return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
@@ -171,6 +181,7 @@ module.exports = {
   TOLERANCIA_INICIO_FUTURO_MS,
   montarCondicao,
   calcularPausa,
+  calcularTransicaoStatus,
   montarUpdate,
   executarTransicao,
 };

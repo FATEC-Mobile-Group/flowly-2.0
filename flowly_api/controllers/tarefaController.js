@@ -11,6 +11,9 @@ const { createIdempotencyService, IdempotentRequestError } = require('../service
 const {
   executarTransicao,
   calcularPausa,
+  calcularTransicaoStatus,
+  montarCondicao,
+  montarUpdate,
   TaskTransitionConflictError,
   TaskTimerInconsistentError,
 } = require('../services/taskStateTransition');
@@ -1039,12 +1042,36 @@ exports.atribuirParaMimIdempotente = async (req, res) => {
   }
 };
 
+// Status aceitos, textos dos logs e da notificacao: os mesmos no legado e no caminho com Idempotency-Key.
+const STATUS_TAREFA = ['pendente', 'em_andamento', 'concluido'];
+const MSG_STATUS_SEM_ACESSO = 'Você não pode editar essa tarefa';
+const textoPausaPorStatus = (status, minutos) =>
+  `Cronômetro pausado automaticamente pela alteração de status para ${status}. +${minutos} mins`;
+const textoLogStatus = (status) => `Status alterado para ${status}`;
+const statusLegivel = (status) => {
+  if (status === 'em_andamento') return 'em andamento';
+  if (status === 'concluido') return 'concluída';
+  return status;
+};
+// Criador da tarefa (ou da equipe), se nao for quem mudou o status.
+const destinatarioNotificacaoStatus = (tarefa, usuarioId) => {
+  const notificarAdmin = tarefa.createdBy || tarefa.equipe?.createdBy;
+  return notificarAdmin && String(notificarAdmin) !== String(usuarioId) ? notificarAdmin : null;
+};
+const notificacaoStatus = ({ notificarAdmin, nome, tarefa, status }) => ({
+  userIds: [notificarAdmin],
+  texto: `${nome || 'Um colaborador'} marcou a tarefa "${tarefa.descricao}" como ${statusLegivel(status)}`,
+  tipo: 'task',
+  origemId: tarefa._id,
+  metadata: { tarefaId: tarefa._id, status },
+});
+
 // USER: update task status
 exports.atualizarStatusUser = async (req, res) => {
   try {
     const { status } = req.body;
 
-    if (!status || !["pendente", "em_andamento", "concluido"].includes(status)) {
+    if (!status || !STATUS_TAREFA.includes(status)) {
       return res.status(400).json({ erro: "Status inválido" });
     }
 
@@ -1054,17 +1081,11 @@ exports.atualizarStatusUser = async (req, res) => {
     const resultado = await executarTransicao({
       userId: req.user.id,
       ler: () => Tarefa.findOne({ _id: req.params.id, user: req.user.id }).populate('equipe', 'createdBy nome'),
-      calcular: (tarefaLida, agora) => {
-        if (!tarefaLida.cronometroAtivo || status === 'em_andamento') {
-          return { set: { status } };
-        }
-        const pausa = calcularPausa(tarefaLida, agora);
-        return { set: { ...pausa.set, status }, unset: ['ultimaAtualizacaoCronometro'], pausa };
-      },
+      calcular: (tarefaLida, agora) => calcularTransicaoStatus(tarefaLida, status, agora),
     });
 
     if (resultado.tipo === 'sem_acesso') {
-      return res.status(403).json({ erro: 'Você não pode editar essa tarefa' });
+      return res.status(403).json({ erro: MSG_STATUS_SEM_ACESSO });
     }
 
     // Logs e notificacao so depois da gravacao confirmada, uma vez, com os dados da tentativa que valeu.
@@ -1072,32 +1093,15 @@ exports.atualizarStatusUser = async (req, res) => {
     if (transicao.pausa) {
       // Tipo de atividade valido no ActivityLog (o antigo 'cronometro_pausado_por_status' nao existe no enum e o log
       // era descartado em silencio); o texto registra que a pausa foi automatica, pela mudanca de status.
-      await logActivity(
-        'cronometro_pausado',
-        `Cronômetro pausado automaticamente pela alteração de status para ${status}. +${transicao.pausa.minutos} mins`,
-        req.user.id,
-        tarefa._id
-      );
+      await logActivity('cronometro_pausado', textoPausaPorStatus(status, transicao.pausa.minutos), req.user.id, tarefa._id);
     }
 
-    await logActivity('atualizacao_status', `Status alterado para ${status}`, req.user.id, tarefa._id);
+    await logActivity('atualizacao_status', textoLogStatus(status), req.user.id, tarefa._id);
 
-    const notificarAdmin = tarefa.createdBy || tarefa.equipe?.createdBy;
-    if (notificarAdmin && String(notificarAdmin) !== String(req.user.id)) {
+    const notificarAdmin = destinatarioNotificacaoStatus(tarefa, req.user.id);
+    if (notificarAdmin) {
       const usuario = await User.findById(req.user.id).select('nome');
-      const statusLegivel = status === 'em_andamento'
-        ? 'em andamento'
-        : status === 'concluido'
-          ? 'concluída'
-          : status;
-
-      await notifyUsers({
-        userIds: [notificarAdmin],
-        texto: `${usuario?.nome || 'Um colaborador'} marcou a tarefa "${tarefa.descricao}" como ${statusLegivel}`,
-        tipo: 'task',
-        origemId: tarefa._id,
-        metadata: { tarefaId: tarefa._id, status },
-      });
+      await notifyUsers(notificacaoStatus({ notificarAdmin, nome: usuario?.nome, tarefa, status }));
     }
 
     res.json({ msg: 'Status atualizado com sucesso', tarefa: await assinarAnexosTarefa(tarefa) });
@@ -1105,6 +1109,160 @@ exports.atualizarStatusUser = async (req, res) => {
     if (responderRecusaTransicao(err, res)) return undefined;
     console.error('Erro ao atualizar status:', err);
     res.status(500).json({ erro: 'Erro ao atualizar status' });
+  }
+};
+
+// ---------------------------------------------------------------------------------------------------------
+// Status protegido por Idempotency-Key (so com o cabecalho; ver middlewares/idempotencyOptIn.js).
+// Mesmas regras, textos e mensagens do atualizarStatusUser acima. Na MESMA transacao: leitura da tarefa pelo
+// responsavel, gravacao condicional do status (e da pausa automatica), logs, notificacao ao admin e conclusao da
+// chave. Socket.IO so depois do commit (afterCommit), uma vez; repeticoes da chave nao gravam nem emitem.
+//
+// Concorrencia: dentro da transacao nao ha laco proprio de tentativas. Escrita concorrente na tarefa depois do
+// inicio da transacao vira WriteConflict (TransientTransactionError) e o withTransaction repete o callback inteiro:
+// nova leitura, novo instante, minutos recalculados. matchedCount != 1 (condicao nao casou com o que esta
+// transacao leu) nunca vira sucesso: recusa 409, sem nada gravado.
+
+const ROTA_STATUS = '/api/tarefas/:id/status';
+const MENSAGENS_STATUS = {
+  tarefa_inacessivel: { status: 403, erro: MSG_STATUS_SEM_ACESSO },
+  cronometro_inconsistente: { status: 409, erro: MSG_CRONOMETRO_INCONSISTENTE },
+  tarefa_alterada: { status: 409, erro: MSG_CONFLITO_TAREFA },
+};
+const RESPOSTAS_IDEMPOTENCIA_STATUS = {
+  invalid: { status: 400, erro: 'Chave de idempotência inválida.' },
+  conflict: { status: 422, erro: 'Esta chave de idempotência já foi usada com outro pedido.' },
+  in_progress: { status: 409, erro: 'Esta atualização de status ainda está em andamento. Tente novamente em instantes.' },
+  unknown: {
+    status: 409,
+    erro: 'Não foi possível confirmar se o status foi atualizado. Verifique a tarefa antes de tentar de novo.',
+  },
+  unavailable: { status: 503, erro: 'Serviço temporariamente indisponível.' },
+};
+
+const responderStatusSemRecurso = (res, resposta) => {
+  if (resposta.outcome === 'failed') {
+    if (resposta.replayed) res.set('Idempotency-Replayed', 'true');
+    const conhecida = MENSAGENS_STATUS[resposta.code];
+    if (conhecida && conhecida.status === resposta.statusCode) {
+      return res.status(conhecida.status).json({ erro: conhecida.erro });
+    }
+    return res.status(500).json({ erro: 'Erro ao atualizar status' });
+  }
+  const conhecida = RESPOSTAS_IDEMPOTENCIA_STATUS[resposta.outcome];
+  if (!conhecida) {
+    return res.status(500).json({ erro: 'Erro ao atualizar status' });
+  }
+  if (resposta.outcome === 'in_progress' || resposta.outcome === 'unavailable') {
+    res.set('Retry-After', '2');
+  }
+  return res.status(conhecida.status).json({ erro: conhecida.erro, code: resposta.code });
+};
+
+exports.atualizarStatusUserIdempotente = async (req, res) => {
+  try {
+    // Antes de reivindicar a chave (sem banco): status e ID no formato esperado.
+    const { status } = req.body;
+    if (!status || !STATUS_TAREFA.includes(status)) {
+      return res.status(400).json({ erro: 'Status inválido' });
+    }
+    const tarefaId = req.params.id;
+    if (typeof tarefaId !== 'string' || !OBJECT_ID_PATTERN.test(tarefaId)) {
+      return res.status(403).json({ erro: MSG_STATUS_SEM_ACESSO });
+    }
+    const usuarioId = String(req.user.id); // so do JWT verificado; nunca do corpo
+
+    const resposta = await obterServicoIdempotenciaTarefa().execute(
+      {
+        userId: usuarioId,
+        key: req.get('Idempotency-Key'),
+        method: 'PUT',
+        route: ROTA_STATUS,
+        params: { id: tarefaId },
+        body: { status },
+      },
+      // Pode rodar mais de uma vez (o withTransaction repete em erro transitorio): toda leitura e gravacao usa a
+      // session, o instante e tomado a cada execucao e nada e emitido aqui dentro.
+      async (session) => {
+        const tarefa = await Tarefa.findOne({ _id: tarefaId, user: usuarioId })
+          .populate('equipe', 'createdBy nome')
+          .session(session);
+        if (!tarefa) {
+          throw new IdempotentRequestError(403, 'tarefa_inacessivel');
+        }
+        // Instante desta execucao, tomado DEPOIS da leitura (como no legado): uma consulta demorada nao deixa
+        // minutos de fora. Cada repeticao do callback rele e recalcula; nada passa de uma execucao abortada a outra.
+        const agora = new Date();
+
+        let transicao;
+        try {
+          transicao = calcularTransicaoStatus(tarefa, status, agora);
+        } catch (err) {
+          if (err instanceof TaskTimerInconsistentError) {
+            console.warn('Cronômetro inconsistente; operação recusada:', err.motivo, String(err.tarefaId));
+            throw new IdempotentRequestError(409, 'cronometro_inconsistente');
+          }
+          throw err;
+        }
+
+        const gravacao = await Tarefa.updateOne(montarCondicao(tarefa, usuarioId), montarUpdate(tarefa, transicao, agora), {
+          session,
+          timestamps: false,
+          runValidators: true,
+        });
+        if (!gravacao || typeof gravacao.matchedCount !== 'number') {
+          throw new Error('Gravacao da tarefa sem confirmacao do banco');
+        }
+        if (gravacao.matchedCount !== 1) {
+          throw new IdempotentRequestError(409, 'tarefa_alterada');
+        }
+
+        // Com session os logs nao engolem erro: se algum falhar, a transacao inteira volta.
+        if (transicao.pausa) {
+          await logActivity('cronometro_pausado', textoPausaPorStatus(status, transicao.pausa.minutos), usuarioId, tarefa._id, {
+            session,
+          });
+        }
+        await logActivity('atualizacao_status', textoLogStatus(status), usuarioId, tarefa._id, { session });
+
+        let notificacoes = [];
+        const notificarAdmin = destinatarioNotificacaoStatus(tarefa, usuarioId);
+        if (notificarAdmin) {
+          const usuario = await User.findById(usuarioId).select('nome').session(session);
+          notificacoes = await persistNotifications(notificacaoStatus({ notificarAdmin, nome: usuario?.nome, tarefa, status }), {
+            session,
+          });
+        }
+
+        return {
+          statusCode: 200,
+          resourceType: 'tarefa',
+          resourceId: tarefa._id,
+          // So depois do commit e so a desta execucao (a que entrou); repeticoes da chave nao emitem.
+          afterCommit: () => emitNotifications(notificacoes),
+        };
+      }
+    );
+
+    if (resposta.outcome !== 'executed' && resposta.outcome !== 'replayed') {
+      return responderStatusSemRecurso(res, resposta);
+    }
+
+    // Resposta com o estado ATUAL, relida agora (a repeticao nunca desfaz mudancas posteriores) e so para quem
+    // continua responsavel: reatribuida depois, nao devolve dados da tarefa.
+    const tarefaAtual = await Tarefa.findOne({ _id: tarefaId, user: usuarioId }).populate('equipe', 'createdBy nome');
+    if (!tarefaAtual) {
+      return res.status(403).json({ erro: MSG_STATUS_SEM_ACESSO });
+    }
+    if (resposta.outcome === 'replayed') {
+      res.set('Idempotency-Replayed', 'true');
+    }
+    return res
+      .status(resposta.statusCode)
+      .json({ msg: 'Status atualizado com sucesso', tarefa: await assinarAnexosTarefa(tarefaAtual) });
+  } catch (err) {
+    console.error('Erro ao atualizar status (idempotente):', err?.name);
+    return res.status(500).json({ erro: 'Erro ao atualizar status' });
   }
 };
 
