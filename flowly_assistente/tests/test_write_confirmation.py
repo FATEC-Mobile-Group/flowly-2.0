@@ -236,17 +236,17 @@ class PrepareAndConfirmTests(WriteConfirmationTestCase):
 
     def test_expired_confirmation_never_executes(self):
         self.send("token-user", STATUS_PHRASE)
-        store, conversation = self.state("token-user")
-        pending = store.get(conversation)
-        store.save(conversation, {**pending, "expires_at": time.time() - 1})
+        self.ops.offset = self.ops.confirm_ttl + 1  # o prazo agora e o da operacao compartilhada (API)
         payload, _status = self.send("token-user", "confirmar")
         self.assertEqual(payload["conversation"]["status"], "expired")
         self.assertIn("expirou", payload["reply_text"])
         self.assertIsNone(self.pending("token-user"))
         self.assert_no_writes()
 
-    def test_confirmation_deadline_comes_from_the_environment(self):
-        with patch.dict("os.environ", {"FLOWLY_WRITE_CONFIRMATION_TTL_SEC": "5"}):
+    def test_confirmation_deadline_comes_from_the_operations_api(self):
+        # O prazo e definido pela API das operacoes; a variavel local antiga nao o estende.
+        self.ops.confirm_ttl = 5
+        with patch.dict("os.environ", {"FLOWLY_WRITE_CONFIRMATION_TTL_SEC": "999"}):
             payload, _status = self.send("token-user", STATUS_PHRASE)
         self.assertEqual(payload["conversation"]["expires_in"], 5)
         self.assertLessEqual(self.pending("token-user")["expires_at"], time.time() + 5)
@@ -269,21 +269,22 @@ class PrepareAndConfirmTests(WriteConfirmationTestCase):
         self.assertEqual(self.api.writes(), [STATUS_WRITE])
 
     def test_stale_read_of_an_already_confirmed_operation_does_not_execute_twice(self):
-        # Duas confirmacoes simultaneas: a segunda leu o estado antes de a primeira limpa-lo.
+        # Duas confirmacoes simultaneas (duas instancias): a segunda leu a operacao pendente antes de a primeira
+        # executa-la; o claim atomico da API recusa a segunda.
         self.send("token-user", STATUS_PHRASE)
         store, conversation = self.state("token-user")
-        stale = store.get(conversation)
+        stale = self.ops.current("token-user", conversation)
+        self.assertEqual(stale["status"], "pending")
         self.send("token-user", "confirmar")
         self.assertEqual(self.api.writes(), [STATUS_WRITE])
         agent = MessageAgent(token="token-user", body={"conversationId": conversation, "content": "confirmar"})
         agent.user_id = USERS_BY_TOKEN["token-user"]["_id"]
         agent.conversations = store
-        payload, _status = agent._continue_write_confirmation(
-            conversation_id=conversation, pending=stale, content="confirmar", event_id="e",
-            moderation_score=0.0, queue_result={},
+        payload, _status = agent._confirm_shared(
+            operation=stale, conversation_id=conversation, event_id="e", moderation_score=0.0, queue_result={},
         )
         self.assertFalse(payload["action_executed"])
-        self.assertIn("já foi confirmada ou cancelada", payload["reply_text"])
+        self.assertIn("já foi confirmada", payload["reply_text"])
         self.assertEqual(self.api.writes(), [STATUS_WRITE])
 
     def test_client_cannot_choose_the_summary_labels(self):
@@ -326,14 +327,26 @@ class ConfirmationBindingTests(WriteConfirmationTestCase):
         self.assertEqual(self.pending("token-admin")["mode"], "write_confirmation")
 
     def test_state_bound_to_another_owner_is_refused(self):
-        # Estado gravado na chave desta pessoa, mas preparado para outra (copia, migracao ou adulteracao).
-        self.send("token-admin", "criar equipe marketing")
+        # (a) Estado local antigo de confirmacao (de antes da mudanca, copia, migracao ou adulteracao), preparado
+        # para outra pessoa: e descartado e nunca executa.
         store, conversation = self.state("token-admin")
-        store.save(conversation, {**store.get(conversation), "owner_id": USERS_BY_TOKEN["token-admin-2"]["_id"]})
+        store.save(conversation, {
+            "mode": "write_confirmation", "command": "create_team", "params": {"nome": "marketing"},
+            "owner_id": USERS_BY_TOKEN["token-admin-2"]["_id"], "conversation_id": conversation,
+            "operation_id": "operacao-local-antiga", "expires_at": time.time() + 60,
+        })
         payload, _status = self.send("token-admin", "confirmar")
         self.assertFalse(payload["action_executed"])
         self.assertEqual(payload["conversation"]["status"], "cancelled")
         self.assertIsNone(self.pending("token-admin"))
+        self.assert_no_writes()
+        # (b) Operacao compartilhada cujo dono (no servidor) e outra pessoa: esta pessoa nao a ve nem a confirma.
+        self.send("token-admin", "criar equipe marketing")
+        self.ops.ops[-1]["ownerId"] = USERS_BY_TOKEN["token-admin-2"]["_id"]
+        payload, _status = self.send("token-admin", "confirmar")
+        self.assertFalse(payload["action_executed"])
+        self.assertIsNone(self.pending("token-admin"))
+        self.assertEqual((self.ops.ops[-1]["status"], self.ops.ops[-1]["attempts"]), ("pending", 0))
         self.assert_no_writes()
 
 
@@ -396,7 +409,7 @@ class MultiTurnFlowTests(WriteConfirmationTestCase):
         self.send("token-admin", "confirmar")
         self.assertEqual(self.api.writes(), [("POST", "/tarefas", {
             "descricao": "Relatório semanal", "equipe": TEAM_ID, "dataEntrega": "2026-12-25", "urgencia": "alta",
-            "detalhes": "Resumo das entregas", "user": "u" * 24,
+            "detalhes": "Resumo das entregas", "user": "f" * 24,
         })])
 
     def test_new_command_while_confirmation_is_pending_cancels_it(self):
@@ -577,11 +590,14 @@ class UnexpectedErrorsTests(WriteConfirmationTestCase):
         from flowly_assistant.assistant_core.rest_assistant import RestAssistant
 
         self.send("token-user", STATUS_PHRASE)
-        with patch.object(RestAssistant, "_execute", side_effect=RuntimeError("detalhe interno /tmp/segredo")):
+        # A confirmacao compartilhada executa por execute_with_key (chave do claim).
+        with patch.object(RestAssistant, "execute_with_key", side_effect=RuntimeError("detalhe interno /tmp/segredo")):
             payload, status = self.send("token-user", "confirmar")
         self.assertEqual((status, payload["error"]), (500, "internal_error"))
         self.assertFalse(payload["action_executed"])
         self.assertNotIn("detalhe interno", json.dumps(payload, ensure_ascii=False))
+        # Resultado incerto: a operacao fica para recuperacao com a mesma chave, nunca como concluida.
+        self.assertEqual(self.ops.ops[-1]["status"], "retry_pending")
         # O proprio metodo tambem nao devolve o detalhe (outro chamador poderia repassar o payload inteiro).
         from flowly_assistant.commands import get_commands
 

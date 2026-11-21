@@ -187,8 +187,8 @@ const NAO_FALSIFICAR_ALEM_DE_DATE = [
   'requestIdleCallback', 'cancelIdleCallback', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval',
   'setTimeout', 'clearTimeout',
 ];
-const PUBLIC_KEYS = ['attempts', 'commandKey', 'conversationId', 'createdAt', 'expiresAt', 'operationId', 'recoverUntil',
-  'result', 'status', 'summary', 'updatedAt'];
+const PUBLIC_KEYS = ['attempts', 'commandKey', 'conversationId', 'createdAt', 'expiresAt', 'operationId',
+  'paramsFingerprint', 'recoverUntil', 'result', 'status', 'summary', 'updatedAt'];
 const CLAIM_KEYS = [...PUBLIC_KEYS, 'claimToken', 'idempotencyKey', 'leaseUntil', 'params', 'recovery'].sort();
 const INDICES_OK = [
   { v: 2, key: { _id: 1 }, name: '_id_' },

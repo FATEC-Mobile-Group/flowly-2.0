@@ -6,7 +6,7 @@ from dataclasses import asdict, is_dataclass
 from difflib import SequenceMatcher
 from typing import Any, Dict, Optional, Tuple
 
-from flowly_assistant.api_client import APIError, FlowlyAPIClient
+from flowly_assistant.api_client import APIError, APIResponse, FlowlyAPIClient
 from flowly_assistant.api_config import configured_api_base_url
 from flowly_assistant.command_parser import (
     STRICT_PARAM_WORDS,
@@ -280,6 +280,47 @@ class RestAssistant:
                 "tts": tts_payload(text, enabled=self.tts_enabled, language=self.language),
             }
         )
+
+    def execute_with_key(
+        self, command_key: str, params: Dict[str, str], *, idempotency_key: str, timeout_sec: float
+    ) -> APIResponse:
+        """Escrita de uma operacao compartilhada ja reivindicada (claim).
+
+        Usa SO o commandKey e os params devolvidos pelo claim (sem reinterpretar frase, resumo ou params do
+        cliente) e a Idempotency-Key da operacao (a mesma em toda tentativa). Cliente HTTP proprio, com o timeout
+        decidido pelo servidor do assistente: o timeout_sec do corpo do pedido nao vale aqui. Erros sobem como
+        APIError (estruturado) para quem registra o desfecho; a API publica faz a autorizacao final.
+        """
+        client = FlowlyAPIClient(base_url=self.api.base_url, token=self.api.token, timeout_sec=timeout_sec, debug=self.debug)
+        p = {str(k): str(v) for k, v in (params or {}).items()}
+        key = idempotency_key
+        if command_key == "create_team":
+            data = client.create_team(self._title_case_name(p["nome"]), idempotency_key=key)
+        elif command_key == "create_task":
+            data = client.create_task(
+                descricao=p["nome"],
+                detalhes=p.get("descricao"),
+                dataEntrega=p["dataEntrega"],
+                urgencia=p["urgencia"],
+                equipe=p["equipe"],
+                user=p.get("user"),
+                idempotency_key=key,
+            )
+        elif command_key == "add_comment":
+            data = client.add_comment(p["task_id"], p["texto"], idempotency_key=key)
+        elif command_key == "add_subtask":
+            data = client.add_subtask(p["task_id"], p["descricao"], idempotency_key=key)
+        elif command_key == "assign_to_me":
+            data = client.assign_to_me(p["task_id"], idempotency_key=key)
+        elif command_key == "update_status":
+            data = client.update_status(p["task_id"], p["status"], idempotency_key=key)
+        elif command_key == "timer":
+            data = client.timer(p["task_id"], p["acao"], idempotency_key=key)
+        else:
+            # Nunca DELETE nem comando fora das sete escritas; nada foi enviado.
+            raise APIError(f"Comando não executável: {command_key}", kind="invalid_request")
+        # Com o cliente HTTP real, last_response traz status e Idempotency-Replayed.
+        return client.last_response or APIResponse(200, data)
 
     def _detect_user_type(self) -> Optional[str]:
         try:

@@ -287,7 +287,16 @@ class LastBarrierTests(unittest.TestCase):
             raw, status, _ = function.flowly_http(FakeRequest("/api/v1/messages", body, token))
             return json.loads(raw), status
 
-        with patch.object(message_agent, "assistant_writes_enabled", lambda: True), \
+        # Confirmacoes compartilhadas simuladas, com a verificacao da chave delas tambem "esquecida": so resta a
+        # barreira do cliente HTTP.
+        import fake_operations
+        from test_command_safety import TEST_OPERATIONS_SECRET
+
+        fake_operations.FakeOperationsClient.server = fake_operations.FakeOperationsServer(USERS_BY_TOKEN)
+        with patch.dict(os.environ, {"ASSISTANT_OPERATIONS_SECRET": TEST_OPERATIONS_SECRET}), \
+                patch.object(message_agent, "OperationsClient", fake_operations.FakeOperationsClient), \
+                patch.object(fake_operations, "assistant_writes_enabled", lambda: True), \
+                patch.object(message_agent, "assistant_writes_enabled", lambda: True), \
                 patch.object(rest_assistant, "assistant_writes_enabled", lambda: True):
             for token, steps in (("token-admin", ("criar equipe marketing", "confirmar")),
                                  ("token-user", (STATUS_PHRASE, "confirmar")),

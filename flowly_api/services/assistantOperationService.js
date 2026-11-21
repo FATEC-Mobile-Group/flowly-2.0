@@ -242,7 +242,27 @@ const assertMutable = (update) => {
 
 const iso = (value) => (value instanceof Date ? value.toISOString() : value ?? null);
 
-// Visao para o frontend: sem dono, parametros, chave de idempotencia, claimToken ou lease.
+// Impressao digital dos parametros executaveis GRAVADOS (derivada, nada novo no modelo). Permite ao assistente
+// conferir, depois de perder a resposta do create, se a operacao encontrada tem exatamente os parametros que ele
+// enviou, sem que a consulta de estado devolva os parametros. Serializacao canonica, igual a do Python
+// (operations_client.params_fingerprint): JSON compacto de {commandKey, params} com as chaves de params em ordem,
+// so valores string (ausentes/nulos ficam fora), prefixado pelo dominio e com SHA-256 em hex.
+// Valores de baixa entropia (ex.: status) sao adivinhaveis pelo hash: ele so circula no contrato interno.
+const PARAMS_FINGERPRINT_DOMAIN = 'flowly-assistant-operation-params:v1\n';
+const paramsFingerprint = (commandKey, params) => {
+  if (typeof commandKey !== 'string' || !isPlainObject(params)) return null;
+  const sorted = {};
+  const names = Object.keys(params).filter((name) => params[name] !== undefined && params[name] !== null).sort();
+  for (const name of names) {
+    if (typeof params[name] !== 'string') return null; // formato inesperado: sem impressao, sem reutilizacao
+    sorted[name] = params[name];
+  }
+  const canonical = JSON.stringify({ commandKey, params: sorted });
+  return crypto.createHash('sha256').update(PARAMS_FINGERPRINT_DOMAIN + canonical, 'utf8').digest('hex');
+};
+
+// Visao de estado (contrato interno): sem dono, parametros, chave de idempotencia, claimToken ou lease. Leva so a
+// impressao digital dos parametros; o assistente nunca a repassa ao navegador.
 const publicView = (doc) => ({
   operationId: doc.operationId,
   conversationId: doc.conversationId,
@@ -255,6 +275,7 @@ const publicView = (doc) => ({
   result: doc.result ? { ...doc.result } : null,
   createdAt: iso(doc.createdAt),
   updatedAt: iso(doc.updatedAt),
+  paramsFingerprint: paramsFingerprint(doc.commandKey, doc.params),
 });
 // Visao do claim (so para o fluxo interno que vai executar a escrita).
 const claimView = (doc) => ({
@@ -513,6 +534,7 @@ const createAssistantOperationService = ({
 
 module.exports = {
   createAssistantOperationService,
+  paramsFingerprint,
   configFromEnv,
   missingIndexes,
   REQUIRED_INDEXES,

@@ -44,6 +44,10 @@ from flowly_assistant.storage.conversation_state import (  # noqa: E402
     ConversationStateRepository,
     ScopedConversationState,
 )
+from fake_operations import FakeOperationsClient, FakeOperationsServer  # noqa: E402
+
+# Segredo interno so para os testes (o falso das operacoes confere o tamanho minimo, como o cliente real).
+TEST_OPERATIONS_SECRET = "segredo-de-teste-" + "t" * 32
 
 WRITE_COMMANDS = {"create_task", "create_team", "assign_to_me", "update_status", "timer", "add_comment", "add_subtask", "delete_task"}
 CONVERSATION_ID = "voice-seguranca-1767225600000"
@@ -87,7 +91,7 @@ NAMED_BACKLOG_TASKS = [
 USERS_BY_TOKEN = {
     "token-admin": {"_id": "d" * 24, "nome": "Admin Ficticio", "tipo": "admin"},
     "token-admin-2": {"_id": "e" * 24, "nome": "Admin Dois", "tipo": "admin"},
-    "token-user": {"_id": "u" * 24, "nome": "Pessoa Ficticia", "tipo": "user"},
+    "token-user": {"_id": "f" * 24, "nome": "Pessoa Ficticia", "tipo": "user"},
 }
 
 
@@ -108,12 +112,23 @@ class FakeFlowlyAPI:
     def __init__(self):
         self.calls = []
         self.backlog = []
+        self.keys = []  # Idempotency-Key de cada escrita (None = sem chave)
+        self.timeouts = []  # timeout do cliente HTTP em cada escrita
+        self.on_write = None  # gancho opcional: chamado antes de responder a uma escrita
 
     def writes(self):
         return [call for call in self.calls if call[0] != "GET"]
 
     def __call__(self, client, method, path, **kwargs):
         self.calls.append((method.upper(), path, kwargs.get("json")))
+        if method.upper() != "GET":
+            self.keys.append(kwargs.get("idempotency_key"))
+            self.timeouts.append(getattr(client, "timeout_sec", None))
+            if self.on_write:
+                hook = self.on_write
+                result = hook(client, method.upper(), path, kwargs)
+                if result is not None:
+                    return result
         if path == "/users/me":
             if client.token not in USERS_BY_TOKEN:
                 raise APIError("HTTP 401 em GET /users/me: Token inválido")
@@ -125,7 +140,7 @@ class FakeFlowlyAPI:
         if method == "GET" and path in ("/equipes/minhas", "/equipes"):
             return [{"_id": TEAM_ID, "nome": "Equipe Alfa"}]
         if method == "GET" and path.endswith("/membros"):
-            return [{"_id": "u" * 24, "nome": "Pessoa Ficticia"}]
+            return [{"_id": "f" * 24, "nome": "Pessoa Ficticia"}]
         if method == "GET" and path.endswith("/detalhes"):
             return {"tarefa": next(t for t in TASKS + self.backlog if t["_id"] == path.split("/")[2])}
         if method in ("POST", "PUT", "DELETE"):
@@ -145,10 +160,18 @@ class AssistantFlowTestCase(unittest.TestCase):
                 # Estes testes cobrem o fluxo de escrita com a chave temporaria LIGADA (reativacao futura);
                 # o padrao desligado e coberto em test_write_kill_switch.
                 "FLOWLY_ASSISTANT_WRITES_ENABLED": "true",
+                "ASSISTANT_OPERATIONS_SECRET": TEST_OPERATIONS_SECRET,
             },
         )
         env.start()
         self.addCleanup(env.stop)
+
+        # Confirmacoes compartilhadas: servidor falso das operacoes no lugar do OperationsClient (sem rede).
+        self.ops = FakeOperationsServer(USERS_BY_TOKEN)
+        FakeOperationsClient.server = self.ops
+        ops_patch = patch.object(message_agent, "OperationsClient", FakeOperationsClient)
+        ops_patch.start()
+        self.addCleanup(ops_patch.stop)
 
         self.api = FakeFlowlyAPI()
         api = self.api
@@ -171,8 +194,21 @@ class AssistantFlowTestCase(unittest.TestCase):
         return json.loads(raw), status
 
     def pending(self, token, conversation_id=CONVERSATION_ID):
+        """Fluxo pendente da conversa: o estado local (perguntas, selecao) ou, sem ele, a confirmacao compartilhada
+        ativa no servidor de operacoes (no formato antigo de write_confirmation). None = nada pendente em lugar algum."""
         user_id = USERS_BY_TOKEN[token]["_id"]
-        return ScopedConversationState(ConversationStateRepository(), user_id).get(conversation_id)
+        local = ScopedConversationState(ConversationStateRepository(), user_id).get(conversation_id)
+        if local:
+            return local
+        self.ops.settle(user_id, conversation_id)
+        op = self.ops.active(user_id, conversation_id)
+        if not op:
+            return None
+        return {
+            "mode": "write_confirmation", "command": op["commandKey"], "params": dict(op["params"]),
+            "owner_id": op["ownerId"], "conversation_id": op["conversationId"], "operation_id": op["operationId"],
+            "status": op["status"], "expires_at": op["expiresAt"] - self.ops.offset,  # no relogio real do teste
+        }
 
     def assert_no_writes(self):
         self.assertEqual(self.api.writes(), [], f"escritas inesperadas: {self.api.writes()}")

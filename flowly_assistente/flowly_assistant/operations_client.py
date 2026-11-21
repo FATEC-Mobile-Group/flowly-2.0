@@ -18,6 +18,8 @@ falha de rede nunca significam "nada mudou".
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 from typing import Any, Dict, Optional
@@ -49,6 +51,36 @@ def _operations_secret() -> str:
     if len(secret) < MIN_SECRET_LENGTH:
         raise APIError(NOT_CONFIGURED_REPLY, kind="not_configured", code="assistant_operations_not_configured")
     return secret
+
+
+PARAMS_FINGERPRINT_DOMAIN = "flowly-assistant-operation-params:v1\n"
+FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
+
+
+def params_fingerprint(command_key: Any, params: Any) -> Optional[str]:
+    """Impressao digital dos parametros executaveis, identica a da API (paramsFingerprint em
+    services/assistantOperationService.js): SHA-256 em hex de dominio + JSON compacto de {commandKey, params}, chaves
+    de params em ordem, so valores string (None fica fora), sem escapar nao-ASCII (como o JSON.stringify).
+
+    None quando nao da para calcular com seguranca (formato inesperado ou texto que o JSON.stringify serializaria
+    diferente, como surrogate isolado): quem compara trata como divergencia.
+    """
+    if not isinstance(command_key, str) or not isinstance(params, dict):
+        return None
+    clean = {}
+    for name in sorted(params):
+        value = params[name]
+        if value is None:
+            continue
+        if not isinstance(name, str) or not isinstance(value, str):
+            return None
+        clean[name] = value
+    canonical = json.dumps({"commandKey": command_key, "params": clean}, ensure_ascii=False, separators=(",", ":"))
+    try:
+        data = (PARAMS_FINGERPRINT_DOMAIN + canonical).encode("utf-8")
+    except UnicodeEncodeError:
+        return None
+    return hashlib.sha256(data).hexdigest()
 
 
 def _invalid(what: str) -> APIError:

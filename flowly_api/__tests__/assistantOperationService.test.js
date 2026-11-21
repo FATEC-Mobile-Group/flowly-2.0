@@ -18,6 +18,7 @@ const {
   AssistantOperationUnavailableError,
   missingIndexes,
   MAX_CLAIMS,
+  paramsFingerprint,
 } = require('../services/assistantOperationService');
 
 const OWNER_A = 'a'.repeat(24);
@@ -401,6 +402,38 @@ describe('assistantOperationService', () => {
         .rejects.toMatchObject({ code: 'result_invalid' });
       const guardado = JSON.stringify(fake.db.rows);
       expect(guardado).not.toMatch(/eyJ|X-Goog|Bearer/);
+    });
+  });
+
+  describe('impressao digital dos parametros (resposta perdida no create)', () => {
+    // Mesmo vetor de flowly_assistente/tests/test_shared_confirmations.py (pontos de codigo, sem escapes no fonte).
+    const VECTOR_CODES = [82, 101, 118, 34, 110, 250, 109, 34, 10, 224, 109, 227, 32, 92, 32, 111, 107, 1, 31, 127, 32,
+      0x2028, 32, 0x2713, 32, 0x1f600];
+    const VECTOR_HASH = '67e7a379e9a71251cc564c4cee1cb4686c202ac63a4ae98cdbfa44aed47e5e13';
+
+    test('serializacao canonica igual a do Python: vetor de referencia, ordem das chaves e formatos inesperados', () => {
+      const texto = String.fromCodePoint(...VECTOR_CODES);
+      expect(paramsFingerprint('add_comment', { texto, task_id: '1'.repeat(24) })).toBe(VECTOR_HASH);
+      expect(paramsFingerprint('add_comment', { task_id: '1'.repeat(24), texto })).toBe(VECTOR_HASH);
+      expect(paramsFingerprint('add_comment', { task_id: '1'.repeat(24), texto, user: undefined })).toBe(VECTOR_HASH);
+      expect(paramsFingerprint('add_subtask', { texto, task_id: '1'.repeat(24) })).not.toBe(VECTOR_HASH);
+      [{ texto: 1 }, ['texto'], null, 'texto'].forEach((bad) => expect(paramsFingerprint('add_comment', bad)).toBeNull());
+    });
+
+    test('estado traz so a impressao dos params gravados; mesmo comando e resumo com params diferentes divergem', async () => {
+      const primeira = await service.create({ ownerId: OWNER_A, conversationId: CONV, ...STATUS_CMD });
+      expect(primeira.operation).not.toHaveProperty('params');
+      expect(primeira.operation.paramsFingerprint).toBe(paramsFingerprint('update_status', STATUS_CMD.params));
+      expect(JSON.stringify(primeira.operation)).not.toContain(TASK_ID);
+      await service.cancel({ ownerId: OWNER_A, conversationId: CONV, operationId: primeira.operation.operationId });
+      const outra = { ...STATUS_CMD, params: { ...STATUS_CMD.params, task_id: 'd'.repeat(24) } };
+      const segunda = await service.create({ ownerId: OWNER_A, conversationId: CONV, ...outra });
+      const atual = await service.getCurrent({ ownerId: OWNER_A, conversationId: CONV });
+      expect(atual.operationId).toBe(segunda.operation.operationId);
+      expect([atual.commandKey, atual.summary]).toEqual([primeira.operation.commandKey, primeira.operation.summary]);
+      expect(atual.paramsFingerprint).toMatch(/^[0-9a-f]{64}$/);
+      expect(atual.paramsFingerprint).not.toBe(primeira.operation.paramsFingerprint);
+      expect(atual).not.toHaveProperty('params');
     });
   });
 

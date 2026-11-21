@@ -11,12 +11,15 @@ const {
 // query vira identidade; ownerId/userId no corpo e recusado como campo desconhecido.
 //
 // Respostas: so por listas explicitas de campos.
-//  - publica (estado): toPublic, nunca com params, idempotencyKey, claimToken, lease ou dono;
+//  - publica (estado): toPublic, nunca com params, idempotencyKey, claimToken, lease ou dono (so a impressao digital
+//    paramsFingerprint dos params, para o assistente; ele nao a repassa ao navegador);
 //  - privada (claim): toClaim, so na resposta do claim, para o assistente executar a escrita com a chave.
 // Nada de documento do MongoDB, JWT, segredo ou URL assinada.
 
+// paramsFingerprint: SHA-256 dos parametros executaveis gravados (nunca os parametros em si), para o assistente
+// conferir uma resposta perdida do create. So existe neste contrato interno (segredo + JWT).
 const PUBLIC_FIELDS = ['operationId', 'conversationId', 'commandKey', 'summary', 'status', 'attempts', 'expiresAt',
-  'recoverUntil', 'createdAt', 'updatedAt'];
+  'recoverUntil', 'createdAt', 'updatedAt', 'paramsFingerprint'];
 const RESULT_FIELDS = ['httpStatus', 'code', 'resourceType', 'resourceId', 'replayed'];
 const CLAIM_EXTRA_FIELDS = ['leaseUntil', 'recovery', 'idempotencyKey', 'claimToken'];
 const PARAM_FIELDS = ['task_id', 'team_id', 'equipe', 'user', 'status', 'acao', 'urgencia', 'nome', 'descricao', 'texto',
