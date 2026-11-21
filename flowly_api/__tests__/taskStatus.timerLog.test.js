@@ -48,28 +48,27 @@ jest.mock('../models/Equipe', () => ({
   updateMany: jest.fn(async () => ({})),
 }));
 
-// Tarefa em memoria: findOne({ _id, user }).populate('equipe') devolve um documento que grava de volta os campos
-// que o controller altera (status e cronometro) no save().
+// Tarefa em memoria: findOne({ _id, user }).populate('equipe') devolve uma copia; a gravacao e o updateOne
+// condicional (aqui so _id/responsavel no filtro: a concorrencia tem a suite propria, taskStatusTimer.concurrency).
 jest.mock('../models/Tarefa', () => {
-  const CAMPOS = ['status', 'tempoGasto', 'cronometroAtivo', 'ultimaAtualizacaoCronometro', 'tempoExcedido'];
   const findOne = jest.fn((filter) => mockThenable(() => {
     const row = mockDb.tarefas.find((item) => mockSame(item._id, filter._id) && mockSame(item.user, filter.user));
     if (!row) return null;
     const doc = { ...row, equipe: { ...row.equipe }, anexos: [...(row.anexos || [])] };
-    doc.save = jest.fn(async () => {
-      CAMPOS.forEach((campo) => {
-        if (doc[campo] === undefined) delete row[campo];
-        else row[campo] = doc[campo];
-      });
-      return doc;
-    });
     doc.toObject = () => {
-      const { save, toObject, ...plain } = doc;
+      const { toObject, ...plain } = doc;
       return JSON.parse(JSON.stringify(plain));
     };
     return doc;
   }));
-  return { findOne, find: jest.fn(() => mockThenable(() => [])), findById: jest.fn(() => mockThenable(() => null)) };
+  const updateOne = jest.fn(async (filter, update) => {
+    const row = mockDb.tarefas.find((item) => mockSame(item._id, filter._id) && mockSame(item.user, filter.user));
+    if (!row) return { matchedCount: 0, modifiedCount: 0 };
+    Object.assign(row, update.$set || {});
+    Object.keys(update.$unset || {}).forEach((campo) => delete row[campo]);
+    return { matchedCount: 1, modifiedCount: 1 };
+  });
+  return { findOne, updateOne, find: jest.fn(() => mockThenable(() => [])), findById: jest.fn(() => mockThenable(() => null)) };
 });
 
 jest.mock('../models/ActivityLog', () => {

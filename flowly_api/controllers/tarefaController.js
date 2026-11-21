@@ -8,6 +8,12 @@ const { notifyUsers, persistNotifications, emitNotifications } = require('../uti
 const bucket = require('../services/storage');
 const { getSignedUrl } = require('../services/storage');
 const { createIdempotencyService, IdempotentRequestError } = require('../services/idempotencyService');
+const {
+  executarTransicao,
+  calcularPausa,
+  TaskTransitionConflictError,
+  TaskTimerInconsistentError,
+} = require('../services/taskStateTransition');
 
 const assinarAnexosTarefa = async (tarefa) => {
   const tarefaObject = typeof tarefa.toObject === 'function' ? tarefa.toObject() : tarefa;
@@ -27,27 +33,25 @@ const assinarAnexosTarefa = async (tarefa) => {
 
 const assinarAnexosTarefas = (tarefas) => Promise.all(tarefas.map(assinarAnexosTarefa));
 
-// descreverPausa (opcional): monta o texto do log a partir dos minutos somados; sem ele, o texto de sempre.
-const pausarCronometroAtivo = async (tarefa, userId, motivo = 'cronometro_pausado', descreverPausa) => {
-  if (!tarefa.cronometroAtivo) {
-    return 0;
+const MSG_CONFLITO_TAREFA = 'A tarefa foi alterada por outra operação ao mesmo tempo. Tente novamente.';
+
+const MSG_CRONOMETRO_INCONSISTENTE = 'O cronômetro desta tarefa está inconsistente: o horário de início está ausente, '
+  + 'inválido ou no futuro. Nenhum tempo foi contabilizado e a tarefa não foi alterada.';
+
+// Recusas controladas da transicao de status/cronometro (nada foi gravado, nenhum log ou notificacao): 409.
+// Qualquer outro erro segue para o 500 de cada rota.
+const responderRecusaTransicao = (err, res) => {
+  if (err instanceof TaskTransitionConflictError) {
+    res.status(409).json({ erro: MSG_CONFLITO_TAREFA });
+    return true;
   }
-
-  const ultimaAtualizacao = tarefa.ultimaAtualizacaoCronometro || new Date();
-  const tempoDecorrido = Math.floor((new Date() - ultimaAtualizacao) / 60000);
-
-  tarefa.tempoGasto = (tarefa.tempoGasto || 0) + Math.max(tempoDecorrido, 0);
-  tarefa.cronometroAtivo = false;
-  tarefa.ultimaAtualizacaoCronometro = undefined;
-
-  if (tarefa.tempoEstimado && tarefa.tempoGasto > tarefa.tempoEstimado) {
-    tarefa.tempoExcedido = true;
+  if (err instanceof TaskTimerInconsistentError) {
+    // Diagnostico so com o motivo e o id da tarefa.
+    console.warn('Cronômetro inconsistente; operação recusada:', err.motivo, String(err.tarefaId));
+    res.status(409).json({ erro: MSG_CRONOMETRO_INCONSISTENTE });
+    return true;
   }
-
-  const minutos = Math.max(tempoDecorrido, 0);
-  const detalhes = descreverPausa ? descreverPausa(minutos) : `Cronômetro pausado. +${minutos} mins`;
-  await logActivity(motivo, detalhes, userId, tarefa._id);
-  return minutos;
+  return false;
 };
 
 // session: so no caminho transacional idempotente (consulta dentro da transacao). Sem ela, consulta de sempre.
@@ -1044,25 +1048,37 @@ exports.atualizarStatusUser = async (req, res) => {
       return res.status(400).json({ erro: "Status inválido" });
     }
 
-    const tarefa = await Tarefa.findOne({ _id: req.params.id, user: req.user.id }).populate('equipe', 'createdBy nome');
+    // Gravacao condicional ao estado lido (responsavel, status e cronometro): se outra escrita mudou a tarefa no
+    // meio do caminho, rele, revalida o responsavel e recalcula a pausa. Mudar para outro status que nao
+    // em_andamento pausa o cronometro ativo; em_andamento nao inicia.
+    const resultado = await executarTransicao({
+      userId: req.user.id,
+      ler: () => Tarefa.findOne({ _id: req.params.id, user: req.user.id }).populate('equipe', 'createdBy nome'),
+      calcular: (tarefaLida, agora) => {
+        if (!tarefaLida.cronometroAtivo || status === 'em_andamento') {
+          return { set: { status } };
+        }
+        const pausa = calcularPausa(tarefaLida, agora);
+        return { set: { ...pausa.set, status }, unset: ['ultimaAtualizacaoCronometro'], pausa };
+      },
+    });
 
-    if (!tarefa) {
+    if (resultado.tipo === 'sem_acesso') {
       return res.status(403).json({ erro: 'Você não pode editar essa tarefa' });
     }
 
-    if (tarefa.cronometroAtivo && status !== 'em_andamento') {
+    // Logs e notificacao so depois da gravacao confirmada, uma vez, com os dados da tentativa que valeu.
+    const { tarefa, transicao } = resultado;
+    if (transicao.pausa) {
       // Tipo de atividade valido no ActivityLog (o antigo 'cronometro_pausado_por_status' nao existe no enum e o log
       // era descartado em silencio); o texto registra que a pausa foi automatica, pela mudanca de status.
-      await pausarCronometroAtivo(
-        tarefa,
-        req.user.id,
+      await logActivity(
         'cronometro_pausado',
-        (minutos) => `Cronômetro pausado automaticamente pela alteração de status para ${status}. +${minutos} mins`
+        `Cronômetro pausado automaticamente pela alteração de status para ${status}. +${transicao.pausa.minutos} mins`,
+        req.user.id,
+        tarefa._id
       );
     }
-
-    tarefa.status = status;
-    await tarefa.save();
 
     await logActivity('atualizacao_status', `Status alterado para ${status}`, req.user.id, tarefa._id);
 
@@ -1086,6 +1102,7 @@ exports.atualizarStatusUser = async (req, res) => {
 
     res.json({ msg: 'Status atualizado com sucesso', tarefa: await assinarAnexosTarefa(tarefa) });
   } catch (err) {
+    if (responderRecusaTransicao(err, res)) return undefined;
     console.error('Erro ao atualizar status:', err);
     res.status(500).json({ erro: 'Erro ao atualizar status' });
   }
@@ -1099,39 +1116,41 @@ exports.controlarCronometro = async (req, res) => {
       return res.status(400).json({ erro: 'Ação inválida.' });
     }
 
-    const tarefa = await Tarefa.findOne({ _id: req.params.id, user: req.user.id });
+    // Gravacao condicional ao estado lido: dois inicios (ou duas pausas) sobre o mesmo estado nao passam juntos; o
+    // segundo rele, ve o estado novo e recebe o 400 de sempre. O cronometro continua sem exigir status em_andamento.
+    const resultado = await executarTransicao({
+      userId: req.user.id,
+      ler: () => Tarefa.findOne({ _id: req.params.id, user: req.user.id }),
+      calcular: (tarefaLida, agora) => {
+        if (acao === 'iniciar') {
+          if (tarefaLida.cronometroAtivo) return { erro: 'Cronômetro já está ativo' };
+          return { set: { cronometroAtivo: true, ultimaAtualizacaoCronometro: agora } };
+        }
+        if (!tarefaLida.cronometroAtivo) return { erro: 'Cronômetro já está pausado' };
+        // Pausa manual: como antes, mantem ultimaAtualizacaoCronometro gravado (so a pausa por status remove).
+        const pausa = calcularPausa(tarefaLida, agora);
+        return { set: pausa.set, pausa };
+      },
+    });
 
-    if (!tarefa) return res.status(403).json({ erro: 'Acesso negado à tarefa' });
+    if (resultado.tipo === 'sem_acesso') return res.status(403).json({ erro: 'Acesso negado à tarefa' });
+    if (resultado.tipo === 'recusada') return res.status(400).json({ erro: resultado.erro });
 
+    // Log so depois da gravacao confirmada, uma vez, com os minutos da tentativa que valeu.
+    const { tarefa, transicao } = resultado;
     if (acao === 'iniciar') {
-      if (tarefa.cronometroAtivo) {
-        return res.status(400).json({ erro: 'Cronômetro já está ativo' });
-      }
-      tarefa.cronometroAtivo = true;
-      tarefa.ultimaAtualizacaoCronometro = new Date();
       await logActivity('cronometro_iniciado', `Cronômetro iniciado`, req.user.id, tarefa._id);
-    } else if (acao === 'pausar') {
-      if (!tarefa.cronometroAtivo) {
-        return res.status(400).json({ erro: 'Cronômetro já está pausado' });
-      }
-      const tempoDecorrido = Math.floor((new Date() - tarefa.ultimaAtualizacaoCronometro) / 60000); // converte para minutos
-      tarefa.tempoGasto += tempoDecorrido;
-      tarefa.cronometroAtivo = false;
-
-      // Verifica se o tempo estimado foi excedido
-      if (tarefa.tempoEstimado && tarefa.tempoGasto > tarefa.tempoEstimado) {
-        tarefa.tempoExcedido = true;
-      }
-      await logActivity('cronometro_pausado', `Cronômetro pausado. +${tempoDecorrido} mins`, req.user.id, tarefa._id);
+    } else {
+      await logActivity('cronometro_pausado', `Cronômetro pausado. +${transicao.pausa.minutos} mins`, req.user.id, tarefa._id);
     }
 
-    await tarefa.save();
     res.json({
       msg: `Cronômetro ${acao}do com sucesso`,
       tarefa: await assinarAnexosTarefa(tarefa),
       tempoExcedido: tarefa.tempoExcedido
     });
   } catch (err) {
+    if (responderRecusaTransicao(err, res)) return undefined;
     console.error('Erro ao controlar cronômetro:', err);
     res.status(500).json({ erro: 'Erro ao controlar cronômetro' });
   }
