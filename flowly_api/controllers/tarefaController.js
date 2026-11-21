@@ -10,8 +10,8 @@ const { getSignedUrl } = require('../services/storage');
 const { createIdempotencyService, IdempotentRequestError } = require('../services/idempotencyService');
 const {
   executarTransicao,
-  calcularPausa,
   calcularTransicaoStatus,
+  calcularTransicaoCronometro,
   montarCondicao,
   montarUpdate,
   TaskTransitionConflictError,
@@ -1140,24 +1140,32 @@ const RESPOSTAS_IDEMPOTENCIA_STATUS = {
   unavailable: { status: 503, erro: 'Serviço temporariamente indisponível.' },
 };
 
-const responderStatusSemRecurso = (res, resposta) => {
+// Resposta dos desfechos sem recurso do nucleo (status e cronometro): falha de negocio guardada -> mensagem da rota;
+// desfechos da propria idempotencia -> mensagem com o code; qualquer outra coisa -> 500 da rota.
+const criarResponderSemRecurso = ({ mensagens, respostas, erroGenerico }) => (res, resposta) => {
   if (resposta.outcome === 'failed') {
     if (resposta.replayed) res.set('Idempotency-Replayed', 'true');
-    const conhecida = MENSAGENS_STATUS[resposta.code];
+    const conhecida = mensagens[resposta.code];
     if (conhecida && conhecida.status === resposta.statusCode) {
       return res.status(conhecida.status).json({ erro: conhecida.erro });
     }
-    return res.status(500).json({ erro: 'Erro ao atualizar status' });
+    return res.status(500).json({ erro: erroGenerico });
   }
-  const conhecida = RESPOSTAS_IDEMPOTENCIA_STATUS[resposta.outcome];
+  const conhecida = respostas[resposta.outcome];
   if (!conhecida) {
-    return res.status(500).json({ erro: 'Erro ao atualizar status' });
+    return res.status(500).json({ erro: erroGenerico });
   }
   if (resposta.outcome === 'in_progress' || resposta.outcome === 'unavailable') {
     res.set('Retry-After', '2');
   }
   return res.status(conhecida.status).json({ erro: conhecida.erro, code: resposta.code });
 };
+
+const responderStatusSemRecurso = criarResponderSemRecurso({
+  mensagens: MENSAGENS_STATUS,
+  respostas: RESPOSTAS_IDEMPOTENCIA_STATUS,
+  erroGenerico: 'Erro ao atualizar status',
+});
 
 exports.atualizarStatusUserIdempotente = async (req, res) => {
   try {
@@ -1266,11 +1274,28 @@ exports.atualizarStatusUserIdempotente = async (req, res) => {
   }
 };
 
+// Acoes, mensagens, logs e resposta do cronometro: os mesmos no legado e no caminho com Idempotency-Key.
+const ACOES_CRONOMETRO = ['iniciar', 'pausar'];
+const MSG_CRONOMETRO_SEM_ACESSO = 'Acesso negado à tarefa';
+const MSG_RECUSA_CRONOMETRO = {
+  cronometro_ja_ativo: 'Cronômetro já está ativo',
+  cronometro_ja_pausado: 'Cronômetro já está pausado',
+};
+const tipoLogCronometro = (acao) => (acao === 'iniciar' ? 'cronometro_iniciado' : 'cronometro_pausado');
+const textoLogCronometro = (acao, transicao) =>
+  (acao === 'iniciar' ? 'Cronômetro iniciado' : `Cronômetro pausado. +${transicao.pausa.minutos} mins`);
+// Mensagem de sucesso legada ("iniciardo"/"pausardo") mantida de proposito: e o contrato atual.
+const respostaCronometro = async (acao, tarefa) => ({
+  msg: `Cronômetro ${acao}do com sucesso`,
+  tarefa: await assinarAnexosTarefa(tarefa),
+  tempoExcedido: tarefa.tempoExcedido,
+});
+
 // USER: controlar cronômetro
 exports.controlarCronometro = async (req, res) => {
   try {
     const { acao } = req.body; // 'iniciar' ou 'pausar'
-    if (acao !== 'iniciar' && acao !== 'pausar') {
+    if (!ACOES_CRONOMETRO.includes(acao)) {
       return res.status(400).json({ erro: 'Ação inválida.' });
     }
 
@@ -1280,37 +1305,135 @@ exports.controlarCronometro = async (req, res) => {
       userId: req.user.id,
       ler: () => Tarefa.findOne({ _id: req.params.id, user: req.user.id }),
       calcular: (tarefaLida, agora) => {
-        if (acao === 'iniciar') {
-          if (tarefaLida.cronometroAtivo) return { erro: 'Cronômetro já está ativo' };
-          return { set: { cronometroAtivo: true, ultimaAtualizacaoCronometro: agora } };
-        }
-        if (!tarefaLida.cronometroAtivo) return { erro: 'Cronômetro já está pausado' };
-        // Pausa manual: como antes, mantem ultimaAtualizacaoCronometro gravado (so a pausa por status remove).
-        const pausa = calcularPausa(tarefaLida, agora);
-        return { set: pausa.set, pausa };
+        const transicao = calcularTransicaoCronometro(tarefaLida, acao, agora);
+        return transicao.recusa ? { erro: MSG_RECUSA_CRONOMETRO[transicao.recusa] } : transicao;
       },
     });
 
-    if (resultado.tipo === 'sem_acesso') return res.status(403).json({ erro: 'Acesso negado à tarefa' });
+    if (resultado.tipo === 'sem_acesso') return res.status(403).json({ erro: MSG_CRONOMETRO_SEM_ACESSO });
     if (resultado.tipo === 'recusada') return res.status(400).json({ erro: resultado.erro });
 
     // Log so depois da gravacao confirmada, uma vez, com os minutos da tentativa que valeu.
     const { tarefa, transicao } = resultado;
-    if (acao === 'iniciar') {
-      await logActivity('cronometro_iniciado', `Cronômetro iniciado`, req.user.id, tarefa._id);
-    } else {
-      await logActivity('cronometro_pausado', `Cronômetro pausado. +${transicao.pausa.minutos} mins`, req.user.id, tarefa._id);
-    }
+    await logActivity(tipoLogCronometro(acao), textoLogCronometro(acao, transicao), req.user.id, tarefa._id);
 
-    res.json({
-      msg: `Cronômetro ${acao}do com sucesso`,
-      tarefa: await assinarAnexosTarefa(tarefa),
-      tempoExcedido: tarefa.tempoExcedido
-    });
+    res.json(await respostaCronometro(acao, tarefa));
   } catch (err) {
     if (responderRecusaTransicao(err, res)) return undefined;
     console.error('Erro ao controlar cronômetro:', err);
     res.status(500).json({ erro: 'Erro ao controlar cronômetro' });
+  }
+};
+
+// ---------------------------------------------------------------------------------------------------------
+// Cronometro protegido por Idempotency-Key (so com o cabecalho; ver middlewares/idempotencyOptIn.js).
+// Mesmas regras, textos e mensagens do controlarCronometro acima. Na MESMA transacao: leitura da tarefa pelo
+// responsavel, gravacao condicional, ActivityLog e conclusao da chave. A rota nao gera notificacao nem Socket.IO.
+// Sem laco proprio de tentativas: WriteConflict faz o withTransaction repetir o callback (nova leitura, novo
+// instante, minutos recalculados); matchedCount != 1 nunca vira sucesso (409, nada gravado).
+
+const ROTA_CRONOMETRO = '/api/tarefas/:id/cronometro';
+const MENSAGENS_CRONOMETRO = {
+  cronometro_ja_ativo: { status: 400, erro: MSG_RECUSA_CRONOMETRO.cronometro_ja_ativo },
+  cronometro_ja_pausado: { status: 400, erro: MSG_RECUSA_CRONOMETRO.cronometro_ja_pausado },
+  tarefa_inacessivel: { status: 403, erro: MSG_CRONOMETRO_SEM_ACESSO },
+  cronometro_inconsistente: { status: 409, erro: MSG_CRONOMETRO_INCONSISTENTE },
+  tarefa_alterada: { status: 409, erro: MSG_CONFLITO_TAREFA },
+};
+const responderCronometroSemRecurso = criarResponderSemRecurso({
+  mensagens: MENSAGENS_CRONOMETRO,
+  respostas: {
+    ...RESPOSTAS_IDEMPOTENCIA_STATUS,
+    in_progress: { status: 409, erro: 'Esta operação do cronômetro ainda está em andamento. Tente novamente em instantes.' },
+    unknown: {
+      status: 409,
+      erro: 'Não foi possível confirmar se o cronômetro foi atualizado. Verifique a tarefa antes de tentar de novo.',
+    },
+  },
+  erroGenerico: 'Erro ao controlar cronômetro',
+});
+
+exports.controlarCronometroIdempotente = async (req, res) => {
+  try {
+    // Antes de reivindicar a chave (sem banco): acao e ID no formato esperado.
+    const { acao } = req.body;
+    if (!ACOES_CRONOMETRO.includes(acao)) {
+      return res.status(400).json({ erro: 'Ação inválida.' });
+    }
+    const tarefaId = req.params.id;
+    if (typeof tarefaId !== 'string' || !OBJECT_ID_PATTERN.test(tarefaId)) {
+      return res.status(403).json({ erro: MSG_CRONOMETRO_SEM_ACESSO });
+    }
+    const usuarioId = String(req.user.id); // so do JWT verificado; nunca do corpo
+
+    const resposta = await obterServicoIdempotenciaTarefa().execute(
+      {
+        userId: usuarioId,
+        key: req.get('Idempotency-Key'),
+        method: 'PUT',
+        route: ROTA_CRONOMETRO,
+        params: { id: tarefaId },
+        body: { acao },
+      },
+      // Pode rodar mais de uma vez (o withTransaction repete em erro transitorio): toda leitura e gravacao usa a
+      // session, o instante e tomado depois da leitura de cada execucao e nada passa de uma execucao a outra.
+      async (session) => {
+        const tarefa = await Tarefa.findOne({ _id: tarefaId, user: usuarioId }).session(session);
+        if (!tarefa) {
+          throw new IdempotentRequestError(403, 'tarefa_inacessivel');
+        }
+        const agora = new Date();
+
+        let transicao;
+        try {
+          transicao = calcularTransicaoCronometro(tarefa, acao, agora);
+        } catch (err) {
+          if (err instanceof TaskTimerInconsistentError) {
+            console.warn('Cronômetro inconsistente; operação recusada:', err.motivo, String(err.tarefaId));
+            throw new IdempotentRequestError(409, 'cronometro_inconsistente');
+          }
+          throw err;
+        }
+        if (transicao.recusa) {
+          throw new IdempotentRequestError(400, transicao.recusa);
+        }
+
+        const gravacao = await Tarefa.updateOne(montarCondicao(tarefa, usuarioId), montarUpdate(tarefa, transicao, agora), {
+          session,
+          timestamps: false,
+          runValidators: true,
+        });
+        if (!gravacao || typeof gravacao.matchedCount !== 'number') {
+          throw new Error('Gravacao da tarefa sem confirmacao do banco');
+        }
+        if (gravacao.matchedCount !== 1) {
+          throw new IdempotentRequestError(409, 'tarefa_alterada');
+        }
+
+        // Com session o log nao engole erro: se falhar, a gravacao volta junto.
+        await logActivity(tipoLogCronometro(acao), textoLogCronometro(acao, transicao), usuarioId, tarefa._id, { session });
+
+        return { statusCode: 200, resourceType: 'tarefa', resourceId: tarefa._id };
+      }
+    );
+
+    if (resposta.outcome !== 'executed' && resposta.outcome !== 'replayed') {
+      return responderCronometroSemRecurso(res, resposta);
+    }
+
+    // Resposta com o estado ATUAL, relida agora (a repeticao nunca refaz nem desfaz nada) e so para quem continua
+    // responsavel: reatribuida depois, nao devolve dados da tarefa.
+    const tarefaAtual = await Tarefa.findOne({ _id: tarefaId, user: usuarioId });
+    if (!tarefaAtual) {
+      return res.status(403).json({ erro: MSG_CRONOMETRO_SEM_ACESSO });
+    }
+    if (resposta.outcome === 'replayed') {
+      res.set('Idempotency-Replayed', 'true');
+    }
+    return res.status(resposta.statusCode).json(await respostaCronometro(acao, tarefaAtual));
+  } catch (err) {
+    console.error('Erro ao controlar cronômetro (idempotente):', err?.name);
+    return res.status(500).json({ erro: 'Erro ao controlar cronômetro' });
   }
 };
 

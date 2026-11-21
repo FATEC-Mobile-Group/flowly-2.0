@@ -114,6 +114,19 @@ const calcularTransicaoStatus = (tarefa, status, agora) => {
   return { set: { ...pausa.set, status }, unset: ['ultimaAtualizacaoCronometro'], pausa };
 };
 
+// Cronometro manual (legado e caminho com Idempotency-Key): iniciar so com o cronometro parado; pausar so ativo.
+// Nao exige status em_andamento. A pausa manual mantem ultimaAtualizacaoCronometro gravado (so a pausa por status
+// remove). Recusa de negocio: { recusa: codigo }. Pode lancar TaskTimerInconsistentError (pausa).
+const calcularTransicaoCronometro = (tarefa, acao, agora) => {
+  if (acao === 'iniciar') {
+    if (tarefa.cronometroAtivo) return { recusa: 'cronometro_ja_ativo' };
+    return { set: { cronometroAtivo: true, ultimaAtualizacaoCronometro: agora } };
+  }
+  if (!tarefa.cronometroAtivo) return { recusa: 'cronometro_ja_pausado' };
+  const pausa = calcularPausa(tarefa, agora);
+  return { set: pausa.set, pausa };
+};
+
 const mesmoValor = (a, b) => {
   if (a instanceof Date || b instanceof Date) {
     return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
@@ -182,6 +195,7 @@ module.exports = {
   montarCondicao,
   calcularPausa,
   calcularTransicaoStatus,
+  calcularTransicaoCronometro,
   montarUpdate,
   executarTransicao,
 };

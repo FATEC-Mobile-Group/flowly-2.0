@@ -93,6 +93,14 @@ router.put(
 );
 
 // USER: controlar cronômetro
-router.put('/:id/cronometro', isUser, ensureObjectBody, tarefaController.controlarCronometro);
+// Com Idempotency-Key: inicio/pausa protegidos (condicional, na transacao com chave e log). Sem o cabecalho:
+// fluxo atual, inalterado.
+router.put(
+  '/:id/cronometro',
+  isUser,
+  ensureObjectBody,
+  comIdempotenciaOpcional(tarefaController.controlarCronometroIdempotente),
+  tarefaController.controlarCronometro
+);
 
 module.exports = router;
