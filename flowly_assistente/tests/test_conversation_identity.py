@@ -28,7 +28,8 @@ import function  # noqa: E402
 from flowly_assistant.api_client import APIError, FlowlyAPIClient  # noqa: E402
 from flowly_assistant.assistant_core import message_agent  # noqa: E402
 from flowly_assistant.storage.analytics_repository import AnalyticsRepository  # noqa: E402
-from flowly_assistant.storage.conversation_state import (  # noqa: E402
+from fake_conversations import install as install_conversations  # noqa: E402
+from fake_conversations import (  # noqa: E402
     ConversationStateRepository,
     ScopedConversationState,
 )
@@ -102,6 +103,8 @@ class ConversationIdentityTests(unittest.TestCase):
             target.start()
             self.addCleanup(target.stop)
 
+        # secret=False: sem segredo interno no ambiente, as confirmacoes compartilhadas nunca saem para a rede.
+        self.conversations = install_conversations(self, USERS_BY_TOKEN, secret=False)
         self.repository = ConversationStateRepository()
 
     def state_of(self, user_id, conversation_id=CONVERSATION_ID):
@@ -176,7 +179,7 @@ class ConversationIdentityTests(unittest.TestCase):
     def test_task_list_of_a_is_not_exposed_to_b(self):
         ScopedConversationState(self.repository, "user-A").save(
             CONVERSATION_ID,
-            {"mode": "task_selection", "tasks": [{"_id": "t1", "descricao": "Relatorio confidencial"}]},
+            {"mode": "task_selection", "tasks": [{"_id": "1" * 24, "descricao": "Relatorio confidencial"}]},
         )
 
         payload_b, _status = self.send("token-B", "primeira")
@@ -189,7 +192,7 @@ class ConversationIdentityTests(unittest.TestCase):
         self.send("token-A", "criar tarefa")
         ScopedConversationState(self.repository, "user-B").save(
             CONVERSATION_ID,
-            {"mode": "task_selection", "tasks": [{"_id": "t2", "descricao": "Tarefa de B"}]},
+            {"mode": "task_selection", "tasks": [{"_id": "2" * 24, "descricao": "Tarefa de B"}]},
         )
 
         payload, _status = self.send("token-B", "sair")

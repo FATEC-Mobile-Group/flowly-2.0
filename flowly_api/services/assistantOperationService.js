@@ -535,6 +535,8 @@ const createAssistantOperationService = ({
 module.exports = {
   createAssistantOperationService,
   paramsFingerprint,
+  hasSensitive,
+  isPlainObject,
   configFromEnv,
   missingIndexes,
   REQUIRED_INDEXES,

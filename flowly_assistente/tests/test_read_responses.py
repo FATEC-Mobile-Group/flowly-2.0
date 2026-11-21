@@ -31,7 +31,8 @@ import function  # noqa: E402
 from flowly_assistant import api_client  # noqa: E402
 from flowly_assistant.api_client import APIError, FlowlyAPIClient  # noqa: E402
 from flowly_assistant.assistant_core import message_agent  # noqa: E402
-from flowly_assistant.storage.conversation_state import (  # noqa: E402
+from fake_conversations import install as install_conversations  # noqa: E402
+from fake_conversations import (  # noqa: E402
     ConversationStateRepository,
     ScopedConversationState,
 )
@@ -165,6 +166,8 @@ class ReadResponseTestCase(unittest.TestCase):
         ):
             target.start()
             self.addCleanup(target.stop)
+        # secret=False: sem segredo interno no ambiente, as confirmacoes compartilhadas nunca saem para a rede.
+        self.conversations = install_conversations(self, PROFILES, secret=False)
         # Formatadores puros (sem rede nem estado), para objetos incompletos.
         self.agent = message_agent.MessageAgent.__new__(message_agent.MessageAgent)
 

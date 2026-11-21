@@ -24,7 +24,7 @@ from test_command_safety import (
 import function  # noqa: E402
 from flowly_assistant.assistant_core.message_agent import MessageAgent, is_confirmation  # noqa: E402
 from flowly_assistant.command_parser import CommandParser  # noqa: E402
-from flowly_assistant.storage.conversation_state import (  # noqa: E402
+from fake_conversations import (  # noqa: E402
     ConversationStateRepository,
     ScopedConversationState,
 )

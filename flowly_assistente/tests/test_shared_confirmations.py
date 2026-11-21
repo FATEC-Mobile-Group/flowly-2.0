@@ -29,6 +29,7 @@ from fake_operations import lost  # noqa: E402
 from flowly_assistant.api_client import APIError  # noqa: E402
 from flowly_assistant.assistant_core.message_agent import (  # noqa: E402
     COMPLETE_RESERVE_SEC,
+    CONTEXT_UNAVAILABLE_REPLY,
     SHARED_UNAVAILABLE_REPLY,
     UNVERIFIED_CREATE_REPLY,
     WRITE_TIMEOUT_CAP_SEC,
@@ -36,7 +37,7 @@ from flowly_assistant.assistant_core.message_agent import (  # noqa: E402
 )
 from flowly_assistant.commands import WRITES_DISABLED_REPLY, WRITES_ENABLED_ENV  # noqa: E402
 from flowly_assistant.operations_client import params_fingerprint  # noqa: E402
-from flowly_assistant.storage.conversation_state import (  # noqa: E402
+from fake_conversations import (  # noqa: E402
     ConversationStateRepository,
     ScopedConversationState,
 )
@@ -483,8 +484,10 @@ class FailClosedTests(SharedConfirmationTestCase):
 
     def test_28_missing_internal_secret_blocks_writes_without_fallback(self):
         with patch.dict(os.environ, {"ASSISTANT_OPERATIONS_SECRET": ""}):
+            # O mesmo segredo protege o contexto da conversa: ele e o primeiro a faltar (nada local no lugar).
             payload, status = self.send("token-user", STATUS_PHRASE)
-            self.assertEqual((status, payload["reply_text"]), (503, SHARED_UNAVAILABLE_REPLY))
+            self.assertEqual((status, payload["reply_text"]), (503, CONTEXT_UNAVAILABLE_REPLY))
+            self.assertFalse(payload["action_executed"])
             payload, _status = self.send("token-user", "confirmar")
             self.assertFalse(payload["action_executed"])
             payload, _status = self.send("token-user", "minhas tarefas")

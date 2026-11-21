@@ -87,8 +87,12 @@ def _invalid(what: str) -> APIError:
     return APIError(f"Pedido inválido para as operações do assistente: {what}.", kind="invalid_request")
 
 
-class OperationsClient:
-    """create, current, result, claim, complete, retry e cancel das confirmacoes compartilhadas."""
+class _InternalAPIClient:
+    """Transporte das rotas internas da API (segredo interno + JWT): destino fixo, sem redirecionamento, erros
+    estruturados. BASE_PATH e LABEL definem o grupo de rotas (confirmacoes ou contexto de conversa)."""
+
+    BASE_PATH = OPERATIONS_PATH
+    LABEL = "operações do assistente"
 
     def __init__(self, token: str, *, timeout_sec: float = DEFAULT_TIMEOUT_SEC) -> None:
         self._token = str(token or "").strip()
@@ -99,7 +103,7 @@ class OperationsClient:
         self.timeout_sec = min(max(timeout, 1.0), MAX_TIMEOUT_SEC)
 
     def __repr__(self) -> str:  # nunca mostra o token
-        return f"OperationsClient(timeout_sec={self.timeout_sec})"
+        return f"{type(self).__name__}(timeout_sec={self.timeout_sec})"
 
     # --- validacao local (antes de qualquer rede) -------------------------------------------------------------
 
@@ -134,7 +138,7 @@ class OperationsClient:
             base = validated_api_base_url()
         except ValueError:
             raise APIError(NOT_CONFIGURED_REPLY, kind="not_configured", code="api_url_invalid") from None
-        url = f"{base}{OPERATIONS_PATH}{path}"
+        url = f"{base}{self.BASE_PATH}{path}"
         headers = {
             "Authorization": f"Bearer {self._token}",
             "Content-Type": "application/json",
@@ -146,15 +150,15 @@ class OperationsClient:
                                     timeout=self.timeout_sec, allow_redirects=False)
         except requests.Timeout:
             # Sem o texto da excecao (pode trazer a URL); a operacao pode ter mudado no servidor.
-            raise APIError("Timeout ao chamar as operações do assistente.", kind="timeout", method=method,
+            raise APIError(f"Timeout ao chamar as {self.LABEL}.", kind="timeout", method=method,
                            may_have_executed=is_write) from None
         except requests.RequestException:
-            raise APIError("Erro de rede ao chamar as operações do assistente.", kind="network", method=method,
+            raise APIError(f"Erro de rede ao chamar as {self.LABEL}.", kind="network", method=method,
                            may_have_executed=is_write) from None
 
         status = int(getattr(resp, "status_code", 0) or 0)
         if 300 <= status < 400:
-            raise APIError("Redirecionamento recusado nas operações do assistente.", kind="redirect",
+            raise APIError(f"Redirecionamento recusado nas {self.LABEL}.", kind="redirect",
                            status_code=status, method=method, may_have_executed=is_write)
         try:
             payload = resp.json()
@@ -165,7 +169,7 @@ class OperationsClient:
             code = data.get("code") if isinstance(data.get("code"), str) else None
             operation = data.get("operation") if isinstance(data.get("operation"), dict) else None
             raise APIError(
-                f"HTTP {status} nas operações do assistente: {code or 'erro'}",
+                f"HTTP {status} nas {self.LABEL}: {code or 'erro'}",
                 kind="http", status_code=status, code=code, retry_after=_retry_after_seconds(resp),
                 replayed=(_header(resp, "Idempotency-Replayed") or "").lower() == "true",
                 method=method, operation=operation,
@@ -173,9 +177,12 @@ class OperationsClient:
                 may_have_executed=is_write and status >= 500,
             )
         if not isinstance(payload, dict) or payload.get("ok") is not True or expect not in payload:
-            raise APIError("Resposta inválida das operações do assistente.", kind="invalid_response",
+            raise APIError(f"Resposta inválida das {self.LABEL}.", kind="invalid_response",
                            status_code=status, method=method, may_have_executed=is_write)
         return payload[expect]
+
+class OperationsClient(_InternalAPIClient):
+    """create, current, result, claim, complete, retry e cancel das confirmacoes compartilhadas."""
 
     # --- contrato ----------------------------------------------------------------------------------------------
 

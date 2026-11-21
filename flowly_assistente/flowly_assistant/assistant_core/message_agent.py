@@ -40,7 +40,14 @@ from flowly_assistant.nlp.moderation import ModerationService
 from flowly_assistant.operations_client import FINGERPRINT, UUID_V4, OperationsClient, params_fingerprint
 from flowly_assistant.queues.analytics_queue import AnalyticsQueue
 from flowly_assistant.storage.analytics_repository import AnalyticsRepository
-from flowly_assistant.storage.conversation_state import ConversationStateRepository, ScopedConversationState
+from flowly_assistant.conversation_client import ConversationStateClient
+from flowly_assistant.operations_client import OPERATIONS_SECRET_ENV
+from flowly_assistant.storage.conversation_state import (
+    ConversationStateConflict,
+    ConversationStateRejected,
+    ConversationStateUnavailable,
+    SharedConversationState,
+)
 
 # channelId é o tipo de canal de entrada, nunca uma equipe (a API trata channelId com ObjectId como equipe).
 ALLOWED_CHANNEL_IDS = {"web", "voice-assistant"}
@@ -233,6 +240,25 @@ UNVERIFIED_STATE_REPLY = (
     "Não consegui verificar a confirmação pendente agora, então nada foi executado nem cancelado. "
     "Tente de novo em instantes."
 )
+# Contexto compartilhado da conversa (API): indisponivel, alterado por outra mensagem ou descartado.
+CONTEXT_UNAVAILABLE_REPLY = (
+    "Não consegui recuperar o andamento desta conversa agora. Nada foi alterado. "
+    "Repita em instantes; consultas diretas, como \"minhas tarefas\", continuam funcionando."
+)
+CONTEXT_CONFLICT_REPLY = (
+    "Recebi outra mensagem nesta conversa ao mesmo tempo e não usei esta resposta. Nada foi alterado. "
+    "Pode repetir?"
+)
+CONTEXT_REJECTED_REPLY = (
+    "Não consegui guardar essa resposta: ficou longa demais ou em um formato inesperado. Nada foi alterado. "
+    "Envie uma versão mais curta."
+)
+CONTEXT_SENSITIVE_REPLY = (
+    "Essa resposta parece conter uma credencial ou chave e não foi guardada. Nada foi alterado. Envie sem esse trecho."
+)
+CONTEXT_DISCARDED_REPLY = (
+    "Perdi o andamento desta conversa e descartei o que estava guardado. Nada foi alterado. Pode repetir o pedido?"
+)
 
 NON_DIRECTIVE_REPLIES = {
     "pergunta": (
@@ -290,7 +316,9 @@ class MessageAgent:
         self.queue = AnalyticsQueue()
         self.parser = CommandParser(threshold=int(os.getenv("FLOWLY_MATCH_THRESHOLD", "78")))
         self.assistant = assistant_from_http_body(body, token, debug=debug)
-        self.conversations = ConversationStateRepository()
+        # Contexto da conversa: compartilhado pela API (definido depois da autenticacao; nada local).
+        self.conversations: Any = None
+        self.context_available = True
         self.user_id: Optional[str] = None
         self._operations_client: Optional[OperationsClient] = None
 
@@ -300,7 +328,44 @@ class MessageAgent:
             self._operations_client = OperationsClient(self.token)
         return self._operations_client
 
+    def _shared_conversations(self) -> SharedConversationState:
+        return SharedConversationState(
+            ConversationStateClient(self.token),
+            forbidden_values=(self.token, os.getenv(OPERATIONS_SECRET_ENV) or ""),
+        )
+
     def handle_message(self) -> Tuple[Dict[str, Any], int]:
+        """Mensagem da conversa. Conflito de versao ou contexto indisponivel no meio do fluxo viram respostas
+        controladas: o contexto e sempre gravado ANTES de qualquer escrita, entao nada foi executado."""
+        try:
+            return self._handle_message()
+        except ConversationStateRejected as exc:
+            text = CONTEXT_SENSITIVE_REPLY if exc.code == "state_sensitive" else CONTEXT_REJECTED_REPLY
+            return self._context_error("conversation_state_rejected", text, 400)
+        except ConversationStateConflict:
+            return self._context_error("conversation_state_conflict", CONTEXT_CONFLICT_REPLY, 409)
+        except ConversationStateUnavailable:
+            return self._context_error("conversation_state_unavailable", CONTEXT_UNAVAILABLE_REPLY, 503)
+
+    def _context_error(self, error: str, text: str, status: int) -> Tuple[Dict[str, Any], int]:
+        conversation_id = str(self.body.get("conversationId") or self.body.get("conversation_id") or "")
+        return self._error(error, text, status, action_executed=False,
+                           conversation={"id": conversation_id, "status": "unverified"})
+
+    def _is_context_free_read(self, content: str) -> bool:
+        """Consulta direta e completa, que nao depende de resposta anterior nem escreve (ex.: "minhas tarefas").
+        Usada so quando o contexto compartilhado esta indisponivel; confirmacoes, respostas soltas e escritas nao."""
+        if is_confirmation(content) or is_non_directive_text(content):
+            return False
+        match = self.parser.match(content)
+        if match is None or match.command.key == "exit" or is_write_command(match.command):
+            return False
+        if match.command.key in DISABLED_COMMANDS:
+            return True  # recusa fixa (exclusao), sem contexto
+        merged = {str(k): str(v) for k, v in (match.params or {}).items() if v is not None}
+        return all(merged.get(param) for param in match.command.required_params)
+
+    def _handle_message(self) -> Tuple[Dict[str, Any], int]:
         content = str(self.body.get("content") or self.body.get("utterance") or self.body.get("text") or "").strip()
         channel_id = str(self.body.get("channelId") or self.body.get("channel_id") or "web").strip()
         if channel_id not in ALLOWED_CHANNEL_IDS:
@@ -318,7 +383,8 @@ class MessageAgent:
         if not user_id:
             return self._error("unauthorized", "Autenticação inválida.", 401)
         self.user_id = user_id
-        self.conversations = ScopedConversationState(self.conversations, user_id)
+        if self.conversations is None:
+            self.conversations = self._shared_conversations()
 
         moderation = self.moderation.moderate(content)
         if not moderation.allowed:
@@ -342,6 +408,18 @@ class MessageAgent:
         }
         self._enrich_event_team_context(event, content)
         queue_result = self.queue.publish_message(event)
+
+        # Contexto da conversa: lido UMA vez aqui (o version lido vale para toda gravacao desta mensagem).
+        try:
+            self.conversations.load(conversation_id)
+        except ConversationStateUnavailable:
+            self.context_available = False
+        if not self.context_available:
+            # Sem contexto: so consultas diretas (que nao dependem de resposta anterior nem escrevem) seguem.
+            if not self._is_context_free_read(content):
+                return self._context_error("conversation_state_unavailable", CONTEXT_UNAVAILABLE_REPLY, 503)
+        elif self.conversations.was_discarded(conversation_id):
+            return self._context_error("invalid_conversation", CONTEXT_DISCARDED_REPLY, 409)
 
         if assistant_writes_enabled():
             # A confirmacao pendente (ou em execucao) desta conversa vem da API, em qualquer instancia.
@@ -459,10 +537,17 @@ class MessageAgent:
             )
             if not response.get("ok") and response.get("missing"):
                 # Valor recusado (data ambigua, texto longo demais): pergunta de novo so esse campo.
-                self.conversations.save(
-                    conversation_id,
-                    {"command_key": match.command.key, "params": merged_params, "missing": response["missing"]},
-                )
+                try:
+                    self.conversations.save(
+                        conversation_id,
+                        # O valor recusado (ex.: texto acima do limite) nao e guardado: a pergunta volta para ele.
+                        {"command_key": match.command.key, "missing": response["missing"],
+                         "params": {k: v for k, v in merged_params.items() if k not in response["missing"]}},
+                    )
+                except ConversationStateRejected:
+                    # O restante do pedido tambem nao cabe no contexto: a recusa acima continua verdadeira (nada
+                    # alterado, enviar mais curto) e nada fica guardado; o pedido inteiro precisa ser refeito.
+                    return response, response_status
                 response["conversation"] = {"id": conversation_id, "status": "awaiting_params"}
             return response, response_status
 
@@ -644,7 +729,8 @@ class MessageAgent:
             if not response.get("ok"):
                 self.conversations.save(
                     conversation_id,
-                    {"command_key": command.key, "params": params, "missing": response.get("missing") or []},
+                    {"command_key": command.key, "missing": response.get("missing") or [],
+                     "params": {k: v for k, v in params.items() if k not in (response.get("missing") or [])}},
                 )
                 response["conversation"] = {"id": conversation_id, "status": "awaiting_params"}
             return response, response_status
@@ -682,7 +768,8 @@ class MessageAgent:
         if command_key in {"my_tasks", "backlog", "list_tasks"}:
             tasks = _dict_items(result)
             display, spoken = self._tasks_reply(tasks)
-            if tasks:
+            # Sem contexto compartilhado, a lista e so mostrada: nada de selecao guardada (nem opcoes oferecidas).
+            if tasks and self.context_available:
                 self.conversations.save(
                     conversation_id,
                     {
@@ -2237,8 +2324,11 @@ def standby_conversation(token: str, body: Dict[str, Any]) -> Tuple[Dict[str, An
         return {"ok": False, "error": "unauthorized", "reply_text": "Autenticação inválida."}, 401
 
     conversation_id = str(body.get("conversationId") or body.get("conversation_id") or "").strip()
+    context_cleared = True
     if conversation_id:
-        ScopedConversationState(ConversationStateRepository(), user_id).clear(conversation_id)
+        # Saiu da conversa: o contexto dela (pergunta pendente, selecao) e removido na API, sem condicao de versao.
+        # Sem confirmacao da API, nao diz que limpou; o prazo do contexto encerra de qualquer forma.
+        context_cleared = SharedConversationState(ConversationStateClient(token)).clear_unconditional(conversation_id)
         if assistant_writes_enabled():
             # Saiu da conversa: a confirmacao pendente dela nao deve continuar executavel (melhor esforco; o prazo
             # da API encerra de qualquer forma). Execucao ja reivindicada nunca e cancelada.
@@ -2250,9 +2340,15 @@ def standby_conversation(token: str, body: Dict[str, Any]) -> Tuple[Dict[str, An
             except APIError:
                 pass
     text = "Assistente em standby."
+    extra: Dict[str, Any] = {}
+    if not context_cleared:
+        extra["context_cleared"] = False
+        text = ("Assistente em standby. Não consegui limpar o andamento desta conversa agora; ele expira sozinho "
+                "em alguns minutos.")
     return {
         "ok": True,
         "status": "standby",
+        **extra,
         "reply_text": text,
         "tts": {"enabled": False, "language": "pt-BR", "text": text},
     }, 200

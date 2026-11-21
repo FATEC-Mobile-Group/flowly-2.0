@@ -40,11 +40,12 @@ from flowly_assistant.command_parser import (  # noqa: E402
     strict_param_value,
 )
 from flowly_assistant.commands import DISABLED_COMMAND_REPLY, DISABLED_COMMANDS, get_commands  # noqa: E402
-from flowly_assistant.storage.conversation_state import (  # noqa: E402
+from fake_conversations import (  # noqa: E402
     ConversationStateRepository,
     ScopedConversationState,
 )
 from fake_operations import FakeOperationsClient, FakeOperationsServer  # noqa: E402
+from fake_conversations import install as install_conversations  # noqa: E402
 
 # Segredo interno so para os testes (o falso das operacoes confere o tamanho minimo, como o cliente real).
 TEST_OPERATIONS_SECRET = "segredo-de-teste-" + "t" * 32
@@ -165,6 +166,9 @@ class AssistantFlowTestCase(unittest.TestCase):
         )
         env.start()
         self.addCleanup(env.stop)
+
+        # Contexto compartilhado das conversas: servidor falso no lugar do ConversationStateClient (sem rede).
+        self.conversations = install_conversations(self, USERS_BY_TOKEN)
 
         # Confirmacoes compartilhadas: servidor falso das operacoes no lugar do OperationsClient (sem rede).
         self.ops = FakeOperationsServer(USERS_BY_TOKEN)

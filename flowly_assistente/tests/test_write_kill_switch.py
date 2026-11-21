@@ -35,7 +35,8 @@ from flowly_assistant.commands import (  # noqa: E402
     assistant_writes_enabled,
     get_commands,
 )
-from flowly_assistant.storage.conversation_state import (  # noqa: E402
+from fake_conversations import install as install_conversations  # noqa: E402
+from fake_conversations import (  # noqa: E402
     ConversationStateRepository,
     ScopedConversationState,
 )
@@ -244,6 +245,7 @@ class LastBarrierTests(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         set_writes(None)
+        self.conversations = install_conversations(self, USERS_BY_TOKEN, secret=False)
         self.http = FakeHttp()
         for target in (patch.object(api_client.requests, "request", self.http),
                        patch.object(message_agent.AnalyticsQueue, "publish_message", lambda q, e: {"queued": True})):
