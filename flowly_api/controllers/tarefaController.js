@@ -27,7 +27,8 @@ const assinarAnexosTarefa = async (tarefa) => {
 
 const assinarAnexosTarefas = (tarefas) => Promise.all(tarefas.map(assinarAnexosTarefa));
 
-const pausarCronometroAtivo = async (tarefa, userId, motivo = 'cronometro_pausado') => {
+// descreverPausa (opcional): monta o texto do log a partir dos minutos somados; sem ele, o texto de sempre.
+const pausarCronometroAtivo = async (tarefa, userId, motivo = 'cronometro_pausado', descreverPausa) => {
   if (!tarefa.cronometroAtivo) {
     return 0;
   }
@@ -43,8 +44,10 @@ const pausarCronometroAtivo = async (tarefa, userId, motivo = 'cronometro_pausad
     tarefa.tempoExcedido = true;
   }
 
-  await logActivity(motivo, `Cronômetro pausado. +${Math.max(tempoDecorrido, 0)} mins`, userId, tarefa._id);
-  return Math.max(tempoDecorrido, 0);
+  const minutos = Math.max(tempoDecorrido, 0);
+  const detalhes = descreverPausa ? descreverPausa(minutos) : `Cronômetro pausado. +${minutos} mins`;
+  await logActivity(motivo, detalhes, userId, tarefa._id);
+  return minutos;
 };
 
 // session: so no caminho transacional idempotente (consulta dentro da transacao). Sem ela, consulta de sempre.
@@ -1048,7 +1051,14 @@ exports.atualizarStatusUser = async (req, res) => {
     }
 
     if (tarefa.cronometroAtivo && status !== 'em_andamento') {
-      await pausarCronometroAtivo(tarefa, req.user.id, 'cronometro_pausado_por_status');
+      // Tipo de atividade valido no ActivityLog (o antigo 'cronometro_pausado_por_status' nao existe no enum e o log
+      // era descartado em silencio); o texto registra que a pausa foi automatica, pela mudanca de status.
+      await pausarCronometroAtivo(
+        tarefa,
+        req.user.id,
+        'cronometro_pausado',
+        (minutos) => `Cronômetro pausado automaticamente pela alteração de status para ${status}. +${minutos} mins`
+      );
     }
 
     tarefa.status = status;
