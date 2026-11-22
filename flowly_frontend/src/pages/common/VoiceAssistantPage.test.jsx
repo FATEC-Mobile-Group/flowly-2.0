@@ -210,7 +210,7 @@ describe('R2: concluir pede o resultado final; cancelar descarta a captura', () 
     clickConclude();
     expect(session.stop).toHaveBeenCalledTimes(1);
     expect(session.abort).not.toHaveBeenCalled();
-    expect(statusText()).toBe('Processando');
+    expect(statusText()).toBe('Finalizando a fala'); // distinto do "Processando" do pedido ao assistente
     // O navegador entrega o resultado final do que ouviu e encerra.
     fire(session.onresult, resultEvent([['minhas tarefas', true]]));
     fire(session.onend);
@@ -621,12 +621,13 @@ describe('R5: inicio e encerramento', () => {
     expect(FakeRecognition.instances).toHaveLength(1);
   });
 
-  test('configuracao preservada: pt-BR, sem modo continuo e com resultados provisorios', () => {
+  test('configuracao: pt-BR, continuo limitado a uma fala e com resultados provisorios', () => {
     render(<VoiceAssistantPage />);
     const session = startListening();
 
     expect(session.lang).toBe('pt-BR');
-    expect(session.continuous).toBe(false);
+    // Continuo para a pausa nao cortar a frase; a propria pagina conclui (ver "Escuta limitada a uma fala").
+    expect(session.continuous).toBe(true);
     expect(session.interimResults).toBe(true);
   });
 });
@@ -985,8 +986,9 @@ describe('Prontidao real do microfone: "Ouvindo" so com o audio chegando', () =>
       expect(screen.getByRole('button', { name: 'Concluir fala' })).toBeInTheDocument();
       expect(hintText()).toMatch(/concluir a fala/);
 
-      // O prazo de abertura nao derruba uma sessao que ja abriu o microfone.
-      advance(20000);
+      // O prazo de abertura (12 s depois do onstart) nao derruba uma sessao que ja abriu o microfone. (Sem
+      // nenhuma fala, a sessao fecha em NO_SPEECH_TIMEOUT_MS: coberto nos testes da escuta limitada.)
+      advance(7000);
       expect(statusText()).toBe('Ouvindo — pode falar');
       fire(session.onresult, resultEvent([['meu perfil', true]]));
       fire(session.onend);
@@ -1129,6 +1131,143 @@ describe('Prontidao real do microfone: "Ouvindo" so com o audio chegando', () =>
 
       expect(sentCommands()).toEqual(['meu perfil']);
       expect(statusText()).toBe('Processando');
+    });
+  });
+});
+
+describe('Escuta limitada a uma fala: pausa nao corta, sem fala fecha, nada parcial e enviado', () => {
+  const retryButton = () => screen.queryByRole('button', { name: 'Tentar de novo' });
+  const withFakeClock = async (run) => {
+    vi.useFakeTimers();
+    try {
+      await run();
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+  const advance = (ms) => act(() => {
+    vi.advanceTimersByTime(ms);
+  });
+
+  test('pausa curta no meio da frase nao conclui; a pausa final conclui com stop e envia a frase inteira uma vez', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      const session = startListening();
+      fire(session.onresult, resultEvent([['mudar status da tarefa relatório final', true]]));
+      advance(1500); // pausa para pensar: no modo nao continuo o navegador ja teria cortado aqui
+      expect(session.stop).not.toHaveBeenCalled();
+      fire(session.onresult, resultEvent([['mudar status da tarefa relatório final', true], ['para concluído', true]]));
+      advance(1999);
+      expect(session.stop).not.toHaveBeenCalled();
+      advance(1);
+      expect(session.stop).toHaveBeenCalledTimes(1);
+      expect(session.abort).not.toHaveBeenCalled();
+      expect(statusText()).toBe('Finalizando a fala');
+      expect(sentCommands()).toEqual([]); // so depois do onend
+      fire(session.onend);
+      expect(sentCommands()).toEqual(['mudar status da tarefa relatório final para concluído']);
+    });
+  });
+
+  test('pausa com so resultado parcial: conclui, mas nada e enviado e o texto fica para conferencia', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      const session = startListening();
+      fire(session.onresult, resultEvent([['criar tarefa relat', false]]));
+      advance(2000);
+      expect(session.stop).toHaveBeenCalledTimes(1);
+      fire(session.onend);
+      expect(sentCommands()).toEqual([]);
+      expect(input()).toHaveValue('criar tarefa relat');
+      expect(retryButton()).toBeInTheDocument();
+    });
+  });
+
+  test('microfone aberto sem fala fecha sozinho, sem enviar; tentar de novo so com um toque', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      const session = startListening();
+      advance(7999);
+      expect(session.abort).not.toHaveBeenCalled();
+      advance(1);
+      expect(session.abort).toHaveBeenCalledTimes(1);
+      expect(sentCommands()).toEqual([]);
+      expect(screen.getByText(/Não ouvi nenhuma fala/)).toBeInTheDocument();
+      expect(statusText()).toBe('Standby');
+      advance(60000); // nada reabre sozinho
+      expect(FakeRecognition.instances).toHaveLength(1);
+      fireEvent.click(retryButton());
+      expect(FakeRecognition.instances).toHaveLength(2);
+      expect(retryButton()).toBeNull();
+    });
+  });
+
+  test('fala longa sem pausa: a duracao maxima conclui com stop (o microfone nunca fica aberto)', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      const session = startListening();
+      const words = [];
+      for (let elapsed = 0; elapsed < 30000; elapsed += 1500) {
+        words.push(`parte${elapsed}`);
+        fire(session.onresult, resultEvent([[words.join(' '), false]]));
+        advance(1500);
+      }
+      expect(session.stop).toHaveBeenCalledTimes(1);
+      fire(session.onresult, resultEvent([[words.join(' '), true]]));
+      fire(session.onend);
+      expect(sentCommands()).toEqual([words.join(' ')]);
+    });
+  });
+
+  test('trechos cumulativos repetidos (Chrome no Android) entram uma vez so', async () => {
+    render(<VoiceAssistantPage />);
+    const session = startListening();
+    fire(session.onresult, resultEvent([['criar', true], ['criar tarefa', true], ['criar tarefa relatório', true]]));
+    expect(input()).toHaveValue('criar tarefa relatório');
+    fire(session.onend);
+    await flush();
+    expect(sentCommands()).toEqual(['criar tarefa relatório']);
+  });
+
+  test('final cumulativo com parcial repetido: o parcial pendente ainda impede o envio', async () => {
+    render(<VoiceAssistantPage />);
+    const session = startListening();
+    fire(session.onresult, resultEvent([['criar tarefa', true], ['criar tarefa relatório', false]]));
+    fire(session.onend);
+    await flush();
+    expect(sentCommands()).toEqual([]);
+    expect(input()).toHaveValue('criar tarefa relatório');
+  });
+
+  test('tentar de novo aparece para falhas recuperaveis e nao para permissao negada', async () => {
+    render(<VoiceAssistantPage />);
+    let session = startListening();
+    fire(session.onerror, { error: 'network' });
+    await flush();
+    expect(retryButton()).toBeInTheDocument();
+    sendTyped('meu perfil'); // enviar outra coisa tira a oferta
+    await flush();
+    expect(retryButton()).toBeNull();
+    act(() => pendingReplies.shift()?.({ ok: true, reply_text: 'Seu perfil.' }));
+    await flush();
+
+    session = startListening();
+    fire(session.onerror, { error: 'not-allowed' });
+    await flush();
+    expect(screen.getByText(/microfone está bloqueado/)).toBeInTheDocument();
+    expect(retryButton()).toBeNull();
+  });
+
+  test('cancelar a escuta desliga os prazos: nada conclui nem envia depois', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      const session = startListening();
+      fire(session.onresult, resultEvent([['minhas tarefas', true]]));
+      fireEvent.click(screen.getByRole('button', { name: 'Cancelar escuta' }));
+      advance(40000);
+      expect(session.stop).not.toHaveBeenCalled();
+      expect(session.abort).toHaveBeenCalledTimes(1);
+      expect(sentCommands()).toEqual([]);
     });
   });
 });

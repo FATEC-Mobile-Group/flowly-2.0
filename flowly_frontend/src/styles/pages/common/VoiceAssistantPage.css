@@ -589,3 +589,21 @@
     flex: 1 1 140px;
   }
 }
+
+/* Estado "Finalizando a fala": mesmo indicador do processamento. */
+.voice-status.finishing span {
+  background: #ffbf47;
+  box-shadow: 0 0 0 6px rgba(255, 191, 71, 0.16);
+}
+
+/* Tentar de novo depois de uma falha recuperavel da escuta (um toque; nunca automatico). */
+.voice-retry-btn {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  background: var(--glass-bg);
+  font-weight: 600;
+  cursor: pointer;
+}

@@ -27,6 +27,7 @@ const AWAITING_CONVERSATION = new Set([
 const STATUS_LABELS = {
   starting: 'Iniciando',
   listening: 'Ouvindo — pode falar',
+  finishing: 'Finalizando a fala',
   processing: 'Processando',
   speaking: 'Falando',
   awaiting: 'Aguardando resposta',
@@ -40,6 +41,38 @@ const SLOW_START_HINT_MS = 3000;
 const AUDIO_START_TIMEOUT_MS = 12000;
 // Falhas seguidas antes de sugerir outro caminho (sem novas tentativas automaticas).
 const FAILURE_HINT_AFTER = 3;
+// Escuta continua LIMITADA a uma fala: o navegador nao corta a frase na primeira pausa (no modo nao continuo o
+// Chrome encerra no primeiro silencio curto e so entrega o primeiro trecho). A sessao conclui sozinha (stop, so o
+// resultado final e enviado) depois de uma pausa sem novos resultados, fecha sem fala e tem duracao maxima.
+const SPEECH_PAUSE_END_MS = 2000;
+const NO_SPEECH_TIMEOUT_MS = 8000;
+const MAX_LISTEN_MS = 30000;
+// Falhas em que tentar de novo pode resolver (as de permissao ou de navegador nao).
+const RETRYABLE_ERRORS = new Set([
+  'no-speech', 'network', 'aborted', 'audio-capture', 'start-failed', 'audio-start-timeout', 'audio-not-started',
+  'not-transcribed', 'unknown',
+]);
+
+// Junta os trechos de uma sessao sem repetir texto: alguns navegadores (Chrome no Android, modo continuo) entregam
+// cada trecho com o texto anterior inteiro ("criar", "criar tarefa", "criar tarefa relatorio").
+const normalizeSegment = (text) => String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+function mergeSegments(segments) {
+  const merged = [];
+  segments.forEach((segment) => {
+    const last = merged[merged.length - 1];
+    if (last !== undefined) {
+      const previous = normalizeSegment(last);
+      const current = normalizeSegment(segment);
+      if (current.startsWith(previous)) {
+        merged[merged.length - 1] = segment;
+        return;
+      }
+      if (previous.startsWith(current)) return;
+    }
+    merged.push(segment);
+  });
+  return merged;
+}
 
 // Confirmacao de escrita ligada a operacao mostrada: o assistente devolve conversation.operation_id e o resumo
 // guardado na API; a tela reenvia esse operationId em cada mensagem enquanto o resumo esta na tela (voz, texto ou
@@ -188,6 +221,8 @@ function VoiceAssistantPage() {
   // Microfone demorando para abrir (mais de alguns segundos em "Iniciando").
   const [slowStart, setSlowStart] = useState(false);
   const [rainbowActive, setRainbowActive] = useState(false);
+  // Ultima falha da escuta permite "Tentar de novo" (um toque, nunca automatico).
+  const [retryable, setRetryable] = useState(false);
   // Sessao de reconhecimento atual. Eventos de sessoes encerradas, canceladas ou substituidas sao ignorados.
   const sessionRef = useRef(null);
   // Um comando por vez. Ref (e nao estado) para nao depender de closures com valor antigo.
@@ -216,7 +251,8 @@ function VoiceAssistantPage() {
   let status = 'standby';
   if (listening) status = 'listening';
   else if (mic === 'starting') status = 'starting';
-  else if (processing || mic === 'finishing') status = 'processing';
+  else if (mic === 'finishing') status = 'finishing';
+  else if (processing) status = 'processing';
   else if (speaking) status = 'speaking';
   else if (awaitingReply) status = 'awaiting';
 
@@ -306,6 +342,9 @@ function VoiceAssistantPage() {
     clearTimeout(session.finishTimer);
     clearTimeout(session.readyTimer);
     clearTimeout(session.slowTimer);
+    clearTimeout(session.pauseTimer);
+    clearTimeout(session.noSpeechTimer);
+    clearTimeout(session.maxTimer);
     if (sessionRef.current === session) sessionRef.current = null;
 
     const { recognition } = session;
@@ -375,6 +414,7 @@ function VoiceAssistantPage() {
 
     addMessage('user', cleanUtterance);
     updateDraft(nextDraft);
+    setRetryable(false);
     setProcessing(true);
     setAwaitingReply(false);
 
@@ -438,7 +478,15 @@ function VoiceAssistantPage() {
     }
 
     failuresRef.current += 1;
-    const heard = [finalText, interimText].filter(Boolean).join(' ');
+    let kind = error;
+    if (!kind) {
+      if (speechDetected) kind = 'not-transcribed';
+      else if (!ready) kind = 'audio-not-started';
+      else kind = 'no-speech';
+    }
+    const braveNetwork = kind === 'network' && typeof navigator !== 'undefined' && navigator.brave;
+    setRetryable(RETRYABLE_ERRORS.has(kind) && !braveNetwork);
+    const heard = mergeSegments([finalText, interimText].filter(Boolean)).join(' ');
     if (heard) {
       // Nada e enviado. O texto ouvido fica no campo para a pessoa conferir, corrigir e enviar se quiser.
       if (typedDraft) {
@@ -467,9 +515,30 @@ function VoiceAssistantPage() {
     }
   }, [addMessage, releaseSession, sendUtterance, updateDraft]);
 
+  // Concluir a fala (toque em "Concluir fala", pausa, ou duracao maxima): o navegador entrega o resultado final do
+  // que ja ouviu; sem resposta em FINISH_TIMEOUT_MS, a sessao e fechada assim mesmo. So o final e enviado.
+  const finishSession = useCallback((session) => {
+    if (!session || session.closed || session.finishing || sessionRef.current !== session) return;
+    session.finishing = true;
+    clearTimeout(session.pauseTimer);
+    clearTimeout(session.noSpeechTimer);
+    clearTimeout(session.maxTimer);
+    setMic('finishing');
+    try {
+      session.recognition.stop();
+    } catch (error) {
+      concludeSession(session, { abort: true });
+      return;
+    }
+    session.finishTimer = setTimeout(() => {
+      if (sessionRef.current === session && !session.closed) concludeSession(session, { abort: true });
+    }, FINISH_TIMEOUT_MS);
+  }, [concludeSession]);
+
   const startListening = useCallback(() => {
     // Uma sessao por vez, e nenhuma enquanto um comando esta sendo processado.
     if (!supported || sessionRef.current || sendingRef.current) return;
+    setRetryable(false);
     // A voz do assistente nao pode ser captada como se fosse a fala da pessoa.
     stopSpeaking();
 
@@ -494,6 +563,16 @@ function VoiceAssistantPage() {
       clearTimeout(session.slowTimer);
       setSlowStart(false);
       if (!session.finishing) setMic('listening');
+      // Microfone aberto, mas sem fala: fecha sem enviar (o navegador nem sempre avisa no modo continuo).
+      session.noSpeechTimer = setTimeout(() => {
+        if (isCurrent() && !session.finishing && !session.finalText && !session.interimText) {
+          concludeSession(session, { error: 'no-speech', abort: true });
+        }
+      }, NO_SPEECH_TIMEOUT_MS);
+      // Limite da sessao: conclui como no toque, nunca deixa o microfone aberto.
+      session.maxTimer = setTimeout(() => {
+        if (isCurrent()) finishSession(session);
+      }, MAX_LISTEN_MS);
     };
 
     let recognition;
@@ -505,7 +584,8 @@ function VoiceAssistantPage() {
       return;
     }
     recognition.lang = 'pt-BR';
-    recognition.continuous = false;
+    // Continuo para nao cortar a frase na pausa, mas limitado a uma fala (pausa, sem fala, duracao maxima).
+    recognition.continuous = true;
     recognition.interimResults = true;
     // Navegador sem o evento audiostart: o onstart e o melhor sinal disponivel de que a captura comecou.
     const reportsAudioStart = 'onaudiostart' in recognition;
@@ -545,11 +625,22 @@ function VoiceAssistantPage() {
         const transcript = String(result?.[0]?.transcript || '').trim();
         if (transcript) (result.isFinal ? finals : interims).push(transcript);
       }
-      session.finalText = finals.join(' ');
-      session.interimText = interims.join(' ');
+      // Trechos repetidos de forma cumulativa (Chrome no Android) entram uma vez so.
+      const finalSegments = mergeSegments(finals);
+      session.finalText = finalSegments.join(' ');
+      const finalNorm = normalizeSegment(session.finalText);
+      session.interimText = interims.filter((text) => !finalNorm.startsWith(normalizeSegment(text))).join(' ');
       session.speechDetected = true;
-      const shown = [...finals, ...interims].join(' ');
+      const shown = mergeSegments([...finalSegments, ...interims]).join(' ');
       if (shown) updateDraft(shown, 'voice');
+      // Pausa: sem novos resultados por SPEECH_PAUSE_END_MS, a fala e concluida (stop: so o final e enviado).
+      clearTimeout(session.noSpeechTimer);
+      clearTimeout(session.pauseTimer);
+      if (shown && !session.finishing) {
+        session.pauseTimer = setTimeout(() => {
+          if (isCurrent()) finishSession(session);
+        }, SPEECH_PAUSE_END_MS);
+      }
     };
 
     recognition.onerror = (event) => {
@@ -570,25 +661,13 @@ function VoiceAssistantPage() {
     } catch (error) {
       concludeSession(session, { error: 'start-failed' });
     }
-  }, [addMessage, concludeSession, stopSpeaking, supported, updateDraft]);
+  }, [addMessage, concludeSession, finishSession, stopSpeaking, supported, updateDraft]);
 
   // Concluir (clique no microfone durante a escuta): o navegador entrega o resultado final do que ouviu.
   // Diferente de cancelar (Standby, sair da pagina, digitar), que descarta a captura com abort.
   const finishListening = useCallback(() => {
-    const session = sessionRef.current;
-    if (!session || session.finishing) return;
-    session.finishing = true;
-    setMic('finishing');
-    try {
-      session.recognition.stop();
-    } catch (error) {
-      concludeSession(session, { abort: true });
-      return;
-    }
-    session.finishTimer = setTimeout(() => {
-      if (sessionRef.current === session && !session.closed) concludeSession(session, { abort: true });
-    }, FINISH_TIMEOUT_MS);
-  }, [concludeSession]);
+    finishSession(sessionRef.current);
+  }, [finishSession]);
 
   const toggleListening = () => {
     setRainbowActive(true);
@@ -620,6 +699,7 @@ function VoiceAssistantPage() {
     // Digitar assume o comando: a captura em andamento e descartada e nao sobrescreve o texto.
     updateDraft(event.target.value, 'typed');
     releaseSession(sessionRef.current, { abort: true });
+    setRetryable(false);
   };
 
   useEffect(() => {
@@ -654,6 +734,8 @@ function VoiceAssistantPage() {
     sendUtterance(word);
   };
 
+  // A estrela mantem o visual de processamento enquanto a fala e finalizada.
+  const starStatus = status === 'finishing' ? 'processing' : status;
   let micLabel = 'Iniciar escuta';
   if (mic === 'listening') micLabel = 'Concluir fala';
   else if (mic === 'starting') micLabel = 'Iniciando escuta';
@@ -670,7 +752,7 @@ function VoiceAssistantPage() {
       ? 'O navegador ainda está abrindo o microfone (pode estar pedindo permissão). Espere aparecer "Ouvindo — pode falar" ou use "Cancelar escuta".'
       : 'Abrindo o microfone: espere aparecer "Ouvindo — pode falar". "Cancelar escuta" descarta sem enviar.';
   } else if (mic === 'listening') {
-    interactionHint = 'Toque de novo na estrela para concluir a fala e enviar o que o navegador confirmar. "Cancelar escuta" descarta sem enviar.';
+    interactionHint = 'Fale normalmente: depois de uma pausa eu concluo sozinho. Ou toque de novo na estrela para concluir a fala e enviar o que o navegador confirmar. "Cancelar escuta" descarta sem enviar.';
   } else if (mic === 'finishing') {
     interactionHint = 'Aguardando o navegador confirmar a frase. "Cancelar escuta" descarta sem enviar.';
   } else if (unconfirmedDraft) {
@@ -746,7 +828,7 @@ function VoiceAssistantPage() {
           <div className="voice-orb-zone">
             <button
               type="button"
-              className={`voice-star-btn ${listening ? 'listening' : ''} ${status} ${rainbowActive ? 'rainbow-burst' : ''}`}
+              className={`voice-star-btn ${listening ? 'listening' : ''} ${starStatus} ${rainbowActive ? 'rainbow-burst' : ''}`}
               onClick={toggleListening}
               disabled={!supported || processing}
               aria-label={micLabel}
@@ -754,10 +836,15 @@ function VoiceAssistantPage() {
               title={supported ? (capturing ? micLabel : 'Falar com o assistente') : 'Reconhecimento de voz indisponível'}
             >
               <span className={`rainbow-ripple ${rainbowActive ? 'active' : ''}`} />
-              <GeminiStar status={status} listening={listening} />
+              <GeminiStar status={starStatus} listening={listening} />
             </button>
             {interactionHint && (
               <p id={hintId} className="voice-interaction-hint">{interactionHint}</p>
+            )}
+            {supported && retryable && !capturing && !processing && (
+              <button type="button" className="voice-retry-btn" onClick={startListening}>
+                Tentar de novo
+              </button>
             )}
           </div>
 
