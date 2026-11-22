@@ -408,6 +408,46 @@ describe('/api/assistant/conversations', () => {
     });
   });
 
+  describe('memoria curta da conversa (chave reservada <conversa>:memoria)', () => {
+    const MEMORY_CONV = `${CONV}:memoria`;
+    const MEMORY = { mode: 'conversation_memory', facts: [{ label: 'prioridade', text: 'revisar a apresentação do Flowly' }] };
+    const gravarEm = (conversationId, state, expectedVersion = 0, opts = {}) =>
+      call('put', '/current', { body: { conversationId, expectedVersion, state }, ...opts });
+
+    test('fatos ficam num documento proprio: o estado de comandos da conversa nao e tocado', async () => {
+      await gravar(0, PARAMS_STATE);
+      expect((await gravarEm(MEMORY_CONV, MEMORY)).status).toBe(200);
+      expect((await ler()).body.context.state).toEqual(PARAMS_STATE);
+      const memoria = await call('get', '/current', { query: { conversationId: MEMORY_CONV } });
+      expect(memoria.body.context.state).toEqual(MEMORY);
+      // Isolada por usuario como qualquer contexto.
+      expect((await call('get', '/current', { query: { conversationId: MEMORY_CONV }, token: tokenB })).body.context).toBeNull();
+      expect(mockDb.rows).toHaveLength(2);
+    });
+
+    test.each([
+      ['comando pendente na chave de memoria', MEMORY_CONV, PARAMS_STATE],
+      ['selecao de tarefas na chave de memoria', MEMORY_CONV, SELECTION_STATE],
+      ['memoria fora da chave reservada', CONV, MEMORY],
+      ['rotulo desconhecido', MEMORY_CONV, { mode: 'conversation_memory', facts: [{ label: 'senha', text: 'x' }] }],
+      ['texto longo demais', MEMORY_CONV, { mode: 'conversation_memory', facts: [{ label: 'meta', text: 'x'.repeat(301) }] }],
+      ['rotulo repetido', MEMORY_CONV, { mode: 'conversation_memory', facts: [MEMORY.facts[0], MEMORY.facts[0]] }],
+      ['campo a mais', MEMORY_CONV, { ...MEMORY, command_key: 'create_team' }],
+      ['mais de 5 fatos', MEMORY_CONV, { mode: 'conversation_memory', facts: ['prioridade', 'foco', 'objetivo', 'meta', 'meta']
+        .map((label, i) => ({ label, text: `t${i}` })) }],
+    ])('%s: 400 e nada gravado', async (_rotulo, conversationId, state) => {
+      const response = await gravarEm(conversationId, state);
+      expect([response.status, response.body.code]).toEqual([400, 'state_invalid']);
+      expect(mockDb.rows).toEqual([]);
+    });
+
+    test('conteudo sensivel tambem e recusado na memoria', async () => {
+      const response = await gravarEm(MEMORY_CONV, { mode: 'conversation_memory',
+        facts: [{ label: 'foco', text: `token eyJ${'a'.repeat(10)}.${'b'.repeat(10)}.${'c'.repeat(10)}` }] });
+      expect([response.status, response.body.code]).toEqual([400, 'state_sensitive']);
+    });
+  });
+
   describe('banco e indices (9)', () => {
     beforeEach(() => {
       app = loadApp(); // servico novo: a prontidao fica em cache por instancia

@@ -42,6 +42,12 @@ from flowly_assistant.queues.analytics_queue import AnalyticsQueue
 from flowly_assistant.storage.analytics_repository import AnalyticsRepository
 from flowly_assistant.conversation_client import ConversationStateClient
 from flowly_assistant.operations_client import OPERATIONS_SECRET_ENV
+from flowly_assistant.storage.conversation_memory import (
+    MEMORY_SUFFIX,
+    ConversationMemory,
+    asked_fact_label,
+    extract_stated_fact,
+)
 from flowly_assistant.storage.conversation_state import (
     ConversationStateConflict,
     ConversationStateRejected,
@@ -256,6 +262,18 @@ CONTEXT_REJECTED_REPLY = (
 CONTEXT_SENSITIVE_REPLY = (
     "Essa resposta parece conter uma credencial ou chave e não foi guardada. Nada foi alterado. Envie sem esse trecho."
 )
+# Mensagem sem pedido reconhecido: diz o que nao fez e o que da para pedir, sem fingir que entendeu ou lembrou.
+FALLBACK_REPLY = (
+    "Não entendi um pedido nessa mensagem e não alterei nada. Você pode dizer, por exemplo: \"minhas tarefas\", "
+    "\"backlog\", \"minhas equipes\" ou \"criar tarefa\"."
+)
+TASK_HELP_REPLY = (
+    "Posso listar suas tarefas, mostrar os detalhes de uma tarefa e criar ou atualizar tarefas, sempre com a sua "
+    "confirmação. Nada foi alterado. Para começar, diga \"minhas tarefas\"."
+)
+MEMORY_POSSESSIVE = {"prioridade": "sua", "foco": "seu", "objetivo": "seu", "meta": "sua"}
+MEMORY_NONE = {"prioridade": "nenhuma prioridade registrada", "foco": "nenhum foco registrado",
+               "objetivo": "nenhum objetivo registrado", "meta": "nenhuma meta registrada"}
 CONTEXT_DISCARDED_REPLY = (
     "Perdi o andamento desta conversa e descartei o que estava guardado. Nada foi alterado. Pode repetir o pedido?"
 )
@@ -352,6 +370,56 @@ class MessageAgent:
         return self._error(error, text, status, action_executed=False,
                            conversation={"id": conversation_id, "status": "unverified"})
 
+    def _memory(self) -> ConversationMemory:
+        return ConversationMemory(
+            ConversationStateClient(self.token),
+            forbidden_values=(self.token, os.getenv(OPERATIONS_SECRET_ENV) or ""),
+        )
+
+    def _conversation_memory_response(
+        self, *, conversation_id: str, content: str, event_id: str, moderation_score: float, queue_result: Dict[str, Any],
+    ) -> Optional[Tuple[Dict[str, Any], int]]:
+        """Guarda ou responde um fato explicito da conversa. Nunca cria, confirma, cancela ou executa nada."""
+        stated = extract_stated_fact(content)
+        asked = None if stated else asked_fact_label(content)
+        if not stated and not asked:
+            return None
+
+        def reply(text: str, status: str, *, http: int = 201, error: Optional[str] = None):
+            payload: Dict[str, Any] = {
+                "ok": error is None,
+                "messageId": event_id,
+                "moderation": {"allowed": True, "score": moderation_score},
+                "queue": queue_result,
+                "command": None,
+                "action_executed": False,
+                "conversation": {"id": conversation_id, "status": status},
+                "reply_text": text,
+                "tts": tts_payload(text, language=str(self.body.get("language") or "pt-BR")),
+            }
+            if error:
+                payload["error"] = error
+            return payload, http
+
+        memory = self._memory()
+        if stated:
+            label, value = stated
+            try:
+                memory.remember(conversation_id, label, value)
+            except ConversationStateUnavailable:
+                return reply("Não consegui guardar essa informação agora. Nada foi alterado.", "memory_unavailable",
+                             http=503, error="conversation_memory_unavailable")
+            return reply(f'Anotei {MEMORY_POSSESSIVE[label]} {label}: "{value}". Não criei nem alterei nada.', "noted")
+        try:
+            value = memory.facts(conversation_id).get(asked)
+        except ConversationStateUnavailable:
+            return reply("Não consegui consultar o que foi dito nesta conversa agora. Nada foi alterado.",
+                         "memory_unavailable", http=503, error="conversation_memory_unavailable")
+        if value:
+            return reply(f'Você mencionou nesta conversa que {MEMORY_POSSESSIVE[asked]} {asked} é: "{value}".', "answered")
+        return reply(f"Não tenho {MEMORY_NONE[asked]} nesta conversa. Se quiser, diga, por exemplo: "
+                     f'"minha {asked} de hoje é ...".', "answered")
+
     def _is_context_free_read(self, content: str) -> bool:
         """Consulta direta e completa, que nao depende de resposta anterior nem escreve (ex.: "minhas tarefas").
         Usada so quando o contexto compartilhado esta indisponivel; confirmacoes, respostas soltas e escritas nao."""
@@ -378,6 +446,9 @@ class MessageAgent:
 
         if not content:
             return self._error("missing_content", "Envie uma mensagem para eu processar.", 400)
+        if conversation_id.endswith(MEMORY_SUFFIX):
+            # Chave reservada da memoria da conversa: nunca usada como conversa (nao vira estado de comando).
+            return self._error("invalid_conversation", "Identificador de conversa inválido.", 400)
 
         user_id = authenticated_user_id(self.assistant.api)
         if not user_id:
@@ -456,9 +527,18 @@ class MessageAgent:
                 queue_result=queue_result,
             )
 
+        # Afirmacao de um fato ("minha prioridade de hoje e X") ou pergunta sobre ele: memoria curta da conversa,
+        # separada dos comandos. Vem antes do parser: uma afirmacao nunca vira comando, mesmo citando um.
+        memory_response = self._conversation_memory_response(
+            conversation_id=conversation_id, content=content, event_id=event["id"],
+            moderation_score=moderation.score, queue_result=queue_result,
+        )
+        if memory_response is not None:
+            return memory_response
+
         match = None if is_confirmation(content) else self.parser.match(content)
         if match is None or match.command.key == "exit":
-            text = "Mensagem recebida. Não identifiquei uma ação imediata."
+            text = FALLBACK_REPLY
             reason = None if match is not None else self.parser.non_directive_reason(content)
             if reason:
                 text = NON_DIRECTIVE_REPLIES[reason]
@@ -467,6 +547,8 @@ class MessageAgent:
             elif match is None and is_confirmation(content):
                 # Confirmacao repetida, antiga ou de outra conversa: nao ha nada guardado para executar.
                 text = "Não há nenhuma operação aguardando confirmação. Nada foi alterado."
+            elif match is None and set(plain_words(content)) & {"tarefa", "tarefas"}:
+                text = TASK_HELP_REPLY
             if match is not None and match.command.key == "exit":
                 text = "Encerrando. Assistente em standby."
                 self.conversations.clear(conversation_id)
@@ -2378,6 +2460,10 @@ def standby_conversation(token: str, body: Dict[str, Any]) -> Tuple[Dict[str, An
         # Saiu da conversa: o contexto dela (pergunta pendente, selecao) e removido na API, sem condicao de versao.
         # Sem confirmacao da API, nao diz que limpou; o prazo do contexto encerra de qualquer forma.
         context_cleared = SharedConversationState(ConversationStateClient(token)).clear_unconditional(conversation_id)
+        if not conversation_id.endswith(MEMORY_SUFFIX):
+            # Os fatos ditos nesta conversa tambem saem (melhor esforco; o TTL encerra de qualquer forma).
+            context_cleared = ConversationMemory(ConversationStateClient(token)).clear_unconditional(conversation_id) \
+                and context_cleared
         if assistant_writes_enabled():
             # Saiu da conversa: a confirmacao pendente dela nao deve continuar executavel (melhor esforco; o prazo
             # da API encerra de qualquer forma). Execucao ja reivindicada nunca e cancelada.

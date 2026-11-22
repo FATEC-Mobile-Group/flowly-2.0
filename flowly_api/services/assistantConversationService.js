@@ -106,6 +106,22 @@ const collectingParams = (state) => onlyKeys(state, ['command_key', 'params', 'm
   && Array.isArray(state.missing) && state.missing.length <= MAX_MISSING
   && state.missing.every((name) => typeof name === 'string' && KEY_PATTERN.test(name));
 
+// Memoria curta da conversa (fatos ditos pela pessoa, ex.: "minha prioridade de hoje e X"): documento proprio, na
+// chave reservada "<conversationId>:memoria", separado do estado de comandos pendentes. So texto informativo com
+// rotulos fixos; nunca participa de comando, confirmacao ou escrita.
+const MEMORY_SUFFIX = ':memoria';
+const MEMORY_LABELS = Object.freeze(['prioridade', 'foco', 'objetivo', 'meta']);
+const MEMORY_MAX_FACTS = 5;
+const MEMORY_TEXT_MAX = 300;
+const isMemoryConversation = (conversationId) => typeof conversationId === 'string' && conversationId.endsWith(MEMORY_SUFFIX);
+const conversationMemory = (state) => onlyKeys(state, ['mode', 'facts'])
+  && state.mode === 'conversation_memory'
+  && Array.isArray(state.facts) && state.facts.length <= MEMORY_MAX_FACTS
+  && state.facts.every((fact) => isPlainObject(fact) && onlyKeys(fact, ['label', 'text'])
+    && MEMORY_LABELS.includes(fact.label) && typeof fact.text === 'string' && fact.text.trim().length > 0
+    && fact.text.length <= MEMORY_TEXT_MAX)
+  && new Set(state.facts.map((fact) => fact.label)).size === state.facts.length;
+
 const taskSelection = (state) => onlyKeys(state, ['mode', 'tasks', 'selected_task_id'])
   && state.mode === 'task_selection'
   && Array.isArray(state.tasks) && state.tasks.length <= MAX_TASKS && state.tasks.every(compactTask)
@@ -119,8 +135,9 @@ const strings = (value, out = []) => {
 };
 
 // So as duas formas do assistente: coleta de parametros (sem mode) e selecao de tarefas (mode task_selection).
-// Qualquer outra (inclusive a antiga confirmacao local 'write_confirmation') e recusada.
-const normalizeState = (state) => {
+// Qualquer outra (inclusive a antiga confirmacao local 'write_confirmation') e recusada. Na chave de memoria
+// (memory: true) so a forma conversation_memory, e ela nunca fora dessa chave.
+const normalizeState = (state, { memory = false } = {}) => {
   if (!isPlainObject(state)) throw invalid();
   let serialized;
   try {
@@ -130,7 +147,9 @@ const normalizeState = (state) => {
   }
   if (Buffer.byteLength(serialized, 'utf8') > STATE_MAX_BYTES) throw invalid('state_too_large');
   const plain = JSON.parse(serialized); // so dados JSON (nada de Date, ObjectId, funcoes ou prototipos)
-  const shapeOk = Object.prototype.hasOwnProperty.call(plain, 'mode') ? taskSelection(plain) : collectingParams(plain);
+  let shapeOk;
+  if (memory) shapeOk = conversationMemory(plain);
+  else shapeOk = Object.prototype.hasOwnProperty.call(plain, 'mode') ? taskSelection(plain) : collectingParams(plain);
   if (!shapeOk) throw invalid();
   if (strings(plain).some((item) => hasSensitive(item) || UUID_PATTERN.test(item))) throw invalid('state_sensitive');
   return plain;
@@ -222,7 +241,7 @@ const createAssistantConversationService = ({
   const save = async ({ ownerId, conversationId, expectedVersion, state }) => {
     const filterBase = scope(ownerId, conversationId);
     const expected = normalizeVersion(expectedVersion);
-    const clean = normalizeState(state);
+    const clean = normalizeState(state, { memory: isMemoryConversation(filterBase.conversationId) });
     await ensureReady();
     const t = now();
     const changes = { $set: { state: clean, expiresAt: new Date(t.getTime() + ttlMs) }, $inc: { version: 1 } };
@@ -274,6 +293,8 @@ module.exports = {
   configFromEnv,
   missingIndexes,
   normalizeState,
+  MEMORY_SUFFIX,
+  MEMORY_LABELS,
   REQUIRED_INDEXES,
   AssistantConversationInputError,
   AssistantConversationUnavailableError,

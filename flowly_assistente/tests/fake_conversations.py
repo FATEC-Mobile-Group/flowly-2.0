@@ -62,13 +62,27 @@ def _strings(value):
             yield from _strings(item)
 
 
-def state_refusal(state):
-    """Mesmas regras de normalizeState (Node): None = aceito; senao o codigo da recusa."""
+MEMORY_LABELS = ("prioridade", "foco", "objetivo", "meta")
+
+
+def _memory_ok(state):
+    facts = state.get("facts")
+    return (set(state) <= {"mode", "facts"} and state.get("mode") == "conversation_memory" and isinstance(facts, list)
+            and len(facts) <= 5 and len({f.get("label") for f in facts if isinstance(f, dict)}) == len(facts)
+            and all(isinstance(f, dict) and set(f) == {"label", "text"} and f["label"] in MEMORY_LABELS
+                    and isinstance(f["text"], str) and f["text"].strip() and len(f["text"]) <= 300 for f in facts))
+
+
+def state_refusal(state, memory=False):
+    """Mesmas regras de normalizeState (Node): None = aceito; senao o codigo da recusa. memory = chave
+    reservada "<conversa>:memoria" (so a forma conversation_memory, e ela nunca fora dessa chave)."""
     if not isinstance(state, dict):
         return "state_invalid"
     if len(json.dumps(state, ensure_ascii=False).encode("utf-8")) > STATE_MAX_BYTES:
         return "state_too_large"
-    if "mode" in state:
+    if memory:
+        ok = _memory_ok(state)
+    elif "mode" in state:
         ok = (set(state) <= {"mode", "tasks", "selected_task_id"} and state["mode"] == "task_selection"
               and isinstance(state.get("tasks"), list) and len(state["tasks"]) <= 10 and all(_task(t) for t in state["tasks"])
               and (state.get("selected_task_id") in (None, "") or bool(OBJECT_ID.match(str(state.get("selected_task_id"))))))
@@ -139,7 +153,7 @@ class FakeConversationServer:
 
     def save(self, token, conv, expected, state):
         def apply(owner):
-            refusal = state_refusal(state)
+            refusal = state_refusal(state, memory=conv.endswith(":memoria"))
             if refusal:
                 raise self.refuse(400, refusal)
             row, live = self.rows.get((owner, conv)), self.live(owner, conv)
