@@ -272,7 +272,13 @@ const isVisualModerationRequired = () => (
 );
 
 const callGoogleVisionModeration = async (file) => {
-  if (!shouldUseGoogleVision()) return null;
+  // Provedor desconhecido nao e "sem moderacao": vira falha da verificacao. Com analise obrigatoria,
+  // o upload e recusado como indisponivel (503); com REQUIRED=false, segue so com as checagens locais.
+  if (!shouldUseGoogleVision()) {
+    const error = new Error('Provedor de moderacao visual nao suportado.');
+    error.code = 'VISION_PROVIDER_UNSUPPORTED';
+    throw error;
+  }
 
   const projectId = (process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || '').trim();
   const timeoutMs = readTimeoutMs('UPLOAD_VISION_TIMEOUT_MS', DEFAULT_VISION_TIMEOUT_MS);
@@ -334,6 +340,13 @@ const callGoogleVisionModeration = async (file) => {
     const error = new Error(annotation.error.message || 'Erro na moderacao visual.');
     // INVALID_ARGUMENT (3): o Vision nao conseguiu ler esta imagem. Repetir nao resolve.
     error.unreadableImage = annotation.error.code === 3;
+    throw error;
+  }
+
+  // Sem SafeSearch nao ha avaliacao de adulto/sugestivo/violencia: a verificacao esta incompleta.
+  if (!annotation.safeSearchAnnotation || typeof annotation.safeSearchAnnotation !== 'object') {
+    const error = new Error('Google Vision respondeu sem SafeSearch.');
+    error.code = 'VISION_INCOMPLETE_RESPONSE';
     throw error;
   }
 
