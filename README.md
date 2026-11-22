@@ -46,12 +46,21 @@ flowly-2.0/
 ├── flowly_assistente/  # Assistente e mineração de dados em Python
 ├── flowly_iot_face/    # Microserviço Python de reconhecimento facial
 │
-├── flowly_api/k8s/     # Manifests Kubernetes da API e MongoDB
-├── flowly_frontend/k8s/# Manifest Kubernetes do frontend
+├── flowly_api/k8s/     # Manifests Kubernetes da API e MongoDB (alternativa, fora da produção)
+├── flowly_frontend/k8s/# Manifest Kubernetes do frontend (alternativa, fora da produção)
 └── .github/workflows/  # CI (Quality) e deploy do frontend no Azure Static Web Apps
 
 ```
-<img width="1304" height="586" alt="arquitetura" src="https://github.com/user-attachments/assets/af18d19d-bb61-4780-91c2-bbf94df10381" />
+
+**Arquitetura em produção** (diagramas e detalhes em [Arquitetura Cloud](#arquitetura-cloud)):
+
+* **Frontend:** React no **Azure Static Web Apps**, publicado pelo GitHub Actions a cada push na `main`, com preview em cada pull request.
+* **Serviços:** API Node.js, assistente Python e serviço de reconhecimento facial no **Google Cloud Run** (`southamerica-east1`), publicados automaticamente por três gatilhos do **Cloud Build** a cada push na `main`.
+* **Dados e arquivos:** **MongoDB** para os dados e **Google Cloud Storage** para anexos e fotos.
+* **Segredos:** o segredo interno entre assistente e API fica no **Secret Manager**.
+* **Qualidade:** o workflow `Quality` testa API, frontend, assistente, serviço facial e mobile em todo pull request.
+
+Docker Hub e Kubernetes (`k8s/`) são uma arquitetura alternativa, mantida apenas como registro; não fazem parte da produção atual.
 
 ---
 
@@ -848,9 +857,9 @@ nosso design Figma e ver a evolução [aqui](https://www.figma.com/design/bAzWl5
 * Containerização da API
 * Containerização do Frontend
 * Containerização do assistente e do serviço facial (imagens executadas no Cloud Run)
-* Publicação no Docker Hub (imagens usadas pelos manifests Kubernetes)
+* Publicação no Docker Hub (imagens usadas apenas pela alternativa Kubernetes, fora da produção)
 
-## Kubernetes
+## Kubernetes (alternativa, fora da produção)
 
 * Deploy da API
 * Deploy do Frontend
