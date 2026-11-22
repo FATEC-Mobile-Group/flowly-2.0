@@ -110,6 +110,28 @@ describe('Socket.IO: revogacao vale no proprio evento', () => {
     await waitFor(() => io.of('/').sockets.size === 0);
   });
 
+  test('send_message com ACK recebe a resposta pelo id do pacote, sem message_blocked', async () => {
+    const url = await connect();
+
+    await request(server).post(url).set('Origin', ORIGIN).type('text/plain')
+      .send(`427${JSON.stringify(['send_message', { equipeId: TEAM_ID, texto: '   ' }])}`);
+    const reply = await request(server).get(url).set('Origin', ORIGIN);
+
+    expect(reply.text).toMatch(/^437\[/);
+    expect(JSON.parse(reply.text.slice(3))[0]).toMatchObject({ ok: false, reason: 'invalid_content' });
+    expect(reply.text).not.toContain('message_blocked');
+  });
+
+  test('send_message sem ACK continua recebendo message_blocked', async () => {
+    const url = await connect();
+
+    await emit(url, 'send_message', { equipeId: TEAM_ID, texto: '   ' });
+    const reply = await request(server).get(url).set('Origin', ORIGIN);
+
+    expect(reply.text).toMatch(/^42\["message_blocked",/);
+    expect(JSON.parse(reply.text.slice(2))[1]).toMatchObject({ reason: 'invalid_content' });
+  });
+
   test('varredura derruba o socket ocioso revogado no servidor real', async () => {
     await connect();
     expect(io.of('/').sockets.size).toBe(1);

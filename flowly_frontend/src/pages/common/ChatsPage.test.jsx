@@ -46,14 +46,23 @@ const OTHER_MESSAGE = {
 
 const createFakeSocket = () => {
   const handlers = {};
-  return {
+  const socket = {
+    connected: true,
     on: vi.fn((event, handler) => {
-      handlers[event] = handler;
+      handlers[event] = [...(handlers[event] || []), handler];
+    }),
+    off: vi.fn((event, handler) => {
+      handlers[event] = (handlers[event] || []).filter((item) => item !== handler);
     }),
     emit: vi.fn(),
     disconnect: vi.fn(),
-    trigger: (event, ...args) => handlers[event]?.(...args),
+    trigger: (event, ...args) => (handlers[event] || []).forEach((handler) => handler(...args)),
+    // Callback de ACK do ultimo send_message emitido.
+    lastAck: () => socket.emit.mock.calls.filter(([event]) => event === 'send_message').at(-1)?.[2],
+    sendCount: () => socket.emit.mock.calls.filter(([event]) => event === 'send_message').length,
   };
+  socket.timeout = vi.fn(() => ({ emit: socket.emit }));
+  return socket;
 };
 
 const mockChatApi = (messages) => {
@@ -168,10 +177,12 @@ describe('ChatsPage: mensagens de uma equipe', () => {
 
     expect(socket.emit).toHaveBeenCalledTimes(2);
     expect(socket.emit).toHaveBeenNthCalledWith(1, 'join_equipe', EQUIPE_ID);
-    expect(socket.emit).toHaveBeenNthCalledWith(2, 'send_message', {
-      equipeId: EQUIPE_ID,
-      texto: 'Nova mensagem',
-    });
+    expect(socket.emit).toHaveBeenNthCalledWith(
+      2,
+      'send_message',
+      { equipeId: EQUIPE_ID, texto: 'Nova mensagem' },
+      expect.any(Function),
+    );
 
     const outgoing = JSON.stringify({
       requests: apiGet.mock.calls,
@@ -180,5 +191,230 @@ describe('ChatsPage: mensagens de uma equipe', () => {
     });
     expect(outgoing).not.toContain('userId');
     expect(outgoing).not.toContain(CURRENT_USER_ID);
+  });
+
+  describe('envio com confirmacao do servidor', () => {
+    const openChat = async () => {
+      mockChatApi([MY_MESSAGE]);
+      render(<ChatsPage />);
+      await screen.findByText(MY_MESSAGE.texto);
+    };
+    const input = () => screen.getByPlaceholderText('Digite sua mensagem...');
+    const type = (value) => fireEvent.change(input(), { target: { value } });
+    const send = () => fireEvent.click(screen.getByRole('button', { name: /Enviar|Enviando/ }));
+
+    test('limpa o campo somente depois da confirmacao do servidor', async () => {
+      await openChat();
+      type('Bom dia, equipe');
+      send();
+
+      expect(socket.sendCount()).toBe(1);
+      expect(input()).toHaveValue('Bom dia, equipe');
+      expect(screen.getByRole('button', { name: 'Enviando...' })).toBeDisabled();
+
+      await act(async () => {
+        socket.lastAck()(null, { ok: true, messageId: 'm1' });
+      });
+
+      expect(input()).toHaveValue('');
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    test('mensagem bloqueada mantem o texto, explica o motivo e permite corrigir e reenviar', async () => {
+      await openChat();
+      type('texto recusado');
+      send();
+
+      await act(async () => {
+        socket.lastAck()(null, {
+          ok: false,
+          blocked: true,
+          reason: 'unsafe_content',
+          message: 'Sua mensagem não foi enviada porque parece conter um insulto.',
+        });
+      });
+
+      expect(input()).toHaveValue('texto recusado');
+      const alert = screen.getByRole('alert');
+      expect(within(alert).getByText('Mensagem bloqueada')).toBeInTheDocument();
+      expect(within(alert).getByText(/parece conter um insulto/)).toBeInTheDocument();
+
+      type('texto corrigido');
+      send();
+      expect(socket.sendCount()).toBe(2);
+      expect(socket.emit.mock.calls.at(-1)[1]).toEqual({ equipeId: EQUIPE_ID, texto: 'texto corrigido' });
+    });
+
+    test('nao envia de novo enquanto o primeiro envio esta pendente', async () => {
+      await openChat();
+      type('Bom dia');
+      send();
+      fireEvent.submit(input().closest('form'));
+      send();
+
+      expect(socket.sendCount()).toBe(1);
+    });
+
+    test('sem resposta do servidor mantem o texto, avisa e nao reenvia sozinho', async () => {
+      await openChat();
+      type('Bom dia');
+      send();
+
+      await act(async () => {
+        socket.lastAck()(new Error('operation has timed out'));
+      });
+
+      expect(input()).toHaveValue('Bom dia');
+      expect(within(screen.getByRole('alert')).getByText('Envio não confirmado')).toBeInTheDocument();
+      expect(socket.sendCount()).toBe(1);
+      expect(screen.getByRole('button', { name: 'Enviar' })).toBeEnabled();
+    });
+
+    test('falha temporaria do servidor mantem o texto e informa o erro', async () => {
+      await openChat();
+      type('Bom dia');
+      send();
+
+      await act(async () => {
+        socket.lastAck()(null, { ok: false, blocked: false, reason: 'send_failed', message: 'Não foi possível enviar a mensagem agora.' });
+      });
+
+      expect(input()).toHaveValue('Bom dia');
+      expect(within(screen.getByRole('alert')).getByText('Mensagem não enviada')).toBeInTheDocument();
+    });
+
+    test('queda da conexao durante o envio vira resultado incerto', async () => {
+      await openChat();
+      type('Bom dia');
+      send();
+
+      await act(async () => {
+        socket.trigger('disconnect');
+      });
+
+      expect(input()).toHaveValue('Bom dia');
+      expect(within(screen.getByRole('alert')).getByText('Envio não confirmado')).toBeInTheDocument();
+      expect(socket.sendCount()).toBe(1);
+    });
+
+    test('desconectado nao emite e mantem o texto', async () => {
+      await openChat();
+      socket.connected = false;
+      type('Bom dia');
+      await act(async () => {
+        send();
+      });
+
+      expect(socket.sendCount()).toBe(0);
+      expect(input()).toHaveValue('Bom dia');
+      expect(within(screen.getByRole('alert')).getByText(/Sem conexão/)).toBeInTheDocument();
+    });
+
+    // Igual ao socket.io-client: disconnect() emite 'disconnect' e descarta os ACKs pendentes.
+    const disconnectLikeRealClient = (fake) => {
+      fake.disconnect.mockImplementation(() => {
+        if (!fake.connected) return;
+        fake.connected = false;
+        fake.trigger('disconnect', 'io client disconnect');
+      });
+    };
+
+    test('trocar de equipe durante o envio nao apaga o rascunho nem envia na outra equipe', async () => {
+      const OTHER_EQUIPE_ID = '507f1f77bcf86cd799439014';
+      const secondSocket = createFakeSocket();
+      createSocket.mockReset();
+      createSocket.mockReturnValueOnce(socket).mockReturnValue(secondSocket);
+      disconnectLikeRealClient(socket);
+      apiGet.mockImplementation(async (url) => (url.includes('/messages')
+        ? { data: [] }
+        : {
+          data: [
+            { _id: EQUIPE_ID, nome: 'Equipe Alfa', membros: [] },
+            { _id: OTHER_EQUIPE_ID, nome: 'Equipe Beta', membros: [] },
+          ],
+        }));
+      render(<ChatsPage />);
+      await screen.findByText(/Nenhuma mensagem ainda/);
+
+      type('mensagem da Alfa');
+      send();
+      expect(socket.sendCount()).toBe(1);
+      const lateAck = socket.lastAck();
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /Equipe Beta/ }));
+      });
+
+      expect(socket.disconnect).toHaveBeenCalled();
+      expect(input()).toHaveValue('mensagem da Alfa');
+      expect(within(screen.getByRole('alert')).getByText('Envio não confirmado')).toBeInTheDocument();
+      expect(secondSocket.sendCount()).toBe(0);
+
+      // Novo rascunho na Beta: um ACK atrasado da Alfa nao pode apaga-lo.
+      type('rascunho da Beta');
+      await act(async () => {
+        lateAck(null, { ok: true, messageId: 'm-atrasada' });
+      });
+      expect(input()).toHaveValue('rascunho da Beta');
+      expect(secondSocket.sendCount()).toBe(0);
+    });
+
+    test('ACK que chega depois do prazo nao apaga um rascunho novo', async () => {
+      await openChat();
+      type('primeira tentativa');
+      send();
+      const ack = socket.lastAck();
+
+      await act(async () => {
+        ack(new Error('operation has timed out'));
+      });
+      type('rascunho novo');
+      await act(async () => {
+        ack(null, { ok: true, messageId: 'm1' });
+      });
+
+      expect(input()).toHaveValue('rascunho novo');
+      expect(socket.sendCount()).toBe(1);
+    });
+
+    test('desmontar durante o envio nao gera erro nem atualizacao de estado', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        disconnectLikeRealClient(socket);
+        mockChatApi([MY_MESSAGE]);
+        const { unmount } = render(<ChatsPage />);
+        await screen.findByText(MY_MESSAGE.texto);
+        type('Bom dia');
+        send();
+        const ack = socket.lastAck();
+
+        await act(async () => {
+          unmount();
+        });
+        await act(async () => {
+          ack(null, { ok: true, messageId: 'm1' });
+        });
+
+        expect(socket.disconnect).toHaveBeenCalled();
+        expect(socket.off).toHaveBeenCalledWith('disconnect', expect.any(Function));
+        expect(socket.off).toHaveBeenCalledWith('message_blocked', expect.any(Function));
+        expect(consoleError).not.toHaveBeenCalled();
+      } finally {
+        consoleError.mockRestore();
+      }
+    });
+
+    test('servidor sem ACK: message_blocked ainda encerra o envio como bloqueado', async () => {
+      await openChat();
+      type('texto recusado');
+      send();
+
+      await act(async () => {
+        socket.trigger('message_blocked', { reason: 'unsafe_content', message: 'Mensagem bloqueada por seguranca.' });
+      });
+
+      expect(input()).toHaveValue('texto recusado');
+      expect(within(screen.getByRole('alert')).getByText('Mensagem bloqueada')).toBeInTheDocument();
+    });
   });
 });

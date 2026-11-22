@@ -3,6 +3,7 @@ import createSocketConnection from '../../config/socketClient';
 import apiClient, { getFullApiUrl } from '../../config/apiClient';
 import { authUtils } from '../../config/authUtils';
 import { API_ENDPOINTS } from '../../config/config';
+import { CHAT_SEND_TITLES, sendChatMessage } from '../../utils/chatSend';
 import '../../styles/components/ChatPanel.css';
 
 const formatMessageTime = (dateStr) => {
@@ -23,9 +24,11 @@ const ChatPanel = () => {
   const [messages, setMessages] = useState([]);
   const [novaMensagem, setNovaMensagem] = useState('');
   const [socket, setSocket] = useState(null);
-  const [blockedPopup, setBlockedPopup] = useState('');
+  const [sendNotice, setSendNotice] = useState(null);
+  const [sending, setSending] = useState(false);
 
   const messagesEndRef = useRef(null);
+  const sendingRef = useRef(false);
   const userId = authUtils.getUserId();
 
   const getInitials = (name = 'Usuario') =>
@@ -86,10 +89,6 @@ const ChatPanel = () => {
       setMessages((prev) => [...prev, msg]);
     });
 
-    newSocket.on('message_blocked', (payload) => {
-      setBlockedPopup(payload?.message || 'Mensagem bloqueada.');
-    });
-
     return () => {
       newSocket.disconnect();
     };
@@ -101,23 +100,33 @@ const ChatPanel = () => {
     }
   }, [messages, isOpen]);
 
-  const handleSendMessage = (e) => {
+  // O texto so sai do campo quando o servidor confirma a gravacao; recusa ou falha mantem o rascunho.
+  const handleSendMessage = async (e) => {
     e.preventDefault();
-    if (!novaMensagem.trim() || !socket || !selectedEquipe) return;
+    const texto = novaMensagem.trim();
+    if (!texto || !selectedEquipe || sendingRef.current) return;
 
-    socket.emit('send_message', {
-      equipeId: selectedEquipe,
-      texto: novaMensagem,
-    });
-
-    setNovaMensagem('');
+    sendingRef.current = true;
+    setSending(true);
+    setSendNotice(null);
+    try {
+      const result = await sendChatMessage(socket, { equipeId: selectedEquipe, texto });
+      if (result.status === 'sent') {
+        setNovaMensagem('');
+      } else {
+        setSendNotice({ status: result.status, message: result.message });
+      }
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
   };
 
   useEffect(() => {
-    if (!blockedPopup) return undefined;
-    const timeout = setTimeout(() => setBlockedPopup(''), 4500);
+    if (!sendNotice) return undefined;
+    const timeout = setTimeout(() => setSendNotice(null), 8000);
     return () => clearTimeout(timeout);
-  }, [blockedPopup]);
+  }, [sendNotice]);
 
   if (equipes.length === 0) return null;
 
@@ -131,11 +140,14 @@ const ChatPanel = () => {
 
       {isOpen && (
         <div className="chat-window">
-          {blockedPopup && (
-            <div className="chat-blocked-popup" role="alert">
-              <strong>Mensagem bloqueada</strong>
-              <span>{blockedPopup}</span>
-              <button type="button" onClick={() => setBlockedPopup('')} aria-label="Fechar aviso">x</button>
+          {sendNotice && (
+            <div
+              className={`chat-blocked-popup ${sendNotice.status === 'uncertain' ? 'warning' : ''}`}
+              role="alert"
+            >
+              <strong>{CHAT_SEND_TITLES[sendNotice.status] || CHAT_SEND_TITLES.error}</strong>
+              <span>{sendNotice.message}</span>
+              <button type="button" onClick={() => setSendNotice(null)} aria-label="Fechar aviso">x</button>
             </div>
           )}
           <div className="chat-header">
@@ -181,8 +193,12 @@ const ChatPanel = () => {
               placeholder="Digite sua mensagem..."
               value={novaMensagem}
               onChange={(e) => setNovaMensagem(e.target.value)}
+              readOnly={sending}
+              maxLength={4000}
             />
-            <button type="submit">Enviar</button>
+            <button type="submit" disabled={sending}>
+              {sending ? 'Enviando...' : 'Enviar'}
+            </button>
           </form>
         </div>
       )}

@@ -9,18 +9,22 @@ class TeamChatScreen extends StatefulWidget {
   const TeamChatScreen({
     required this.teamId,
     required this.teamName,
+    this.chatService,
     super.key,
   });
 
   final String teamId;
   final String teamName;
 
+  /// Permite injetar o serviço nos testes; o app usa o padrão.
+  final ChatService? chatService;
+
   @override
   State<TeamChatScreen> createState() => _TeamChatScreenState();
 }
 
 class _TeamChatScreenState extends State<TeamChatScreen> {
-  final ChatService _chatService = ChatService();
+  late final ChatService _chatService = widget.chatService ?? ChatService();
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -28,6 +32,7 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
   List<ChatMessage> _messages = <ChatMessage>[];
   String _currentUserId = '';
   bool _loading = true;
+  bool _sending = false;
 
   @override
   void initState() {
@@ -37,9 +42,13 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
 
   Future<void> _bootstrap() async {
     final String userId = await _storage.read(key: StorageKeys.userId) ?? '';
-    final List<ChatMessage> history = await _chatService.carregarHistorico(
-      widget.teamId,
-    );
+    List<ChatMessage> history = <ChatMessage>[];
+    bool historyFailed = false;
+    try {
+      history = await _chatService.carregarHistorico(widget.teamId);
+    } catch (_) {
+      historyFailed = true;
+    }
 
     if (!mounted) {
       return;
@@ -50,6 +59,12 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
       _messages = history;
       _loading = false;
     });
+    if (historyFailed) {
+      _showNotice(
+        'Não foi possível carregar o histórico do chat.',
+        color: flowlySecondary,
+      );
+    }
 
     _chatService.conectar(
       equipeId: widget.teamId,
@@ -78,15 +93,59 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
     );
   }
 
-  void _sendMessage() {
+  void _showNotice(String message, {required Color color}) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message, style: const TextStyle(color: flowlyText)),
+          backgroundColor: flowlySurfaceAlt,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 6),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: color),
+          ),
+        ),
+      );
+  }
+
+  // O texto só sai do campo quando o servidor confirma a gravação; recusa ou falha mantêm o rascunho.
+  Future<void> _sendMessage() async {
     final String text = _messageController.text.trim();
-    if (text.isEmpty || _currentUserId.isEmpty) {
+    if (text.isEmpty || _currentUserId.isEmpty || _sending) {
       return;
     }
 
-    _chatService.enviarMensagem(equipeId: widget.teamId, texto: text);
+    setState(() => _sending = true);
+    ChatSendResult result;
+    try {
+      result = await _chatService.enviarMensagem(
+        equipeId: widget.teamId,
+        texto: text,
+      );
+    } catch (_) {
+      result = const ChatSendResult(
+        ChatSendStatus.error,
+        message: ChatSendResult.errorMessage,
+      );
+    }
 
-    _messageController.clear();
+    if (!mounted) {
+      return;
+    }
+    setState(() => _sending = false);
+
+    if (result.isSent) {
+      _messageController.clear();
+      return;
+    }
+    _showNotice(
+      result.message,
+      color: result.status == ChatSendStatus.uncertain
+          ? flowlyWarning
+          : flowlySecondary,
+    );
   }
 
   @override
@@ -166,6 +225,8 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
                 Expanded(
                   child: TextField(
                     controller: _messageController,
+                    readOnly: _sending,
+                    maxLength: 4000,
                     minLines: 1,
                     maxLines: 4,
                     style: const TextStyle(color: flowlyText),
@@ -173,14 +234,22 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
                     decoration: const InputDecoration(
                       hintText: 'Escreva uma mensagem... ',
                       hintStyle: TextStyle(color: flowlyMutedText),
+                      counterText: '',
                     ),
                     onSubmitted: (_) => _sendMessage(),
                   ),
                 ),
                 const SizedBox(width: 8),
                 IconButton.filled(
-                  onPressed: _sendMessage,
-                  icon: const Icon(Icons.send_rounded),
+                  tooltip: _sending ? 'Enviando...' : 'Enviar',
+                  onPressed: _sending ? null : _sendMessage,
+                  icon: _sending
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.send_rounded),
                 ),
               ],
             ),
