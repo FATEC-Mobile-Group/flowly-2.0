@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FaPaperPlane, FaPowerOff, FaVolumeUp } from 'react-icons/fa';
+import { FaCheck, FaPaperPlane, FaPowerOff, FaTimes, FaVolumeUp } from 'react-icons/fa';
 import Sidebar from '../../components/layout/Sidebar';
 import { API_ENDPOINTS } from '../../config/config';
 import { authUtils } from '../../config/authUtils';
@@ -669,6 +669,12 @@ function VoiceAssistantPage() {
     finishSession(sessionRef.current);
   }, [finishSession]);
 
+  // Cancelar (junto da estrela): descarta a captura sem enviar nada; nao entra em standby, entao uma confirmacao
+  // aberta na tela continua como estava.
+  const cancelListening = () => {
+    releaseSession(sessionRef.current, { abort: true });
+  };
+
   const toggleListening = () => {
     setRainbowActive(true);
     setTimeout(() => {
@@ -749,14 +755,18 @@ function VoiceAssistantPage() {
   let interactionHint = '';
   if (mic === 'starting') {
     interactionHint = slowStart
-      ? 'O navegador ainda está abrindo o microfone (pode estar pedindo permissão). Espere aparecer "Ouvindo — pode falar" ou use "Cancelar escuta".'
-      : 'Abrindo o microfone: espere aparecer "Ouvindo — pode falar". "Cancelar escuta" descarta sem enviar.';
+      ? 'O navegador ainda está abrindo o microfone (pode estar pedindo permissão). Espere aparecer "Ouvindo — pode falar" ou toque em "Cancelar".'
+      : 'Abrindo o microfone: espere aparecer "Ouvindo — pode falar". "Cancelar" descarta sem enviar.';
   } else if (mic === 'listening') {
-    interactionHint = 'Fale normalmente: depois de uma pausa eu concluo sozinho. Ou toque de novo na estrela para concluir a fala e enviar o que o navegador confirmar. "Cancelar escuta" descarta sem enviar.';
+    interactionHint = 'Fale normalmente: depois de uma pausa eu concluo sozinho. Toque em "Concluir" para concluir a fala e enviar o que o navegador confirmar, ou em "Cancelar" para descartar sem enviar.';
   } else if (mic === 'finishing') {
-    interactionHint = 'Aguardando o navegador confirmar a frase. "Cancelar escuta" descarta sem enviar.';
+    interactionHint = 'Aguardando o navegador confirmar a frase. "Cancelar" descarta sem enviar.';
   } else if (unconfirmedDraft) {
     interactionHint = 'Texto não confirmado pelo navegador: pode estar incompleto. Confira e corrija antes de tocar em Enviar.';
+  } else if (processing) {
+    interactionHint = 'Processando o seu pedido. Aguarde a resposta.';
+  } else if (speaking) {
+    interactionHint = 'Respondendo por voz. Toque na estrela para interromper e falar de novo.';
   }
   const hintId = interactionHint ? 'voice-interaction-hint' : undefined;
 
@@ -770,8 +780,8 @@ function VoiceAssistantPage() {
             <p className="voice-assistant-kicker">Flowly Voice</p>
             <h1>Assistente de voz</h1>
           </div>
-          <div className={`voice-status ${status}`}>
-            <span />
+          <div className={`voice-status ${status}`} role="status" aria-live="polite">
+            <span aria-hidden="true" />
             {STATUS_LABELS[status]}
           </div>
         </section>
@@ -838,6 +848,33 @@ function VoiceAssistantPage() {
               <span className={`rainbow-ripple ${rainbowActive ? 'active' : ''}`} />
               <GeminiStar status={starStatus} listening={listening} />
             </button>
+            {capturing && (
+              // Controles da escuta junto da estrela (como no gravador de audio de um chat): Cancelar descarta a
+              // captura (abort, nada e enviado nem avisado ao assistente); Concluir pede o resultado final (stop).
+              <div className="voice-capture-controls" role="group" aria-label="Controles da escuta">
+                <button
+                  type="button"
+                  className="voice-capture-btn cancel"
+                  onClick={cancelListening}
+                  aria-label="Cancelar a escuta"
+                  aria-describedby={hintId}
+                >
+                  <FaTimes aria-hidden="true" />
+                  <span>Cancelar</span>
+                </button>
+                <button
+                  type="button"
+                  className="voice-capture-btn conclude"
+                  onClick={finishListening}
+                  disabled={mic !== 'listening'}
+                  aria-label="Concluir a fala"
+                  aria-describedby={hintId}
+                >
+                  <FaCheck aria-hidden="true" />
+                  <span>Concluir</span>
+                </button>
+              </div>
+            )}
             {interactionHint && (
               <p id={hintId} className="voice-interaction-hint">{interactionHint}</p>
             )}

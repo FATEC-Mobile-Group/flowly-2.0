@@ -852,7 +852,7 @@ describe('Concluir x cancelar: identificacao para a pessoa', () => {
     render(<VoiceAssistantPage />);
     fireEvent.click(button('Iniciar escuta'));
     expect(button('Cancelar escuta')).toBeInTheDocument();
-    expect(hint()).toHaveTextContent('Abrindo o microfone: espere aparecer "Ouvindo — pode falar". "Cancelar escuta" descarta sem enviar.');
+    expect(hint()).toHaveTextContent('Abrindo o microfone: espere aparecer "Ouvindo — pode falar". "Cancelar" descarta sem enviar.');
 
     fire(lastSession().onstart);
     fire(lastSession().onaudiostart);
@@ -861,7 +861,7 @@ describe('Concluir x cancelar: identificacao para a pessoa', () => {
     expect(conclude).toHaveAttribute('title', 'Concluir fala');
     expect(cancel).toHaveAttribute('title', 'Cancelar escuta');
     expect(hint()).toHaveTextContent(/concluir a fala e enviar o que o navegador confirmar/);
-    expect(hint()).toHaveTextContent(/"Cancelar escuta" descarta sem enviar/);
+    expect(hint()).toHaveTextContent(/"Cancelar" para descartar sem enviar/);
     // Leitores de tela recebem a mesma orientacao nos dois botoes.
     expect(conclude).toHaveAttribute('aria-describedby', hint().id);
     expect(cancel).toHaveAttribute('aria-describedby', hint().id);
@@ -1269,5 +1269,92 @@ describe('Escuta limitada a uma fala: pausa nao corta, sem fala fecha, nada parc
       expect(session.abort).toHaveBeenCalledTimes(1);
       expect(sentCommands()).toEqual([]);
     });
+  });
+});
+
+describe('Controles da escuta junto da estrela: Cancelar e Concluir', () => {
+  const controls = () => screen.queryByRole('group', { name: 'Controles da escuta' });
+  const cancelButton = () => screen.getByRole('button', { name: 'Cancelar a escuta' });
+  const concludeButton = () => screen.getByRole('button', { name: 'Concluir a fala' });
+
+  test('so aparecem com a escuta ativa; Concluir espera o microfone abrir', () => {
+    render(<VoiceAssistantPage />);
+    expect(controls()).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Iniciar escuta' }));
+    expect(controls()).toBeInTheDocument();
+    expect(cancelButton()).toBeEnabled();
+    expect(concludeButton()).toBeDisabled(); // "Iniciando": ainda nao ha o que concluir
+    fire(lastSession().onstart);
+    fire(lastSession().onaudiostart);
+    expect(concludeButton()).toBeEnabled();
+    // Texto visivel, botoes de verdade (teclado) e a mesma orientacao para leitores de tela.
+    expect(cancelButton()).toHaveTextContent('Cancelar');
+    expect(concludeButton()).toHaveTextContent('Concluir');
+    expect(cancelButton()).toHaveAttribute('type', 'button');
+    expect(concludeButton()).toHaveAttribute('aria-describedby', 'voice-interaction-hint');
+    expect(screen.getByRole('status')).toHaveTextContent('Ouvindo — pode falar');
+  });
+
+  test('Cancelar descarta a captura (abort) sem enviar e sem entrar em standby', async () => {
+    render(<VoiceAssistantPage />);
+    fireEvent.change(input(), { target: { value: 'texto digitado antes' } });
+    const session = startListening();
+    fire(session.onresult, resultEvent([['minhas tarefas', true]]));
+    const late = capturedHandlers(session);
+    fireEvent.click(cancelButton());
+    fire(late.end);
+    await flush();
+
+    expect(session.abort).toHaveBeenCalledTimes(1);
+    expect(session.stop).not.toHaveBeenCalled();
+    expect(sentCommands()).toEqual([]);
+    expect(standbyCalls()).toHaveLength(0);
+    expect(controls()).toBeNull();
+    expect(statusText()).toBe('Standby');
+    expect(input()).toHaveValue('texto digitado antes');
+  });
+
+  test('Concluir usa stop, mostra "Finalizando a fala" e envia o final uma vez', async () => {
+    render(<VoiceAssistantPage />);
+    const session = startListening();
+    fire(session.onresult, resultEvent([['listar equi', false]]));
+    fireEvent.click(concludeButton());
+    expect(session.stop).toHaveBeenCalledTimes(1);
+    expect(session.abort).not.toHaveBeenCalled();
+    expect(statusText()).toBe('Finalizando a fala');
+    expect(concludeButton()).toBeDisabled();
+    fireEvent.click(concludeButton());
+    expect(session.stop).toHaveBeenCalledTimes(1);
+    fire(session.onresult, resultEvent([['listar equipes', true]]));
+    fire(session.onend);
+    await flush();
+    expect(sentCommands()).toEqual(['listar equipes']);
+  });
+
+  test('Cancelar durante a finalizacao ainda descarta tudo', async () => {
+    render(<VoiceAssistantPage />);
+    const session = startListening();
+    fire(session.onresult, resultEvent([['atribuir a 3', false]]));
+    const late = capturedHandlers(session);
+    fireEvent.click(concludeButton());
+    fireEvent.click(cancelButton());
+    fire(late.result, resultEvent([['atribuir a 3 para mim', true]]));
+    fire(late.end);
+    await flush();
+    expect(sentCommands()).toEqual([]);
+    expect(session.abort).toHaveBeenCalledTimes(1);
+  });
+
+  test('Processando e Falando tambem explicam o que esta acontecendo', async () => {
+    render(<VoiceAssistantPage />);
+    sendTyped('meu perfil');
+    expect(statusText()).toBe('Processando');
+    expect(document.querySelector('.voice-interaction-hint')).toHaveTextContent('Processando o seu pedido');
+    act(() => pendingReplies.shift()({ ok: true, reply_text: 'Seu perfil.', tts: { enabled: true, text: 'Seu perfil.' } }));
+    await flush();
+    const utterance = window.speechSynthesis.speak.mock.calls.at(-1)[0];
+    act(() => utterance.onstart());
+    expect(statusText()).toBe('Falando');
+    expect(document.querySelector('.voice-interaction-hint')).toHaveTextContent('Respondendo por voz');
   });
 });

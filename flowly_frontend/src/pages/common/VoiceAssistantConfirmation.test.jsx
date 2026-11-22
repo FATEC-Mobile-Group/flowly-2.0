@@ -453,3 +453,22 @@ describe('17-20: responsividade, credenciais, leituras e kill switch', () => {
     expect(card()).toBeNull();
   });
 });
+
+describe('Cancelar a escuta junto da estrela nao mexe na confirmacao', () => {
+  test('a escuta e descartada; o cartao, o operationId e o backend ficam como estavam', async () => {
+    replyFor = flowReplies();
+    render(<VoiceAssistantPage />);
+    await prepare();
+    fireEvent.click(screen.getByRole('button', { name: 'Iniciar escuta' }));
+    const session = FakeRecognition.instances.at(-1);
+    act(() => session.onstart?.());
+    act(() => session.onaudiostart?.());
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar a escuta' }));
+    await flush();
+    expect(session.abort).toHaveBeenCalledTimes(1);
+    expect(card().dataset.operationId).toBe('op-1');
+    expect(cardButton('Confirmar')).toBeEnabled();
+    expect(standbyCalls()).toHaveLength(0);
+    expect(commands()).toHaveLength(1); // so o pedido original
+  });
+});

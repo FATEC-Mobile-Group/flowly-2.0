@@ -607,3 +607,75 @@
   font-weight: 600;
   cursor: pointer;
 }
+
+/* Controles da escuta junto da estrela: Cancelar (descarta) e Concluir (envia o que o navegador confirmar). */
+.voice-capture-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.voice-capture-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text-primary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.voice-capture-btn.cancel {
+  border-color: rgba(255, 91, 91, 0.55);
+}
+
+.voice-capture-btn.conclude {
+  color: white;
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+.voice-capture-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.voice-capture-btn:focus-visible,
+.voice-confirmation-actions button:focus-visible,
+.voice-retry-btn:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+/* Cartao de confirmacao legivel em telas baixas (~640 px): nunca espremido; a estrela e a area de mensagens
+   encolhem enquanto ele estiver aberto. */
+.voice-confirmation {
+  min-height: min(150px, 30vh);
+}
+
+@media (max-height: 760px) {
+  .voice-chat-panel:has(.voice-confirmation) {
+    grid-template-rows: minmax(56px, 1fr) auto auto auto;
+    gap: 10px;
+  }
+
+  .voice-chat-panel:has(.voice-confirmation) .voice-orb-zone {
+    min-height: 0;
+    gap: 6px;
+  }
+
+  .voice-chat-panel:has(.voice-confirmation) .voice-star-btn {
+    width: 64px;
+    height: 64px;
+  }
+
+  .voice-confirmation {
+    padding: 10px 12px;
+    gap: 6px;
+  }
+}
