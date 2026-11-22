@@ -6,7 +6,7 @@ const ActivityLog = require('../models/ActivityLog');
 const logActivity = require('../utils/activityLogger');
 const { notifyUsers, persistNotifications, emitNotifications } = require('../utils/notificationService');
 const bucket = require('../services/storage');
-const { getSignedUrl } = require('../services/storage');
+const { getSignedUrl, getObjectPath } = require('../services/storage');
 const { createIdempotencyService, IdempotentRequestError } = require('../services/idempotencyService');
 const {
   executarTransicao,
@@ -447,7 +447,8 @@ exports.detalhesTarefa = async (req, res) => {
 
     const tarefa = await Tarefa.findOne(filtro)
       .populate('user', 'nome')
-      .populate('equipe', 'nome');
+      .populate('equipe', 'nome')
+      .populate('anexos.uploadedBy', 'nome');
 
     if (!tarefa) return res.status(404).json({ erro: 'Tarefa não encontrada' });
 
@@ -1470,27 +1471,32 @@ exports.adicionarAnexo = async (req, res) => {
     // Arquivo foi validado pela middleware, agora fazer upload
     const filePath = await uploadAnexoParaGCS(tarefa._id, req.file);
 
+    // A autoria vem do JWT validado, nunca do corpo da requisicao.
     const novoAnexo = {
       url: filePath,
       nomeOriginal: req.file.originalname,
       mimetype: req.file.mimetype,
-      size: req.file.size
+      size: req.file.size,
+      uploadedBy: req.user.id,
+      uploadedAt: new Date(),
     };
 
     tarefa.anexos.push(novoAnexo);
     await tarefa.save();
+    const anexoSalvo = tarefa.anexos[tarefa.anexos.length - 1];
 
     await logActivity(
-      'novo_anexo',
+      'anexo_adicionado',
       `Arquivo anexado: ${req.file.originalname}`,
       req.user.id,
       tarefa._id
     );
 
+    const anexoObject = typeof anexoSalvo?.toObject === 'function' ? anexoSalvo.toObject() : novoAnexo;
     res.status(201).json({
       msg: 'Anexo adicionado com sucesso',
       anexo: {
-        ...novoAnexo,
+        ...anexoObject,
         url: await getSignedUrl(novoAnexo.url),
       }
     });
@@ -1500,6 +1506,161 @@ exports.adicionarAnexo = async (req, res) => {
       return res.status(504).json({ erro: 'Timeout ao conectar com Cloud Storage' });
     }
     res.status(500).json({ erro: 'Erro ao fazer upload de anexo' });
+  }
+};
+
+const TAREFA_NAO_ENCONTRADA = { erro: 'Tarefa não encontrada' };
+const ANEXO_NAO_ENCONTRADO = { erro: 'Anexo não encontrado' };
+
+// Carrega o anexo pela tarefa acessivel a quem pede (sessao ja validada pelo auth). Sem acesso e tarefa
+// inexistente recebem o mesmo 404, como no upload.
+const carregarAnexoAcessivel = async (req) => {
+  const { id, anexoId } = req.params;
+  if (!OBJECT_ID_PATTERN.test(id)) return { status: 404, body: TAREFA_NAO_ENCONTRADA };
+  if (!OBJECT_ID_PATTERN.test(anexoId)) return { status: 404, body: ANEXO_NAO_ENCONTRADO };
+
+  const filtro = await montarFiltroTarefasAcessiveis(req, { _id: id });
+  if (!filtro) return { status: 404, body: TAREFA_NAO_ENCONTRADA };
+
+  const tarefa = await Tarefa.findOne(filtro).select('_id equipe anexos');
+  if (!tarefa) return { status: 404, body: TAREFA_NAO_ENCONTRADA };
+
+  const anexo = (tarefa.anexos || []).find((item) => String(item._id) === String(anexoId));
+  if (!anexo) return { status: 404, body: ANEXO_NAO_ENCONTRADO };
+
+  return { tarefa, filtro, anexo };
+};
+
+// Content-Disposition com o nome original: fallback ASCII sem aspas/controle e filename* em UTF-8 (RFC 5987).
+const montarContentDisposition = (nome) => {
+  const original = String(nome || 'arquivo');
+  const fallback = original.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_').trim() || 'arquivo';
+  const utf8 = encodeURIComponent(original)
+    .replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${utf8}`;
+};
+
+// ALL: baixar anexo da tarefa, com o nome original.
+exports.baixarAnexo = async (req, res) => {
+  try {
+    const carregado = await carregarAnexoAcessivel(req);
+    if (carregado.status) return res.status(carregado.status).json(carregado.body);
+    const { anexo } = carregado;
+
+    // So objetos do bucket gravados no anexo. URL externa ou arquivo local legado nao sao servidos aqui.
+    const objectPath = getObjectPath(anexo.url);
+    if (!objectPath || objectPath.startsWith('http') || objectPath.startsWith('uploads/')) {
+      return res.status(404).json({ erro: 'Arquivo do anexo indisponível para download' });
+    }
+
+    const file = bucket.file(objectPath);
+    let metadata;
+    try {
+      const [exists] = await file.exists();
+      if (!exists) return res.status(404).json({ erro: 'Arquivo do anexo não encontrado no armazenamento' });
+      [metadata] = await file.getMetadata();
+    } catch (storageError) {
+      console.error('Erro ao consultar anexo no Cloud Storage:', storageError.message);
+      return res.status(503).json({ erro: 'Não foi possível acessar o armazenamento agora. Tente novamente em instantes.' });
+    }
+
+    res.setHeader('Content-Type', anexo.mimetype || metadata?.contentType || 'application/octet-stream');
+    if (metadata?.size) res.setHeader('Content-Length', metadata.size);
+    res.setHeader('Content-Disposition', montarContentDisposition(anexo.nomeOriginal));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+
+    file.createReadStream()
+      .on('error', (streamError) => {
+        console.error('Erro ao ler anexo do Cloud Storage:', streamError.message);
+        if (!res.headersSent) {
+          res.status(503).json({ erro: 'Não foi possível acessar o armazenamento agora. Tente novamente em instantes.' });
+        } else {
+          res.destroy(streamError);
+        }
+      })
+      .pipe(res);
+  } catch (err) {
+    console.error('Erro ao baixar anexo:', err.message);
+    if (!res.headersSent) res.status(500).json({ erro: 'Erro ao baixar anexo' });
+  }
+};
+
+// ALL: remover anexo. Ordem: conferir acesso e autoria -> apagar o objeto (se exclusivo desta tarefa)
+// -> retirar o registro com condicao atomica. Se o Storage falhar, nada muda e a pessoa pode repetir;
+// se o registro ja tiver sido retirado por outra requisicao, responde 404.
+exports.excluirAnexo = async (req, res) => {
+  try {
+    const carregado = await carregarAnexoAcessivel(req);
+    if (carregado.status) return res.status(carregado.status).json(carregado.body);
+    const { tarefa, filtro, anexo } = carregado;
+
+    if (!anexo.uploadedBy) {
+      return res.status(403).json({
+        erro: 'Este anexo foi enviado antes do registro de autoria e não pode ser removido por aqui.',
+        codigo: 'anexo_sem_autoria',
+      });
+    }
+    if (String(anexo.uploadedBy) !== String(req.user.id)) {
+      return res.status(403).json({
+        erro: 'Somente quem enviou o anexo pode removê-lo.',
+        codigo: 'anexo_de_outro_usuario',
+      });
+    }
+
+    // O objeto so e apagado se estiver na pasta desta tarefa e nenhum outro anexo apontar para ele.
+    const objectPath = getObjectPath(anexo.url);
+    const pastaDaTarefa = `arquivos/${tarefa._id}/`;
+    const referencias = await Tarefa.find({ 'anexos.url': anexo.url }).select('anexos._id anexos.url').lean();
+    const outrasReferencias = referencias
+      .flatMap((item) => item.anexos || [])
+      .filter((item) => item.url === anexo.url && String(item._id) !== String(anexo._id)).length;
+    const apagarObjeto = Boolean(objectPath)
+      && objectPath.startsWith(pastaDaTarefa)
+      && !objectPath.includes('..')
+      && outrasReferencias === 0;
+
+    if (apagarObjeto) {
+      try {
+        await bucket.file(objectPath).delete({ ignoreNotFound: true });
+      } catch (storageError) {
+        console.error('Erro ao remover anexo do Cloud Storage:', storageError.message);
+        return res.status(503).json({
+          erro: 'Não foi possível remover o arquivo agora. O anexo foi mantido; tente novamente.',
+          codigo: 'storage_indisponivel',
+        });
+      }
+    } else {
+      console.warn('Anexo removido sem apagar o objeto (fora da pasta da tarefa ou compartilhado):', String(anexo._id));
+    }
+
+    // Nao ha transacao entre Storage e MongoDB. Se o registro nao sair depois do objeto apagado, o anexo
+    // continua na tarefa (com autoria) e a mesma remocao pode ser repetida: o delete usa ignoreNotFound.
+    let resultado;
+    try {
+      resultado = await Tarefa.updateOne(
+        { ...filtro, anexos: { $elemMatch: { _id: anexo._id, uploadedBy: req.user.id } } },
+        { $pull: { anexos: { _id: anexo._id, uploadedBy: req.user.id } } }
+      );
+    } catch (dbError) {
+      console.error('Remocao de anexo incompleta (registro mantido):', String(anexo._id), dbError.message);
+      return res.status(500).json(apagarObjeto
+        ? {
+          erro: 'O arquivo foi apagado do armazenamento, mas o anexo não foi retirado da tarefa. Tente remover novamente.',
+          codigo: 'remocao_incompleta',
+        }
+        : { erro: 'Erro ao remover anexo' });
+    }
+    if (!resultado.modifiedCount) {
+      return res.status(404).json(ANEXO_NAO_ENCONTRADO);
+    }
+
+    await logActivity('anexo_removido', `Arquivo removido: ${anexo.nomeOriginal}`, req.user.id, tarefa._id);
+
+    return res.json({ msg: 'Anexo removido', anexoId: String(anexo._id), arquivoRemovido: apagarObjeto });
+  } catch (err) {
+    console.error('Erro ao remover anexo:', err.message);
+    return res.status(500).json({ erro: 'Erro ao remover anexo' });
   }
 };
 

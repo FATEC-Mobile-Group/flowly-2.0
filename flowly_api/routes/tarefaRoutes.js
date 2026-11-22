@@ -81,6 +81,13 @@ router.post(
   tarefaController.adicionarAnexo
 );
 
+// ALL: baixar anexo. Acesso a tarefa conferido no servidor; o arquivo vem do caminho gravado no anexo,
+// nunca de um caminho informado pelo cliente.
+router.get('/:id/anexos/:anexoId/download', tarefaController.baixarAnexo);
+
+// ALL: remover anexo. So quem enviou (uploadedBy, gravado no upload) pode remover.
+router.delete('/:id/anexos/:anexoId', tarefaController.excluirAnexo);
+
 // USER: atualizar status da tarefa
 // Com Idempotency-Key: atualizacao protegida (condicional, na transacao com chave, logs e notificacao; emissao so
 // apos o commit). Sem o cabecalho: fluxo atual, inalterado.
