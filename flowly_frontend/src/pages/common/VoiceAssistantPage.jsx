@@ -41,6 +41,57 @@ const AUDIO_START_TIMEOUT_MS = 12000;
 // Falhas seguidas antes de sugerir outro caminho (sem novas tentativas automaticas).
 const FAILURE_HINT_AFTER = 3;
 
+// Confirmacao de escrita ligada a operacao mostrada: o assistente devolve conversation.operation_id e o resumo
+// guardado na API; a tela reenvia esse operationId em cada mensagem enquanto o resumo esta na tela (voz, texto ou
+// botao). O navegador nunca cria IDs nem chama as rotas internas; quem valida e executa e o backend.
+const TERMINAL_OPERATION_STATUSES = new Set(['completed', 'failed', 'cancelled', 'expired', 'unknown']);
+const CONFIRMATION_PHASES = {
+  awaiting_confirmation: 'awaiting',
+  retry_pending: 'uncertain',
+  operation_in_progress: 'in_progress',
+  executing: 'in_progress',
+  cancel_unverified: 'cancel_unverified',
+  unverified: 'retry',
+};
+// Recusas em que o backend garante que nada foi enviado (pode tentar de novo sem risco).
+const NOTHING_SENT_ERRORS = new Set(['lease_budget_exhausted', 'claim_invalid']);
+const CONFIRMATION_TEXT = {
+  awaiting: {
+    title: 'Confirme a operação',
+    note: 'Nada foi alterado ainda. Toque em Confirmar ou diga "confirmar". Para desistir, toque em Cancelar ou diga "cancelar".',
+  },
+  uncertain: {
+    title: 'Resultado não confirmado',
+    note: 'Não foi possível confirmar se a alteração foi feita: ela pode ter sido aplicada. "Concluir com segurança" verifica sem repetir; você também pode conferir no Flowly.',
+  },
+  retry: {
+    title: 'Não executado',
+    note: 'Nada foi enviado. Você pode tentar confirmar de novo.',
+  },
+  in_progress: {
+    title: 'Em andamento',
+    note: 'Essa operação já está sendo executada. Aguarde o resultado.',
+  },
+  cancel_unverified: {
+    title: 'Cancelamento não confirmado',
+    note: 'Nada foi executado, mas não consegui confirmar o cancelamento. Você pode tentar cancelar de novo; sem confirmação, o pedido expira sozinho.',
+  },
+  expired: {
+    title: 'Prazo encerrado',
+    note: 'O prazo para confirmar terminou. Nada foi alterado. Se ainda quiser, faça o pedido de novo.',
+  },
+};
+const CONFIRMATION_ACTIONS = {
+  awaiting: [['confirmar', 'Confirmar'], ['cancelar', 'Cancelar']],
+  uncertain: [['confirmar', 'Concluir com segurança']],
+  retry: [['confirmar', 'Tentar de novo']],
+  cancel_unverified: [['cancelar', 'Cancelar']],
+  in_progress: [],
+  expired: [],
+};
+// Pedido que pode ser uma confirmacao (para nao chamar de "falha" uma resposta perdida depois de confirmar).
+const looksLikeConfirmation = (text) => /\bconfirm/i.test(String(text || ''));
+
 // Mensagens por erro do reconhecimento nativo (Web Speech API).
 function recognitionErrorMessage(error) {
   switch (error) {
@@ -149,7 +200,16 @@ function VoiceAssistantPage() {
   // Texto do campo e sua origem: 'typed' (digitado ou recuperado) ou 'voice' (transcricao da sessao em andamento).
   const draftRef = useRef({ text: '', source: 'typed' });
   const messagesEndRef = useRef(null);
+  // Uma conversa por montagem da pagina: atualizar ou reabrir gera outra, e uma confirmacao antiga nao vale nela.
   const conversationIdRef = useRef(`voice-${authUtils.getUserId() || 'guest'}-${Date.now()}`);
+  // Confirmacao mostrada: { operationId, conversationId, summary, phase, expiresAt }. So em memoria e so como
+  // referencia: o backend confere dono, conversa, prazo e estado antes de qualquer execucao.
+  const [confirmation, setConfirmationState] = useState(null);
+  const confirmationRef = useRef(null);
+  const setConfirmation = useCallback((next) => {
+    confirmationRef.current = next;
+    setConfirmationState(next);
+  }, []);
 
   const supported = useMemo(() => Boolean(SpeechRecognition), []);
   const listening = mic === 'listening';
@@ -204,6 +264,35 @@ function VoiceAssistantPage() {
     window.speechSynthesis.speak(utterance);
   }, []);
 
+  // Atualiza o vinculo com a operacao a partir da resposta do assistente (so desta conversa).
+  const applyConfirmation = useCallback((payload) => {
+    const conversation = payload?.conversation;
+    if (!conversation || typeof conversation !== 'object') return;
+    if (conversation.id && conversation.id !== conversationIdRef.current) return;
+    const { status } = conversation;
+    const current = confirmationRef.current;
+    const operationId = typeof conversation.operation_id === 'string' ? conversation.operation_id : '';
+    if (TERMINAL_OPERATION_STATUSES.has(status)) {
+      // Resultado final confirmado: sai o vinculo (e os botoes) da operacao a que ele se refere.
+      if (!operationId || !current || current.operationId === operationId) setConfirmation(null);
+      return;
+    }
+    const phase = CONFIRMATION_PHASES[status];
+    if (!operationId || !phase) return; // pergunta, leitura ou erro sem operacao: o vinculo fica como esta
+    const sameOperation = current?.operationId === operationId;
+    const seconds = Number(conversation.expires_in);
+    let expiresAt = sameOperation ? current.expiresAt : null;
+    if (phase === 'awaiting' && Number.isFinite(seconds) && seconds > 0) expiresAt = Date.now() + seconds * 1000;
+    setConfirmation({
+      operationId,
+      conversationId: conversationIdRef.current,
+      // Sempre o resumo devolvido pela API; nada reconstruido aqui.
+      summary: String(conversation.summary || (sameOperation ? current.summary : '') || ''),
+      phase: status === 'retry_pending' && NOTHING_SENT_ERRORS.has(payload?.error) ? 'retry' : phase,
+      expiresAt,
+    });
+  }, [setConfirmation]);
+
   const updateDraft = useCallback((text, source = 'typed') => {
     draftRef.current = { text, source };
     setDraft(text);
@@ -245,6 +334,8 @@ function VoiceAssistantPage() {
   const enterStandby = useCallback(async ({ silent = false, keepSpeech = false } = {}) => {
     releaseSession(sessionRef.current, { abort: true });
     setAwaitingReply(false);
+    // Standby cancela a confirmacao pendente no backend: os botoes saem e nenhuma resposta tardia os traz de volta.
+    setConfirmation(null);
     // Comando ja enviado nao volta atras: a resposta ainda aparece na tela, mas nao e falada.
     if (requestRef.current) requestRef.current.muted = true;
     if (!keepSpeech) stopSpeaking();
@@ -263,13 +354,23 @@ function VoiceAssistantPage() {
         addMessage('assistant', 'Não consegui avisar o standby, mas parei a escuta local.');
       }
     }
-  }, [addMessage, releaseSession, stopSpeaking]);
+  }, [addMessage, releaseSession, setConfirmation, stopSpeaking]);
 
   const sendUtterance = useCallback(async (utterance, { nextDraft = '' } = {}) => {
     const cleanUtterance = String(utterance || '').trim();
+    // Um envio por vez (tambem para os botoes de confirmacao); o backend garante uma unica execucao.
     if (!cleanUtterance || sendingRef.current) return;
     sendingRef.current = true;
-    const request = { muted: false };
+    const binding = confirmationRef.current;
+    const operationId = binding && binding.conversationId === conversationIdRef.current && binding.phase !== 'expired'
+      ? binding.operationId
+      : '';
+    const request = {
+      muted: false,
+      conversationId: conversationIdRef.current,
+      operationId,
+      confirming: Boolean(operationId) && looksLikeConfirmation(cleanUtterance),
+    };
     requestRef.current = request;
 
     addMessage('user', cleanUtterance);
@@ -287,15 +388,19 @@ function VoiceAssistantPage() {
         body: JSON.stringify({
           userId: authUtils.getUserId(),
           channelId: 'voice-assistant',
-          conversationId: conversationIdRef.current,
+          conversationId: request.conversationId,
           content: cleanUtterance,
+          // So o ID que o proprio assistente mostrou nesta conversa; sem ele, confirmar nao executa nada.
+          ...(operationId ? { operationId } : {}),
         }),
       });
 
       const payload = await response.json();
       const reply = payload.reply_text || payload.message || 'Resposta recebida.';
       addMessage('assistant', reply, { error: !payload.ok });
-      if (request.muted) return;
+      // Resposta tardia (depois do standby ou de outra conversa) nao mexe na confirmacao mostrada.
+      if (request.muted || request.conversationId !== conversationIdRef.current) return;
+      applyConfirmation(payload);
 
       if (payload?.command?.key === 'exit') {
         speak(payload);
@@ -306,13 +411,19 @@ function VoiceAssistantPage() {
       setAwaitingReply(AWAITING_CONVERSATION.has(payload?.conversation?.status));
       speak(payload);
     } catch (error) {
-      addMessage('assistant', 'Não consegui falar com a API do assistente.', { error: true });
+      if (request.confirming && !request.muted && confirmationRef.current?.operationId === request.operationId) {
+        // A confirmacao saiu e a resposta se perdeu: pode ter sido aplicada. Nunca vira sucesso nem falha.
+        setConfirmation({ ...confirmationRef.current, phase: 'uncertain' });
+        addMessage('assistant', 'Não consegui receber o resultado da confirmação. A alteração pode ter sido aplicada; confira antes de repetir.', { error: true });
+      } else {
+        addMessage('assistant', 'Não consegui falar com a API do assistente.', { error: true });
+      }
     } finally {
       if (requestRef.current === request) requestRef.current = null;
       sendingRef.current = false;
       setProcessing(false);
     }
-  }, [addMessage, enterStandby, speak, updateDraft]);
+  }, [addMessage, applyConfirmation, enterStandby, setConfirmation, speak, updateDraft]);
 
   // Fim da sessao (onend, erro ou prazo do Concluir): envia so o resultado final; o resto e recuperavel.
   const concludeSession = useCallback((session, { error = null, abort = false } = {}) => {
@@ -519,6 +630,30 @@ function VoiceAssistantPage() {
     enterStandby({ silent: true });
   }, [enterStandby]);
 
+  // Prazo da confirmacao (do backend): vencido, os botoes saem; o backend recusaria de qualquer forma.
+  useEffect(() => {
+    if (!confirmation || confirmation.phase !== 'awaiting' || !confirmation.expiresAt) return undefined;
+    const expire = () => {
+      const current = confirmationRef.current;
+      if (current?.operationId === confirmation.operationId && current.phase === 'awaiting') {
+        setConfirmation({ ...current, phase: 'expired' });
+      }
+    };
+    const remaining = confirmation.expiresAt - Date.now();
+    if (remaining <= 0) {
+      expire();
+      return undefined;
+    }
+    const timer = setTimeout(expire, remaining);
+    return () => clearTimeout(timer);
+  }, [confirmation, setConfirmation]);
+
+  const answerConfirmation = (word) => {
+    // Botao = a mesma mensagem explicita que a voz ou o texto mandariam, com o operationId mostrado.
+    releaseSession(sessionRef.current, { abort: true });
+    sendUtterance(word);
+  };
+
   let micLabel = 'Iniciar escuta';
   if (mic === 'listening') micLabel = 'Concluir fala';
   else if (mic === 'starting') micLabel = 'Iniciando escuta';
@@ -574,6 +709,39 @@ function VoiceAssistantPage() {
             ))}
             <div ref={messagesEndRef} />
           </div>
+
+          {confirmation && (
+            <section
+              className={`voice-confirmation ${confirmation.phase}`}
+              role="group"
+              aria-label={CONFIRMATION_TEXT[confirmation.phase].title}
+              data-operation-id={confirmation.operationId}
+            >
+              <p className="voice-confirmation-title">{CONFIRMATION_TEXT[confirmation.phase].title}</p>
+              {confirmation.summary && (
+                <p className="voice-confirmation-summary">{confirmation.summary}</p>
+              )}
+              <p className="voice-confirmation-note">{CONFIRMATION_TEXT[confirmation.phase].note}</p>
+              <div className="voice-confirmation-actions">
+                {CONFIRMATION_ACTIONS[confirmation.phase].map(([word, label]) => (
+                  <button
+                    key={word}
+                    type="button"
+                    className={word === 'cancelar' ? 'secondary' : ''}
+                    onClick={() => answerConfirmation(word)}
+                    disabled={processing}
+                  >
+                    {label}
+                  </button>
+                ))}
+                {confirmation.phase === 'expired' && (
+                  <button type="button" className="secondary" onClick={() => setConfirmation(null)}>
+                    Fechar
+                  </button>
+                )}
+              </div>
+            </section>
+          )}
 
           <div className="voice-orb-zone">
             <button

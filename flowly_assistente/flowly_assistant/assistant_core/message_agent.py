@@ -1079,7 +1079,10 @@ class MessageAgent:
         extra = {"error": "conversation_busy"}
         if operation and operation.get("operationId"):
             extra["operation"] = {"id": operation.get("operationId"), "status": operation.get("status")}
-        return finish(status, text, http=409, **extra)
+        response, code = finish(status, text, http=409, **extra)
+        if operation and operation.get("operationId") and operation.get("status") == "pending":
+            response["conversation"].update(self._operation_binding(operation))  # a tela mostra a que esta valendo
+        return response, code
 
     @staticmethod
     def _expires_in(operation: Dict[str, Any]) -> int:
@@ -1194,17 +1197,24 @@ class MessageAgent:
                 command={"key": operation.get("commandKey")}, **extra,
             )
 
+        # A confirmacao vale so para a operacao que a pessoa viu: o navegador reenvia o operationId do resumo
+        # mostrado. Ausente, malformado ou de outra operacao: nada e executado NEM cancelado; a operacao atual e
+        # reapresentada. O operationId nao substitui autenticacao, intencao explicita, dono, conversa, prazo ou claim.
         client_operation = str(self.body.get("operationId") or self.body.get("operation_id") or "").strip()
-        if client_operation and client_operation != operation.get("operationId"):
-            # O navegador nao escolhe qual operacao executar: divergencia cancela a pendente (sem executar).
-            if status == "pending":
-                self.conversations.clear(conversation_id)
-                return self._cancel_shared(
-                    operation, conversation_id, event_id, moderation_score, queue_result,
-                    ok_text="Essa confirmação não corresponde à operação pendente. Cancelei a operação e nada foi alterado.",
-                )
-            return finish("conflict", "Essa confirmação não corresponde à operação desta conversa. Nada foi executado.")
+        bound = bool(client_operation) and hmac.compare_digest(client_operation, str(operation.get("operationId") or ""))
+        if client_operation and not bound:
+            return self._represent_operation(
+                operation, conversation_id, event_id, moderation_score, queue_result, error="confirmation_mismatch",
+                text=f"Essa confirmação não corresponde à operação desta conversa. Nada foi alterado. A operação atual é: "
+                     f"{summary}. Confira o resumo e confirme ou cancele de novo.",
+            )
         if is_confirmation(content):
+            if not bound:
+                return self._represent_operation(
+                    operation, conversation_id, event_id, moderation_score, queue_result, error="operation_id_required",
+                    text=f"Não consegui ligar essa confirmação ao resumo mostrado. Nada foi alterado. A operação "
+                         f"aguardando é: {summary}. Confira o resumo e confirme de novo.",
+                )
             self.conversations.clear(conversation_id)
             return self._confirm_shared(
                 operation=operation, conversation_id=conversation_id, event_id=event_id,
@@ -1212,20 +1222,59 @@ class MessageAgent:
             )
         wants_cancel = is_cancel_request(content) or bool(NEGATION_ANSWER_WORDS & set(plain_words(content)))
         if status == "pending":
-            # Negativa, outro comando, "sim" sozinho ou frase ambigua: cancela sem executar (regra de sempre).
-            ok_text = (
-                f"Tudo bem, cancelei: {summary}. Nada foi alterado."
-                if wants_cancel
-                else f"Não recebi uma confirmação explícita, então cancelei: {summary}. Nada foi alterado. "
-                     'Para executar, faça o pedido de novo e responda "confirmar".'
+            if wants_cancel or self._is_new_command(content):
+                # Cancelamento explicito, negativa ou outro comando: cancela sem executar (regra de sempre).
+                ok_text = (
+                    f"Tudo bem, cancelei: {summary}. Nada foi alterado."
+                    if wants_cancel
+                    else f"Não recebi uma confirmação explícita, então cancelei: {summary}. Nada foi alterado. "
+                         'Para executar, faça o pedido de novo e responda "confirmar".'
+                )
+                self.conversations.clear(conversation_id)
+                return self._cancel_shared(operation, conversation_id, event_id, moderation_score, queue_result, ok_text=ok_text)
+            # Resposta ambigua ("sim", "ok", ruido, transcricao incompleta): nao executa e nao cancela.
+            return self._represent_operation(
+                operation, conversation_id, event_id, moderation_score, queue_result, error=None,
+                text=f"Não entendi se você quer confirmar. Nada foi alterado. Continua aguardando: {summary}. "
+                     'Diga "confirmar" ou "cancelar".',
             )
-            self.conversations.clear(conversation_id)
-            return self._cancel_shared(operation, conversation_id, event_id, moderation_score, queue_result, ok_text=ok_text)
         if wants_cancel and not local_flow:  # com fluxo local, o "cancelar" e dele
             tail = ('Para concluir com segurança, sem repetir, diga "confirmar".' if status == "retry_pending"
                     else "Aguarde o resultado.")
             return finish(str(status), f"Não é possível cancelar: {summary} já foi confirmada e pode ter sido aplicada. {tail}")
         return None  # em execucao/recuperacao: leituras e perguntas seguem normalmente
+
+    def _is_new_command(self, content: str) -> bool:
+        """Outro pedido claro (comando reconhecido, inclusive "sair"), distinto de ruido ou resposta ambigua."""
+        if is_confirmation(content) or is_non_directive_text(content):
+            return False
+        return self.parser.match(content) is not None
+
+    def _represent_operation(self, operation, conversation_id, event_id, moderation_score, queue_result, *,
+                             error: Optional[str], text: str) -> Tuple[Dict[str, Any], int]:
+        """Mostra de novo a operacao aguardando (resumo guardado na API e seu operationId), sem executar nem
+        cancelar. Com error: recusa controlada (409); sem error: so lembrete (200)."""
+        status = str(operation.get("status") or "")
+        extra: Dict[str, Any] = {"error": error} if error else {}
+        response, code = self._task_conversation_response(
+            event_id=event_id, moderation_score=moderation_score, queue_result=queue_result,
+            conversation_id=conversation_id, status="awaiting_confirmation" if status == "pending" else status,
+            text=text, ok=error is None, action_executed=False, command={"key": operation.get("commandKey")}, **extra,
+        )
+        response["conversation"].update(self._operation_binding(operation))
+        return response, (409 if error else code)
+
+    @staticmethod
+    def _operation_binding(operation: Dict[str, Any]) -> Dict[str, Any]:
+        """Campos publicos que o navegador guarda para confirmar exatamente esta operacao."""
+        expires = _parse_instant(operation.get("expiresAt"))
+        remaining = max(0, int((expires - datetime.now(timezone.utc)).total_seconds())) if expires else 0
+        return {
+            "command": operation.get("commandKey"),
+            "operation_id": operation.get("operationId"),
+            "summary": str(operation.get("summary") or ""),
+            "expires_in": remaining,
+        }
 
     def _cancel_shared(self, operation, conversation_id, event_id, moderation_score, queue_result, *, ok_text: str):
         summary = str(operation.get("summary") or "a operação pendente")

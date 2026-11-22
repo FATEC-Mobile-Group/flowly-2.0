@@ -52,8 +52,7 @@ class SharedConfirmationTestCase(AssistantFlowTestCase):
     def send_body(self, token, **body):
         body.setdefault("conversationId", CONVERSATION_ID)
         body.setdefault("channelId", "voice-assistant")
-        raw, status, _headers = function.flowly_http(FakeRequest("/api/v1/messages", body, token))
-        return json.loads(raw), status
+        return self.frontend_send(token, body)
 
     def op(self):
         self.assertTrue(self.ops.ops, "nenhuma operacao criada")
@@ -166,13 +165,15 @@ class ConfirmTests(SharedConfirmationTestCase):
         self.assertEqual(op["result"]["httpStatus"], 200)
         self.assertEqual(self.api.keys, [op["idempotencyKey"]])
 
-    def test_07_ambiguous_confirmation_cancels_without_claim(self):
-        for phrase in ("sim", "confirmar?", "confirmar ou cancelar", "não confirmo", "ok"):
+    def test_07_ambiguous_confirmation_never_claims(self):
+        self.prepare_status()
+        for phrase in ("sim", "confirmar?", "confirmar ou cancelar", "ok", "uhum"):
             with self.subTest(phrase=phrase):
-                self.prepare_status()
                 payload, _status = self.send("token-user", phrase)
                 self.assertFalse(payload["action_executed"])
-                self.assertEqual(self.op()["status"], "cancelled")
+                self.assertEqual(self.op()["status"], "pending")  # ruido nao cancela
+        payload, _status = self.send("token-user", "não confirmo")  # negativa explicita cancela
+        self.assertEqual(self.op()["status"], "cancelled")
         self.assertEqual(self.claims(), 0)
         self.assert_no_writes()
 
@@ -209,9 +210,10 @@ class ConfirmTests(SharedConfirmationTestCase):
 
     def test_09b_operation_id_from_the_browser_is_not_enough(self):
         self.prepare_status()
-        payload, _status = self.send_body("token-user", content="confirmar", operationId="outra-operacao")
+        payload, status = self.send_body("token-user", content="confirmar", operationId="outra-operacao")
         self.assertFalse(payload["action_executed"])
-        self.assertEqual(self.op()["status"], "cancelled")
+        self.assertEqual((status, payload["error"]), (409, "confirmation_mismatch"))
+        self.assertEqual(self.op()["status"], "pending")  # a operacao legitima nao e cancelada
         self.assertEqual(self.claims(), 0)
         self.assert_no_writes()
 
@@ -367,6 +369,11 @@ class LostResponseTests(SharedConfirmationTestCase):
         self.assertTrue(payload["action_executed"])  # a API publica confirmou a escrita
         self.assertEqual(self.op()["status"], "executing")
         self.ops.offset = self.ops.lease + 1
+        # A tela desfez o vinculo ao ver "concluida": o "confirmar" sem operationId so reapresenta a operacao
+        # (com o operation_id); o seguinte, ligado a ela, recupera com a mesma chave.
+        payload, status = self.send("token-user", "confirmar")
+        self.assertEqual((status, payload["error"]), (409, "operation_id_required"))
+        self.assertEqual(payload["conversation"]["operation_id"], self.op()["operationId"])
         self.send("token-user", "confirmar")
         key = self.op()["idempotencyKey"]
         self.assertEqual(self.api.keys, [key, key])  # a API publica devolve o replay; nada duplica

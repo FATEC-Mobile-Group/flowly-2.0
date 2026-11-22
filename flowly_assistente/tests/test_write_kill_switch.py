@@ -23,6 +23,7 @@ from test_command_safety import (
     AssistantFlowTestCase,
     FakeFlowlyAPI,
     FakeRequest,
+    observe_binding,
 )
 import function  # noqa: E402
 from flowly_assistant import api_client  # noqa: E402
@@ -285,9 +286,16 @@ class LastBarrierTests(unittest.TestCase):
 
     def test_whole_flow_with_upper_checks_forgotten_still_sends_no_write(self):
         def send(token, content):
+            # Como a tela: reenvia o operationId do resumo mostrado.
             body = {"conversationId": CONVERSATION_ID, "content": content, "channelId": "voice-assistant"}
+            if bindings.get(token):
+                body["operationId"] = bindings[token]
             raw, status, _ = function.flowly_http(FakeRequest("/api/v1/messages", body, token))
-            return json.loads(raw), status
+            payload = json.loads(raw)
+            observe_binding(bindings, token, payload)
+            return payload, status
+
+        bindings = {}
 
         # Confirmacoes compartilhadas simuladas, com a verificacao da chave delas tambem "esquecida": so resta a
         # barreira do cliente HTTP.

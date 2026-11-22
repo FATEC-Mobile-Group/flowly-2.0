@@ -68,18 +68,20 @@ NON_DIRECTIVE_CASES = (
 
 ACCEPTED_CONFIRMATIONS = ("confirmar", "Confirmar.", "confirmo", "sim, confirmar", "pode confirmar",
                           "confirmar por favor", "Ok, confirmo", "eu confirmo")
-# Tudo isto cancela a operacao pendente sem escrever: "sim" sozinho, negativas, outro comando ou frase ambigua.
-REJECTED_CONFIRMATIONS = ("sim", "Sim.", "ok", "pode", "isso", "claro", "beleza", "uhum", "não confirmo",
-                          "confirmar não", "não", "cancelar", "listar equipes", "criar equipe vendas",
-                          "confirmar criar equipe vendas", "talvez", "confirmar?", "confirmar ou cancelar")
+# Nada disto executa. Etapa 6B: negativa, cancelamento ou outro comando cancelam a pendente; resposta ambigua
+# ("sim" sozinho, "ok", ruido, pergunta) nao executa e tambem nao cancela (a pendente continua aguardando).
+CANCELLING_REPLIES = ("não confirmo", "confirmar não", "não", "cancelar", "listar equipes", "criar equipe vendas",
+                      "confirmar criar equipe vendas")
+AMBIGUOUS_REPLIES = ("sim", "Sim.", "ok", "pode", "isso", "claro", "beleza", "uhum", "talvez", "confirmar?",
+                     "confirmar ou cancelar")
+REJECTED_CONFIRMATIONS = CANCELLING_REPLIES + AMBIGUOUS_REPLIES
 
 
 class WriteConfirmationTestCase(AssistantFlowTestCase):
     def send_body(self, token, **body):
         body.setdefault("conversationId", CONVERSATION_ID)
         body.setdefault("channelId", "voice-assistant")
-        raw, status, _headers = function.flowly_http(FakeRequest("/api/v1/messages", body, token))
-        return json.loads(raw), status
+        return self.frontend_send(token, body)
 
     def state(self, token, conversation_id=CONVERSATION_ID):
         return ScopedConversationState(ConversationStateRepository(), USERS_BY_TOKEN[token]["_id"]), conversation_id
@@ -203,8 +205,8 @@ class PrepareAndConfirmTests(WriteConfirmationTestCase):
                 self.assertIn("Não há nenhuma operação aguardando confirmação", payload["reply_text"])
                 self.assertEqual(self.api.writes(), [STATUS_WRITE])
 
-    def test_sim_alone_negatives_other_commands_and_ambiguous_replies_cancel_without_writing(self):
-        for phrase in REJECTED_CONFIRMATIONS:
+    def test_negatives_and_other_commands_cancel_without_writing(self):
+        for phrase in CANCELLING_REPLIES:
             with self.subTest(phrase=phrase):
                 self.send("token-admin", "criar equipe marketing")
                 payload, status = self.send("token-admin", phrase)
@@ -216,6 +218,24 @@ class PrepareAndConfirmTests(WriteConfirmationTestCase):
                 # Depois do cancelamento, um "confirmar" atrasado nao encontra nada para executar.
                 payload, _status = self.send("token-admin", "confirmar")
                 self.assertFalse(payload["action_executed"])
+        self.assert_no_writes()
+
+    def test_ambiguous_replies_never_execute_and_keep_the_confirmation_waiting(self):
+        self.send("token-admin", "criar equipe marketing")
+        operation_id = self.pending("token-admin")["operation_id"]
+        for phrase in AMBIGUOUS_REPLIES:
+            with self.subTest(phrase=phrase):
+                payload, status = self.send("token-admin", phrase)
+                self.assertEqual(status, 200, payload)
+                self.assertFalse(payload["action_executed"])
+                self.assertEqual(payload["conversation"]["status"], "awaiting_confirmation")
+                self.assertEqual(payload["conversation"]["operation_id"], operation_id)  # a tela mantem o resumo
+                self.assertIn("Nada foi alterado", payload["reply_text"])
+                self.assertEqual(self.pending("token-admin")["operation_id"], operation_id)
+        self.assertEqual(self.ops.calls.count("claim"), 0)
+        self.assert_no_writes()
+        payload, _status = self.send("token-admin", "cancelar")  # so o cancelamento explicito encerra
+        self.assertEqual(payload["conversation"]["status"], "cancelled")
         self.assert_no_writes()
 
     def test_confirmation_word_detection(self):
@@ -252,17 +272,21 @@ class PrepareAndConfirmTests(WriteConfirmationTestCase):
         self.assertLessEqual(self.pending("token-user")["expires_at"], time.time() + 5)
         self.send("token-user", "cancelar")
 
-    def test_confirmation_for_another_operation_cancels_without_writing(self):
+    def test_confirmation_for_another_operation_neither_executes_nor_cancels(self):
         payload, _status = self.send("token-user", STATUS_PHRASE)
         old_operation = payload["conversation"]["operation_id"]
         self.send("token-user", "cancelar")
         self.send("token-user", STATUS_PHRASE)
-        payload, _status = self.send_body("token-user", content="confirmar", operationId=old_operation)
-        self.assertEqual(payload["conversation"]["status"], "cancelled")
+        current = self.pending("token-user")["operation_id"]
+        payload, status = self.send_body("token-user", content="confirmar", operationId=old_operation)
+        self.assertEqual((status, payload["error"]), (409, "confirmation_mismatch"))
         self.assertIn("não corresponde", payload["reply_text"])
+        # A pendente legitima nao e cancelada e e reapresentada para a tela.
+        self.assertEqual(payload["conversation"]["status"], "awaiting_confirmation")
+        self.assertEqual(payload["conversation"]["operation_id"], current)
+        self.assertEqual(self.pending("token-user")["operation_id"], current)
         self.assert_no_writes()
         # Com o operationId certo, a confirmacao vale.
-        payload, _status = self.send("token-user", STATUS_PHRASE)
         payload, _status = self.send_body(
             "token-user", content="confirmar", operationId=payload["conversation"]["operation_id"])
         self.assertTrue(payload["action_executed"], payload["reply_text"])

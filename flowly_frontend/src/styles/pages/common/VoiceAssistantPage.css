@@ -508,3 +508,84 @@
     filter: blur(6px) brightness(1.5);
   }
 }
+
+/* Confirmacao de escrita ligada a operacao mostrada (resumo da API + Confirmar/Cancelar). */
+.voice-chat-panel:has(.voice-confirmation) {
+  grid-template-rows: minmax(140px, 1fr) auto auto auto;
+  gap: 16px;
+}
+
+.voice-confirmation {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--glass-bg);
+  border: 1px solid rgba(37, 99, 235, 0.45);
+  box-shadow: var(--glass-shadow);
+  display: grid;
+  gap: 8px;
+}
+
+.voice-confirmation.uncertain,
+.voice-confirmation.cancel_unverified {
+  border-color: rgba(245, 158, 11, 0.6);
+}
+
+.voice-confirmation.expired {
+  border-color: var(--glass-border);
+}
+
+.voice-confirmation p {
+  margin: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.voice-confirmation-title {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.voice-confirmation-summary {
+  color: var(--text-primary);
+}
+
+.voice-confirmation-note {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.voice-confirmation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.voice-confirmation-actions button {
+  min-height: 40px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  background: #2563eb;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.voice-confirmation-actions button.secondary {
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid var(--glass-border);
+}
+
+.voice-confirmation-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .voice-confirmation-actions button {
+    flex: 1 1 140px;
+  }
+}

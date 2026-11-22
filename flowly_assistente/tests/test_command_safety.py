@@ -149,6 +149,20 @@ class FakeFlowlyAPI:
         raise AssertionError(f"Chamada inesperada à API: {method} {path}")
 
 
+TERMINAL_CONVERSATION_STATUSES = {"completed", "failed", "cancelled", "expired", "unknown"}
+
+
+def observe_binding(bindings, key, payload):
+    """Mesma regra da tela: guarda o operation_id mostrado; resultado terminal desfaz o vinculo."""
+    conversation = payload.get("conversation") if isinstance(payload, dict) else None
+    if not isinstance(conversation, dict):
+        return
+    if conversation.get("operation_id") and conversation.get("status") not in TERMINAL_CONVERSATION_STATUSES:
+        bindings[key] = conversation["operation_id"]
+    elif conversation.get("status") in TERMINAL_CONVERSATION_STATUSES:
+        bindings.pop(key, None)
+
+
 class AssistantFlowTestCase(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -193,9 +207,25 @@ class AssistantFlowTestCase(unittest.TestCase):
             self.addCleanup(target.stop)
 
     def send(self, token, content, conversation_id=CONVERSATION_ID):
-        body = {"conversationId": conversation_id, "content": content, "channelId": "voice-assistant"}
+        """Como o navegador (Etapa 6B): reenvia o operationId do resumo mostrado nesta conversa."""
+        return self.frontend_send(token, {"conversationId": conversation_id, "content": content,
+                                          "channelId": "voice-assistant"})
+
+    def send_raw(self, token, content, conversation_id=CONVERSATION_ID, **extra):
+        """Cliente sem o vinculo da tela (nenhum operationId, a menos que passado em extra)."""
+        body = {"conversationId": conversation_id, "content": content, "channelId": "voice-assistant", **extra}
         raw, status, _headers = function.flowly_http(FakeRequest("/api/v1/messages", body, token))
         return json.loads(raw), status
+
+    def frontend_send(self, token, body):
+        bindings = self.__dict__.setdefault("_bindings", {})
+        key = (token, body.get("conversationId"))
+        if "operationId" not in body and bindings.get(key):
+            body = {**body, "operationId": bindings[key]}
+        raw, status, _headers = function.flowly_http(FakeRequest("/api/v1/messages", body, token))
+        payload = json.loads(raw)
+        observe_binding(bindings, key, payload)
+        return payload, status
 
     def pending(self, token, conversation_id=CONVERSATION_ID):
         """Fluxo pendente da conversa: o estado local (perguntas, selecao) ou, sem ele, a confirmacao compartilhada
@@ -915,8 +945,8 @@ class StrictParamFlowTests(AssistantFlowTestCase):
             self.assertTrue(payload["action_executed"], payload)
         body = {"conversationId": CONVERSATION_ID, "content": "mudar status da tarefa relatório final",
                 "params": {"status": "Em andamento"}}
-        raw, status, _headers = function.flowly_http(FakeRequest("/api/v1/messages", body, "token-user"))
-        self.assertEqual(json.loads(raw)["conversation"]["status"], "awaiting_confirmation", raw)
+        payload, _status = self.frontend_send("token-user", body)
+        self.assertEqual(payload["conversation"]["status"], "awaiting_confirmation", payload)
         self.send("token-user", "confirmar")
         self.assertEqual(self.api.writes(), [
             ("PUT", f"/tarefas/{task}/status", {"status": "concluido"}),

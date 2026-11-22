@@ -129,8 +129,7 @@ class SharedContextTestCase(AssistantFlowTestCase):
 
     def send_to(self, token, content, conversation_id=CONVERSATION_ID, **body):
         body = {"conversationId": conversation_id, "content": content, "channelId": "voice-assistant", **body}
-        raw, status, _headers = function.flowly_http(FakeRequest("/api/v1/messages", body, token))
-        return json.loads(raw), status
+        return self.frontend_send(token, body)
 
     def standby(self, token, conversation_id=CONVERSATION_ID):
         raw, status, _headers = function.flowly_http(FakeRequest("/standby", {"conversationId": conversation_id}, token))
