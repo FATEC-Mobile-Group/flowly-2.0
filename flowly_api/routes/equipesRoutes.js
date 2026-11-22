@@ -3,12 +3,20 @@ const router = express.Router();
 const auth = require('../middlewares/auth');
 const { isAdmin } = require('../middlewares/roles');
 const ensureObjectBody = require('../middlewares/ensureObjectBody');
+const { comIdempotenciaOpcional } = require('../middlewares/idempotencyOptIn');
 const equipeController = require('../controllers/equipeController');
 
 // Middleware: autenticado no mínimo
 router.use(auth);
 
-router.post('/', isAdmin, ensureObjectBody, equipeController.criarEquipe);
+// Com Idempotency-Key: criacao protegida (transacao + chave). Sem o cabecalho: fluxo atual, inalterado.
+router.post(
+  '/',
+  isAdmin,
+  ensureObjectBody,
+  comIdempotenciaOpcional(equipeController.criarEquipeIdempotente),
+  equipeController.criarEquipe
+);
 router.get('/', isAdmin, equipeController.listarEquipes);
 router.get('/minhas', equipeController.listarMinhasEquipes);
 router.get('/:id', isAdmin, equipeController.obterEquipe);

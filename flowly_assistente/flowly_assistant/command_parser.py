@@ -55,6 +55,22 @@ NON_DIRECTIVE_FUTURE_WORDS = frozenset({
 # Verbo de consulta antes do de escrita ("listar ou criar equipe"): duas intencoes, nenhuma executa.
 READ_VERBS = frozenset({"listar", "lista", "mostrar", "mostra", "ver", "abrir", "buscar", "procurar", "consultar"})
 
+# Pedido direto das PROPRIAS tarefas em linguagem natural ("liste as tarefas que ja tenho", "quais tarefas tenho?",
+# "mostre minhas tarefas"): tarefa + posse + verbo de listagem ou pergunta "quais/que". Sem acento, minusculas.
+TASK_WORDS = frozenset({"tarefa", "tarefas"})
+LIST_REQUEST_VERBS = frozenset({
+    "liste", "listar", "lista", "listem", "mostre", "mostrar", "mostra", "mostrem", "exiba", "exibir", "exibe",
+    "veja", "ver", "traga", "traz", "apresente", "consulte", "consultar", "informe",
+})
+OWN_TASK_WORDS = frozenset({"minha", "minhas", "meu", "meus", "tenho", "comigo", "mim"})
+LIST_QUESTION_WORDS = frozenset({"quais", "que"})
+# Pedido de ajuda/capacidade sobre tarefas ("voce consegue me ajudar a organizar minhas tarefas?"): nao e uma ordem
+# de listagem; sem verbo de listagem explicito, nenhuma consulta e escolhida.
+TASK_HELP_WORDS = frozenset({
+    "ajudar", "ajuda", "ajude", "organizar", "organize", "planejar", "planeje", "priorizar", "priorize",
+    "consegue", "conseguiria", "sabe", "saberia",
+})
+
 
 def is_write_command(command: Command) -> bool:
     return (command.method or "").strip().upper() in WRITE_METHODS
@@ -329,6 +345,14 @@ class CommandParser:
         if WRITE_INTENT_RE.search(text) and not self._has_read_phrase(text, read_commands):
             return None
 
+        # Pedido das proprias tarefas em linguagem natural, ou pedido de ajuda (que nao lista nada).
+        own_tasks = self._own_tasks_request(text)
+        if own_tasks == "help":
+            return None
+        if own_tasks == "my_tasks":
+            cmd = next(c for c in read_commands if c.key == "my_tasks")
+            return Match(command=cmd, score=100, params=self._extract_params(cmd, raw))
+
         # Semelhanca aproximada so entre comandos de consulta.
         best: Optional[Tuple[Command, int, int, int]] = None
         for cmd in read_commands:
@@ -412,6 +436,21 @@ class CommandParser:
         read_commands = [c for c in self.commands if c.key != "exit" and not is_write_command(c)]
         if set(antes) & READ_VERBS or self._has_read_phrase(text, read_commands):
             return "conflito"
+        return None
+
+    @staticmethod
+    def _own_tasks_request(text: str) -> Optional[str]:
+        """"my_tasks" (pedido das proprias tarefas), "help" (ajuda/capacidade, nao lista) ou None (sem decisao)."""
+        words = plain_words(text)
+        found = set(words)
+        if not found & TASK_WORDS:
+            return None
+        listing = bool(found & LIST_REQUEST_VERBS)
+        if not listing and (found & TASK_HELP_WORDS or (words and words[0] == "como")):
+            return "help"
+        asks = bool(words) and (words[0] in LIST_QUESTION_WORDS or "quais" in found)
+        if found & OWN_TASK_WORDS and (listing or asks):
+            return "my_tasks"
         return None
 
     def _has_read_phrase(self, text: str, read_commands: list) -> bool:

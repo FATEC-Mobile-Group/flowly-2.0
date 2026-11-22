@@ -1,5 +1,7 @@
 pyttsx3==2.90
 requests==2.31.0
+# ID token do Cloud Run para chamar uma API privada (so usado com FLOWLY_API_IAM_ENABLED=true)
+google-auth>=2.29,<3
 python-dotenv==1.0.1
 pymongo==4.8.0
 

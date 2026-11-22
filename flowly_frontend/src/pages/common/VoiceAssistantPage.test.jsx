@@ -210,7 +210,7 @@ describe('R2: concluir pede o resultado final; cancelar descarta a captura', () 
     clickConclude();
     expect(session.stop).toHaveBeenCalledTimes(1);
     expect(session.abort).not.toHaveBeenCalled();
-    expect(statusText()).toBe('Processando');
+    expect(statusText()).toBe('Finalizando a fala'); // distinto do "Processando" do pedido ao assistente
     // O navegador entrega o resultado final do que ouviu e encerra.
     fire(session.onresult, resultEvent([['minhas tarefas', true]]));
     fire(session.onend);
@@ -621,12 +621,13 @@ describe('R5: inicio e encerramento', () => {
     expect(FakeRecognition.instances).toHaveLength(1);
   });
 
-  test('configuracao preservada: pt-BR, sem modo continuo e com resultados provisorios', () => {
+  test('configuracao: pt-BR, continuo limitado a uma fala e com resultados provisorios', () => {
     render(<VoiceAssistantPage />);
     const session = startListening();
 
     expect(session.lang).toBe('pt-BR');
-    expect(session.continuous).toBe(false);
+    // Continuo para a pausa nao cortar a frase; a propria pagina conclui (ver "Escuta limitada a uma fala").
+    expect(session.continuous).toBe(true);
     expect(session.interimResults).toBe(true);
   });
 });
@@ -851,7 +852,7 @@ describe('Concluir x cancelar: identificacao para a pessoa', () => {
     render(<VoiceAssistantPage />);
     fireEvent.click(button('Iniciar escuta'));
     expect(button('Cancelar escuta')).toBeInTheDocument();
-    expect(hint()).toHaveTextContent('Abrindo o microfone: espere aparecer "Ouvindo — pode falar". "Cancelar escuta" descarta sem enviar.');
+    expect(hint()).toHaveTextContent('Abrindo o microfone: espere aparecer "Ouvindo — pode falar". "Cancelar" descarta sem enviar.');
 
     fire(lastSession().onstart);
     fire(lastSession().onaudiostart);
@@ -860,7 +861,7 @@ describe('Concluir x cancelar: identificacao para a pessoa', () => {
     expect(conclude).toHaveAttribute('title', 'Concluir fala');
     expect(cancel).toHaveAttribute('title', 'Cancelar escuta');
     expect(hint()).toHaveTextContent(/concluir a fala e enviar o que o navegador confirmar/);
-    expect(hint()).toHaveTextContent(/"Cancelar escuta" descarta sem enviar/);
+    expect(hint()).toHaveTextContent(/"Cancelar" para descartar sem enviar/);
     // Leitores de tela recebem a mesma orientacao nos dois botoes.
     expect(conclude).toHaveAttribute('aria-describedby', hint().id);
     expect(cancel).toHaveAttribute('aria-describedby', hint().id);
@@ -985,8 +986,9 @@ describe('Prontidao real do microfone: "Ouvindo" so com o audio chegando', () =>
       expect(screen.getByRole('button', { name: 'Concluir fala' })).toBeInTheDocument();
       expect(hintText()).toMatch(/concluir a fala/);
 
-      // O prazo de abertura nao derruba uma sessao que ja abriu o microfone.
-      advance(20000);
+      // O prazo de abertura (12 s depois do onstart) nao derruba uma sessao que ja abriu o microfone. (Sem
+      // nenhuma fala, a sessao fecha em NO_SPEECH_TIMEOUT_MS: coberto nos testes da escuta limitada.)
+      advance(7000);
       expect(statusText()).toBe('Ouvindo — pode falar');
       fire(session.onresult, resultEvent([['meu perfil', true]]));
       fire(session.onend);
@@ -1130,5 +1132,229 @@ describe('Prontidao real do microfone: "Ouvindo" so com o audio chegando', () =>
       expect(sentCommands()).toEqual(['meu perfil']);
       expect(statusText()).toBe('Processando');
     });
+  });
+});
+
+describe('Escuta limitada a uma fala: pausa nao corta, sem fala fecha, nada parcial e enviado', () => {
+  const retryButton = () => screen.queryByRole('button', { name: 'Tentar de novo' });
+  const withFakeClock = async (run) => {
+    vi.useFakeTimers();
+    try {
+      await run();
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+  const advance = (ms) => act(() => {
+    vi.advanceTimersByTime(ms);
+  });
+
+  test('pausa curta no meio da frase nao conclui; a pausa final conclui com stop e envia a frase inteira uma vez', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      const session = startListening();
+      fire(session.onresult, resultEvent([['mudar status da tarefa relatório final', true]]));
+      advance(1500); // pausa para pensar: no modo nao continuo o navegador ja teria cortado aqui
+      expect(session.stop).not.toHaveBeenCalled();
+      fire(session.onresult, resultEvent([['mudar status da tarefa relatório final', true], ['para concluído', true]]));
+      advance(1999);
+      expect(session.stop).not.toHaveBeenCalled();
+      advance(1);
+      expect(session.stop).toHaveBeenCalledTimes(1);
+      expect(session.abort).not.toHaveBeenCalled();
+      expect(statusText()).toBe('Finalizando a fala');
+      expect(sentCommands()).toEqual([]); // so depois do onend
+      fire(session.onend);
+      expect(sentCommands()).toEqual(['mudar status da tarefa relatório final para concluído']);
+    });
+  });
+
+  test('pausa com so resultado parcial: conclui, mas nada e enviado e o texto fica para conferencia', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      const session = startListening();
+      fire(session.onresult, resultEvent([['criar tarefa relat', false]]));
+      advance(2000);
+      expect(session.stop).toHaveBeenCalledTimes(1);
+      fire(session.onend);
+      expect(sentCommands()).toEqual([]);
+      expect(input()).toHaveValue('criar tarefa relat');
+      expect(retryButton()).toBeInTheDocument();
+    });
+  });
+
+  test('microfone aberto sem fala fecha sozinho, sem enviar; tentar de novo so com um toque', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      const session = startListening();
+      advance(7999);
+      expect(session.abort).not.toHaveBeenCalled();
+      advance(1);
+      expect(session.abort).toHaveBeenCalledTimes(1);
+      expect(sentCommands()).toEqual([]);
+      expect(screen.getByText(/Não ouvi nenhuma fala/)).toBeInTheDocument();
+      expect(statusText()).toBe('Standby');
+      advance(60000); // nada reabre sozinho
+      expect(FakeRecognition.instances).toHaveLength(1);
+      fireEvent.click(retryButton());
+      expect(FakeRecognition.instances).toHaveLength(2);
+      expect(retryButton()).toBeNull();
+    });
+  });
+
+  test('fala longa sem pausa: a duracao maxima conclui com stop (o microfone nunca fica aberto)', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      const session = startListening();
+      const words = [];
+      for (let elapsed = 0; elapsed < 30000; elapsed += 1500) {
+        words.push(`parte${elapsed}`);
+        fire(session.onresult, resultEvent([[words.join(' '), false]]));
+        advance(1500);
+      }
+      expect(session.stop).toHaveBeenCalledTimes(1);
+      fire(session.onresult, resultEvent([[words.join(' '), true]]));
+      fire(session.onend);
+      expect(sentCommands()).toEqual([words.join(' ')]);
+    });
+  });
+
+  test('trechos cumulativos repetidos (Chrome no Android) entram uma vez so', async () => {
+    render(<VoiceAssistantPage />);
+    const session = startListening();
+    fire(session.onresult, resultEvent([['criar', true], ['criar tarefa', true], ['criar tarefa relatório', true]]));
+    expect(input()).toHaveValue('criar tarefa relatório');
+    fire(session.onend);
+    await flush();
+    expect(sentCommands()).toEqual(['criar tarefa relatório']);
+  });
+
+  test('final cumulativo com parcial repetido: o parcial pendente ainda impede o envio', async () => {
+    render(<VoiceAssistantPage />);
+    const session = startListening();
+    fire(session.onresult, resultEvent([['criar tarefa', true], ['criar tarefa relatório', false]]));
+    fire(session.onend);
+    await flush();
+    expect(sentCommands()).toEqual([]);
+    expect(input()).toHaveValue('criar tarefa relatório');
+  });
+
+  test('tentar de novo aparece para falhas recuperaveis e nao para permissao negada', async () => {
+    render(<VoiceAssistantPage />);
+    let session = startListening();
+    fire(session.onerror, { error: 'network' });
+    await flush();
+    expect(retryButton()).toBeInTheDocument();
+    sendTyped('meu perfil'); // enviar outra coisa tira a oferta
+    await flush();
+    expect(retryButton()).toBeNull();
+    act(() => pendingReplies.shift()?.({ ok: true, reply_text: 'Seu perfil.' }));
+    await flush();
+
+    session = startListening();
+    fire(session.onerror, { error: 'not-allowed' });
+    await flush();
+    expect(screen.getByText(/microfone está bloqueado/)).toBeInTheDocument();
+    expect(retryButton()).toBeNull();
+  });
+
+  test('cancelar a escuta desliga os prazos: nada conclui nem envia depois', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      const session = startListening();
+      fire(session.onresult, resultEvent([['minhas tarefas', true]]));
+      fireEvent.click(screen.getByRole('button', { name: 'Cancelar escuta' }));
+      advance(40000);
+      expect(session.stop).not.toHaveBeenCalled();
+      expect(session.abort).toHaveBeenCalledTimes(1);
+      expect(sentCommands()).toEqual([]);
+    });
+  });
+});
+
+describe('Controles da escuta junto da estrela: Cancelar e Concluir', () => {
+  const controls = () => screen.queryByRole('group', { name: 'Controles da escuta' });
+  const cancelButton = () => screen.getByRole('button', { name: 'Cancelar a escuta' });
+  const concludeButton = () => screen.getByRole('button', { name: 'Concluir a fala' });
+
+  test('so aparecem com a escuta ativa; Concluir espera o microfone abrir', () => {
+    render(<VoiceAssistantPage />);
+    expect(controls()).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Iniciar escuta' }));
+    expect(controls()).toBeInTheDocument();
+    expect(cancelButton()).toBeEnabled();
+    expect(concludeButton()).toBeDisabled(); // "Iniciando": ainda nao ha o que concluir
+    fire(lastSession().onstart);
+    fire(lastSession().onaudiostart);
+    expect(concludeButton()).toBeEnabled();
+    // Texto visivel, botoes de verdade (teclado) e a mesma orientacao para leitores de tela.
+    expect(cancelButton()).toHaveTextContent('Cancelar');
+    expect(concludeButton()).toHaveTextContent('Concluir');
+    expect(cancelButton()).toHaveAttribute('type', 'button');
+    expect(concludeButton()).toHaveAttribute('aria-describedby', 'voice-interaction-hint');
+    expect(screen.getByRole('status')).toHaveTextContent('Ouvindo — pode falar');
+  });
+
+  test('Cancelar descarta a captura (abort) sem enviar e sem entrar em standby', async () => {
+    render(<VoiceAssistantPage />);
+    fireEvent.change(input(), { target: { value: 'texto digitado antes' } });
+    const session = startListening();
+    fire(session.onresult, resultEvent([['minhas tarefas', true]]));
+    const late = capturedHandlers(session);
+    fireEvent.click(cancelButton());
+    fire(late.end);
+    await flush();
+
+    expect(session.abort).toHaveBeenCalledTimes(1);
+    expect(session.stop).not.toHaveBeenCalled();
+    expect(sentCommands()).toEqual([]);
+    expect(standbyCalls()).toHaveLength(0);
+    expect(controls()).toBeNull();
+    expect(statusText()).toBe('Standby');
+    expect(input()).toHaveValue('texto digitado antes');
+  });
+
+  test('Concluir usa stop, mostra "Finalizando a fala" e envia o final uma vez', async () => {
+    render(<VoiceAssistantPage />);
+    const session = startListening();
+    fire(session.onresult, resultEvent([['listar equi', false]]));
+    fireEvent.click(concludeButton());
+    expect(session.stop).toHaveBeenCalledTimes(1);
+    expect(session.abort).not.toHaveBeenCalled();
+    expect(statusText()).toBe('Finalizando a fala');
+    expect(concludeButton()).toBeDisabled();
+    fireEvent.click(concludeButton());
+    expect(session.stop).toHaveBeenCalledTimes(1);
+    fire(session.onresult, resultEvent([['listar equipes', true]]));
+    fire(session.onend);
+    await flush();
+    expect(sentCommands()).toEqual(['listar equipes']);
+  });
+
+  test('Cancelar durante a finalizacao ainda descarta tudo', async () => {
+    render(<VoiceAssistantPage />);
+    const session = startListening();
+    fire(session.onresult, resultEvent([['atribuir a 3', false]]));
+    const late = capturedHandlers(session);
+    fireEvent.click(concludeButton());
+    fireEvent.click(cancelButton());
+    fire(late.result, resultEvent([['atribuir a 3 para mim', true]]));
+    fire(late.end);
+    await flush();
+    expect(sentCommands()).toEqual([]);
+    expect(session.abort).toHaveBeenCalledTimes(1);
+  });
+
+  test('Processando e Falando tambem explicam o que esta acontecendo', async () => {
+    render(<VoiceAssistantPage />);
+    sendTyped('meu perfil');
+    expect(statusText()).toBe('Processando');
+    expect(document.querySelector('.voice-interaction-hint')).toHaveTextContent('Processando o seu pedido');
+    act(() => pendingReplies.shift()({ ok: true, reply_text: 'Seu perfil.', tts: { enabled: true, text: 'Seu perfil.' } }));
+    await flush();
+    const utterance = window.speechSynthesis.speak.mock.calls.at(-1)[0];
+    act(() => utterance.onstart());
+    expect(statusText()).toBe('Falando');
+    expect(document.querySelector('.voice-interaction-hint')).toHaveTextContent('Respondendo por voz');
   });
 });

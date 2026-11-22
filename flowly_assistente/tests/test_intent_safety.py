@@ -20,7 +20,7 @@ from test_command_safety import (
     USERS_BY_TOKEN,
     AssistantFlowTestCase,
 )
-from flowly_assistant.storage.conversation_state import ConversationStateRepository, ScopedConversationState
+from fake_conversations import ConversationStateRepository, ScopedConversationState
 
 TASK = {index: task["_id"] for index, task in enumerate(BACKLOG_TASKS, start=1)}
 # Nomes com verbos de acao ("Pegar", "Abrir"): o nome citado nao pode decidir a acao.

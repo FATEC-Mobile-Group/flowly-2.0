@@ -107,6 +107,14 @@ jest.mock('../models/Tarefa', () => {
   Tarefa.findOne = jest.fn((filter) => mockQuery(match(filter)));
   Tarefa.findById = jest.fn((id) => mockQuery(match({ _id: id })));
   Tarefa.find = jest.fn(() => mockQuery(mockState.tarefas));
+  // Status e cronometro gravam com updateOne condicional; aqui basta casar _id/responsavel (a concorrencia tem suite propria).
+  Tarefa.updateOne = jest.fn(async (filter, update) => {
+    const tarefa = match(filter);
+    if (!tarefa) return { matchedCount: 0, modifiedCount: 0 };
+    Object.assign(tarefa, update.$set || {});
+    Object.keys(update.$unset || {}).forEach((campo) => delete tarefa[campo]);
+    return { matchedCount: 1, modifiedCount: 1 };
+  });
   Tarefa.findOneAndUpdate = jest.fn(async (filter, update) => {
     const tarefa = match(filter);
     if (tarefa) {
