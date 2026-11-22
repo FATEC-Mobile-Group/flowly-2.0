@@ -26,9 +26,10 @@ from typing import Any, Dict, Optional
 
 import requests
 
-from flowly_assistant.api_client import APIError, _header, _retry_after_seconds
+from flowly_assistant.api_client import IAM_UNAVAILABLE_REPLY, APIError, _header, _retry_after_seconds
 from flowly_assistant.api_config import validated_api_base_url
 from flowly_assistant.commands import WRITES_DISABLED_REPLY, assistant_writes_enabled
+from flowly_assistant.iam_auth import IAMAuthError, serverless_auth_headers
 
 OPERATIONS_SECRET_ENV = "ASSISTANT_OPERATIONS_SECRET"
 OPERATIONS_SECRET_HEADER = "X-Assistant-Operations-Secret"
@@ -144,6 +145,12 @@ class _InternalAPIClient:
             "Content-Type": "application/json",
             OPERATIONS_SECRET_HEADER: secret,
         }
+        # IAM opcional (API privada no Cloud Run): ID token do servico ao lado do JWT do usuario e do segredo
+        # interno. Sem token, nada e enviado (redirecionamentos ja nao sao seguidos aqui).
+        try:
+            headers.update(serverless_auth_headers(url))
+        except IAMAuthError:
+            raise APIError(IAM_UNAVAILABLE_REPLY, kind="not_configured", code="api_iam_unavailable") from None
         is_write = method != "GET"
         try:
             resp = requests.request(method, url, headers=headers, params=params, json=body,

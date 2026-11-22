@@ -8,6 +8,9 @@ from typing import Any, Dict, Optional
 import requests
 
 from flowly_assistant.commands import WRITES_DISABLED_REPLY, assistant_writes_enabled
+from flowly_assistant.iam_auth import IAMAuthError, serverless_auth_headers
+
+IAM_UNAVAILABLE_REPLY = "Não consegui autenticar o assistente na API agora. Nada foi alterado."
 
 READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # Idempotency-Key so em escritas protegidas (nunca em GET; DELETE ja e bloqueado antes).
@@ -180,6 +183,17 @@ class FlowlyAPIClient:
             extra["allow_redirects"] = False
         is_write = method_upper not in READ_METHODS
         url = f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
+        # IAM opcional (FLOWLY_API_IAM_ENABLED=true): ID token do servico em X-Serverless-Authorization, ao lado do
+        # JWT do usuario. Sem token, nada e enviado (falha segura, antes da rede).
+        try:
+            iam_headers = serverless_auth_headers(url)
+        except IAMAuthError:
+            raise APIError(IAM_UNAVAILABLE_REPLY, kind="not_configured", code="api_iam_unavailable",
+                           method=method_upper) from None
+        if iam_headers:
+            headers.update(iam_headers)
+            # Um redirecionamento levaria o cabecalho proprio (que o requests nao remove) a outro destino.
+            extra["allow_redirects"] = False
         started = time.monotonic()
         if self.debug:
             qp = f" params={params}" if params else ""
@@ -216,10 +230,11 @@ class FlowlyAPIClient:
             elapsed = time.monotonic() - started
             print(f"[API] <- HTTP {resp.status_code} ({elapsed:.2f}s)")
 
-        if idempotency_key is not None and 300 <= resp.status_code < 400:
+        if (idempotency_key is not None or iam_headers) and 300 <= resp.status_code < 400:
             raise APIError(
                 f"Redirecionamento recusado em {method} {path}",
-                kind="redirect", status_code=resp.status_code, method=method_upper, may_have_executed=True,
+                kind="redirect", status_code=resp.status_code, method=method_upper,
+                may_have_executed=True if idempotency_key is not None else is_write,
             )
 
         if resp.status_code >= 400:
