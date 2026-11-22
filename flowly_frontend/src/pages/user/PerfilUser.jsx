@@ -6,6 +6,7 @@ import FaceProfileEnroll from '../../components/face/FaceProfileEnroll';
 //import { authUtils } from '../../config/authUtils';
 import '../../styles/pages/admin/DashboardAdmin.css';
 import '../../styles/pages/user/PerfilUser.css';
+import { describeUploadError, validateUploadFile } from '../../utils/uploadErrors';
 
 function PerfilUser() {
   const [loading, setLoading] = useState(true);
@@ -87,8 +88,13 @@ function PerfilUser() {
       setArquivoFoto(null);
       setMensagemPerfil('Perfil atualizado com sucesso.');
     } catch (error) {
-      const data = error?.response?.data || {};
-      setErro(data.debug || data.detalhe || data.erro || data.error || 'Erro ao atualizar perfil.');
+      // Com foto, a resposta pode ser bloqueio (422) ou verificacao indisponivel (503): a foto escolhida fica.
+      if (arquivoFoto) {
+        setErro(describeUploadError(error, 'Erro ao atualizar perfil.').message);
+      } else {
+        const data = error?.response?.data || {};
+        setErro(data.erro || data.error || 'Erro ao atualizar perfil.');
+      }
     } finally {
       setSavingPerfil(false);
     }
@@ -157,7 +163,12 @@ function PerfilUser() {
                 <input
                   type="file"
                   accept="image/png,image/jpeg,image/jpg"
-                  onChange={(event) => setArquivoFoto(event.target.files?.[0] || null)}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] || null;
+                    const problema = validateUploadFile(file, { imagesOnly: true });
+                    setErro(problema ? problema.message : '');
+                    setArquivoFoto(problema ? null : file);
+                  }}
                 />
 
                 <label>Nome</label>

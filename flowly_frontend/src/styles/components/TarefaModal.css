@@ -258,6 +258,35 @@
 }
 .upload-form button:disabled { opacity: 0.6; cursor: not-allowed; }
 
+.upload-hint { margin: 8px 0 0; color: var(--text-secondary); font-size: 0.85rem; }
+
+/* Avisos de upload: bloqueio/arquivo invalido em rosa, indisponibilidade em ambar (mesma paleta do chat). */
+.upload-notice {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  align-items: start;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 99, 132, 0.55);
+  background: rgba(255, 99, 132, 0.12);
+  color: var(--text-primary);
+}
+.upload-notice.unavailable { border-color: rgba(255, 193, 7, 0.6); background: rgba(255, 193, 7, 0.12); }
+.upload-notice.success { border-color: rgba(76, 175, 80, 0.6); background: rgba(76, 175, 80, 0.12); }
+.upload-notice strong, .upload-notice span { grid-column: 1; min-width: 0; }
+.upload-notice span { font-size: 0.9rem; line-height: 1.35; color: var(--text-secondary); }
+.upload-notice button {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-weight: 800;
+}
+
 .logs-list {
   list-style: none;
 }

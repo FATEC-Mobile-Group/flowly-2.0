@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import apiClient, { getFullApiUrl } from '../../config/apiClient';
 //import { authUtils } from '../../config/authUtils';
 import { formatarStatus } from '../../config/statusUtils';
+import { UPLOAD_ACCEPT, describeUploadError, validateUploadFile } from '../../utils/uploadErrors';
 import '../../styles/components/TarefaModal.css';
 
 const TarefaModal = ({ tarefaId, onClose }) => {
@@ -12,6 +13,8 @@ const TarefaModal = ({ tarefaId, onClose }) => {
   const [novaSubtarefa, setNovaSubtarefa] = useState('');
   const [arquivo, setArquivo] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
 
   /*const getAuthConfig = () => ({
     headers: { Authorization: `Bearer ${authUtils.getToken()}` }
@@ -63,19 +66,28 @@ const TarefaModal = ({ tarefaId, onClose }) => {
     }
   };
 
+  const selecionarArquivo = (file) => {
+    const problema = validateUploadFile(file);
+    setUploadNotice(problema);
+    setArquivo(problema ? null : file || null);
+  };
+
+  // Recusa ou indisponibilidade mantem o arquivo escolhido: a pessoa decide trocar ou tentar de novo.
   const fazerUpload = async () => {
-    if (!arquivo) return;
+    if (!arquivo || uploading) return;
     setUploading(true);
+    setUploadNotice(null);
     try {
       const formData = new FormData();
       formData.append('file', arquivo);
 
       await apiClient.post(`/tarefas/${tarefaId}/anexos`, formData);
       setArquivo(null);
+      setFileInputKey((key) => key + 1);
+      setUploadNotice({ kind: 'success', title: 'Anexo enviado', message: 'O arquivo foi adicionado à tarefa.' });
       carregarDetalhes();
     } catch (err) {
-      console.error(err);
-      alert(err?.response?.data?.erro || 'Falha ao enviar arquivo');
+      setUploadNotice(describeUploadError(err, 'Não foi possível enviar o anexo.'));
     } finally {
       setUploading(false);
     }
@@ -183,8 +195,11 @@ const TarefaModal = ({ tarefaId, onClose }) => {
               </div>
               <div className="upload-form">
                 <input 
+                  key={fileInputKey}
                   type="file" 
-                  onChange={e => setArquivo(e.target.files[0])} 
+                  accept={UPLOAD_ACCEPT}
+                  aria-label="Arquivo do anexo"
+                  onChange={e => selecionarArquivo(e.target.files?.[0])}
                   disabled={uploading}
                 />
                 <button 
@@ -194,6 +209,17 @@ const TarefaModal = ({ tarefaId, onClose }) => {
                   {uploading ? 'Enviando...' : 'Fazer Upload'}
                 </button>
               </div>
+              <p className="upload-hint">PNG, JPG ou PDF, até 10 MB. Os arquivos passam por verificação de segurança.</p>
+              {uploadNotice && (
+                <div
+                  className={`upload-notice ${uploadNotice.kind}`}
+                  role={uploadNotice.kind === 'success' ? 'status' : 'alert'}
+                >
+                  <strong>{uploadNotice.title}</strong>
+                  <span>{uploadNotice.message}</span>
+                  <button type="button" onClick={() => setUploadNotice(null)} aria-label="Fechar aviso">×</button>
+                </div>
+              )}
             </div>
           )}
 

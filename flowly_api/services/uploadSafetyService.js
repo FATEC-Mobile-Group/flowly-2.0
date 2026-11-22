@@ -107,6 +107,61 @@ const matchCategories = (value, rules) => {
 
 const BLOCKING_LIKELIHOODS = new Set(['LIKELY', 'VERY_LIKELY']);
 
+// Prazos das verificacoes externas. Cobrem autenticacao, envio, resposta e leitura do corpo.
+// O limite de upload e 10 MB: o padrao folgado evita recusar arquivo legitimo em rede lenta.
+const DEFAULT_VISION_TIMEOUT_MS = 15000;
+const DEFAULT_EXTERNAL_TIMEOUT_MS = 15000;
+const MAX_MODERATION_TIMEOUT_MS = 60000;
+
+const readTimeoutMs = (name, fallback) => {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.min(value, MAX_MODERATION_TIMEOUT_MS) : fallback;
+};
+
+// Executa a tarefa com prazo: ao estourar, aborta o fetch (signal) e rejeita mesmo que a etapa em
+// andamento (ex.: obter o token) nao aceite cancelamento.
+const runWithTimeout = async (ms, label, task) => {
+  const controller = new AbortController();
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(`${label}: sem resposta em ${ms} ms`);
+      error.code = 'MODERATION_TIMEOUT';
+      controller.abort(error);
+      reject(error);
+    }, ms);
+  });
+  try {
+    return await Promise.race([task(controller.signal), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+// Uma instancia por projeto: o cliente da google-auth-library reaproveita o token entre uploads.
+let cachedVisionAuth = null;
+const getVisionAuth = (projectId) => {
+  if (!cachedVisionAuth || cachedVisionAuth.projectId !== projectId) {
+    cachedVisionAuth = {
+      projectId,
+      auth: new GoogleAuth({
+        projectId: projectId || undefined,
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      }),
+    };
+  }
+  return cachedVisionAuth.auth;
+};
+
+// Falha temporaria da verificacao obrigatoria: o upload e recusado, mas o motivo nao e o conteudo.
+const unavailableResult = ({ category, provider }) => ({
+  allowed: false,
+  unavailable: true,
+  reason: 'Nao foi possivel verificar a seguranca do arquivo.',
+  categories: [category],
+  provider,
+});
+
 const getFileSignature = (buffer) => {
   if (!Buffer.isBuffer(buffer) || buffer.length < 4) return 'unknown';
   if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'jpeg';
@@ -149,54 +204,50 @@ const callExternalModeration = async ({ file, context }) => {
     } : null;
   }
 
-  let response;
+  const timeoutMs = readTimeoutMs('UPLOAD_MODERATION_TIMEOUT_MS', DEFAULT_EXTERNAL_TIMEOUT_MS);
   try {
-    response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(process.env.UPLOAD_MODERATION_SECRET
-          ? { Authorization: `Bearer ${process.env.UPLOAD_MODERATION_SECRET}` }
-          : {}),
-      },
-      body: JSON.stringify({
-        context,
-        filename: file.originalname,
-        mimetype: file.mimetype,
-        size: file.size,
-        contentBase64: file.buffer.toString('base64'),
-        blockedCategories: Array.from(HIGH_RISK_CATEGORIES),
-      }),
+    return await runWithTimeout(timeoutMs, 'Moderacao externa', async (signal) => {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(process.env.UPLOAD_MODERATION_SECRET
+            ? { Authorization: `Bearer ${process.env.UPLOAD_MODERATION_SECRET}` }
+            : {}),
+        },
+        body: JSON.stringify({
+          context,
+          filename: file.originalname,
+          mimetype: file.mimetype,
+          size: file.size,
+          contentBase64: file.buffer.toString('base64'),
+          blockedCategories: Array.from(HIGH_RISK_CATEGORIES),
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Servico externo retornou HTTP ${response.status}`);
+      }
+      const body = await response.json();
+      // Resposta sem decisao explicita nao conta como aprovacao.
+      if (!body || typeof body !== 'object' || typeof body.allowed !== 'boolean') {
+        throw new Error('Servico externo respondeu sem o campo allowed.');
+      }
+      return body;
     });
   } catch (error) {
     if (!required) {
       console.warn('[upload-moderation] Servico externo indisponivel; usando apenas verificacoes locais.', error.message);
       return null;
     }
-    return {
-      allowed: false,
-      categories: ['moderation_unavailable'],
-      reason: 'Nao foi possivel verificar a seguranca do arquivo.',
-    };
+    console.error('[upload-moderation] Moderacao externa obrigatoria indisponivel:', error.message);
+    return unavailableResult({ category: 'moderation_unavailable', provider: 'external' });
   }
-
-  if (!response.ok) {
-    if (!required) {
-      console.warn(`[upload-moderation] Servico externo retornou HTTP ${response.status}; usando apenas verificacoes locais.`);
-      return null;
-    }
-    return {
-      allowed: false,
-      categories: ['moderation_unavailable'],
-      reason: 'Nao foi possivel verificar a seguranca do arquivo.',
-    };
-  }
-
-  return response.json();
 };
 
 const normalizeModerationResult = (result) => {
   if (!result) return null;
+  if (result.unavailable) return result;
   const categories = Array.isArray(result.categories)
     ? result.categories.map((category) => String(category))
     : [];
@@ -224,49 +275,66 @@ const callGoogleVisionModeration = async (file) => {
   if (!shouldUseGoogleVision()) return null;
 
   const projectId = (process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || '').trim();
-  const auth = new GoogleAuth({
-    projectId: projectId || undefined,
-    scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+  const timeoutMs = readTimeoutMs('UPLOAD_VISION_TIMEOUT_MS', DEFAULT_VISION_TIMEOUT_MS);
+
+  const annotation = await runWithTimeout(timeoutMs, 'Google Vision', async (signal) => {
+    // Se o prazo estourar, a instancia em cache e descartada (catch abaixo): um token travado na
+    // google-auth-library nao pode prender os proximos uploads.
+    const client = await getVisionAuth(projectId).getClient();
+    const accessToken = await client.getAccessToken();
+    const token = typeof accessToken === 'string' ? accessToken : accessToken?.token;
+
+    if (!token) {
+      throw new Error('Nao foi possivel autenticar no Google Vision.');
+    }
+
+    const response = await fetch('https://vision.googleapis.com/v1/images:annotate', {
+      method: 'POST',
+      signal,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        ...(projectId ? { 'x-goog-user-project': projectId } : {}),
+      },
+      body: JSON.stringify({
+        requests: [
+          {
+            image: { content: file.buffer.toString('base64') },
+            features: [
+              { type: 'SAFE_SEARCH_DETECTION' },
+              { type: 'LABEL_DETECTION', maxResults: 20 },
+              { type: 'WEB_DETECTION', maxResults: 20 },
+              { type: 'TEXT_DETECTION', maxResults: 5 },
+            ],
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(`Google Vision retornou HTTP ${response.status}: ${detail.slice(0, 300)}`);
+    }
+
+    const payload = await response.json();
+    const result = payload?.responses?.[0];
+    // 200 sem resultado para a imagem nao prova que ela e segura.
+    if (!result || typeof result !== 'object') {
+      throw new Error('Google Vision respondeu sem resultado para a imagem.');
+    }
+    return result;
+  }).catch((error) => {
+    if (error.code === 'MODERATION_TIMEOUT') {
+      cachedVisionAuth = null;
+    }
+    throw error;
   });
-  const client = await auth.getClient();
-  const accessToken = await client.getAccessToken();
-  const token = typeof accessToken === 'string' ? accessToken : accessToken?.token;
 
-  if (!token) {
-    throw new Error('Nao foi possivel autenticar no Google Vision.');
-  }
-
-  const response = await fetch('https://vision.googleapis.com/v1/images:annotate', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...(projectId ? { 'x-goog-user-project': projectId } : {}),
-    },
-    body: JSON.stringify({
-      requests: [
-        {
-          image: { content: file.buffer.toString('base64') },
-          features: [
-            { type: 'SAFE_SEARCH_DETECTION' },
-            { type: 'LABEL_DETECTION', maxResults: 20 },
-            { type: 'WEB_DETECTION', maxResults: 20 },
-            { type: 'TEXT_DETECTION', maxResults: 5 },
-          ],
-        },
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    throw new Error(`Google Vision retornou HTTP ${response.status}: ${detail}`);
-  }
-
-  const payload = await response.json();
-  const annotation = payload?.responses?.[0] || {};
   if (annotation.error) {
-    throw new Error(annotation.error.message || 'Erro na moderacao visual.');
+    const error = new Error(annotation.error.message || 'Erro na moderacao visual.');
+    // INVALID_ARGUMENT (3): o Vision nao conseguiu ler esta imagem. Repetir nao resolve.
+    error.unreadableImage = annotation.error.code === 3;
+    throw error;
   }
 
   const categories = [];
@@ -380,13 +448,17 @@ const verifyUploadContent = async ({ file, context = 'task_attachment' }) => {
       }
     } catch (error) {
       if (isVisualModerationRequired()) {
-        return {
-          allowed: false,
-          reason: 'Nao foi possivel concluir a moderacao visual da imagem.',
-          categories: ['visual_moderation_unavailable'],
-          provider: 'google_vision',
-          detail: error.message,
-        };
+        // O detalhe tecnico fica so no log; o resultado nao carrega a mensagem da excecao.
+        console.error('[upload-moderation] Moderacao visual nao concluida:', error.code || '', error.message);
+        if (error.unreadableImage) {
+          return {
+            allowed: false,
+            reason: 'Nao foi possivel ler a imagem enviada.',
+            categories: ['unreadable_image'],
+            provider: 'google_vision',
+          };
+        }
+        return unavailableResult({ category: 'visual_moderation_unavailable', provider: 'google_vision' });
       }
       console.warn('[upload-moderation] Google Vision indisponivel; usando apenas verificacoes locais.', error.message);
     }
