@@ -36,7 +36,11 @@ const tarefaSchema = new mongoose.Schema({
     url: { type: String, required: true },
     nomeOriginal: { type: String, required: true },
     mimetype: { type: String },
-    size: { type: Number }
+    size: { type: Number },
+    // Autoria registrada no upload (a partir desta versao). Anexos antigos ficam com null:
+    // sem autoria comprovada, podem ser baixados, mas nao removidos pela interface.
+    uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    uploadedAt: { type: Date, default: null }
   }]
 }, { timestamps: true });
 
