@@ -38,6 +38,20 @@ const failure = (statusCode, kind, message) => Object.assign(new Error(message),
 
 const normalizeEmail = (email) => (typeof email === 'string' ? email.trim().toLowerCase() : '');
 
+// O TTL do MongoDB (criadoEm, 900 s) apaga o documento de forma assincrona: o prazo e conferido aqui.
+// Vale enquanto now < criadoEm + codeMinutes; no instante exato do limite ja esta vencido.
+// Sem criadoEm valido, o codigo e tratado como vencido (falha fechada).
+const recoveryCodeExpiresAt = (token) => {
+  const issuedAt = token?.criadoEm ? new Date(token.criadoEm) : null;
+  if (!issuedAt || Number.isNaN(issuedAt.getTime())) return null;
+  return new Date(issuedAt.getTime() + config.face.recovery.codeMinutes * 60 * 1000);
+};
+
+const isRecoveryCodeExpired = (token, now = new Date()) => {
+  const expiresAt = recoveryCodeExpiresAt(token);
+  return !expiresAt || now.getTime() >= expiresAt.getTime();
+};
+
 const findActiveAuthorization = (userId, now) =>
   FaceRecoveryAuthorization.findOne({ userId, status: 'active', expiresAt: { $gt: now } });
 
@@ -72,6 +86,8 @@ async function sendRecoveryCode(email, now = new Date()) {
     // Campo obrigatorio do modelo; este fluxo nao usa link, so o codigo.
     token: hashSecurityCode(`${RECOVERY_PURPOSE}:link`, crypto.randomBytes(32).toString('hex')),
     purpose: RECOVERY_PURPOSE,
+    // Explicito: e o inicio do prazo conferido no recadastro (e o campo do TTL do modelo).
+    criadoEm: now,
   });
 
   try {
@@ -83,6 +99,13 @@ async function sendRecoveryCode(email, now = new Date()) {
   }
 
   await audit('requested', undefined, user, authorization, 'face_recovery_code_requested');
+}
+
+// Codigo vencido: some do banco e responde como credencial invalida (nao revela que existia).
+async function rejectExpiredCode(token, user, authorization) {
+  await TwoFactorToken.deleteOne({ _id: token._id, purpose: RECOVERY_PURPOSE });
+  await audit('denied', 'code_expired', user, authorization);
+  throw failure(401, 'credentials', MESSAGES.invalidCredentials);
 }
 
 async function checkCredentials({ email, codigo, senha }) {
@@ -97,6 +120,12 @@ async function checkCredentials({ email, codigo, senha }) {
     await argon2.verify(DUMMY_PASSWORD_HASH, senha).catch(() => false);
     await audit('denied', 'no_code', user);
     throw failure(401, 'credentials', MESSAGES.invalidCredentials);
+  }
+
+  if (isRecoveryCodeExpired(token)) {
+    // Mesmo custo de uma senha conferida: o tempo de resposta nao separa vencido de errado.
+    await argon2.verify(DUMMY_PASSWORD_HASH, senha).catch(() => false);
+    await rejectExpiredCode(token, user);
   }
 
   if ((Number(token.tentativas) || 0) >= config.face.recovery.maxAttempts) {
@@ -173,6 +202,11 @@ async function reenrollWithRecoveryCode({ email, codigo, senha, imagesBase64 }) 
     throw err;
   }
 
+  // A extracao facial pode levar segundos: o prazo e conferido de novo antes de gravar qualquer coisa.
+  if (isRecoveryCodeExpired(token)) {
+    await rejectExpiredCode(token, user, authorization);
+  }
+
   const encryptedEmbeddings = encryptEmbeddings(embeddings);
 
   // Tudo ou nada: autorizacao e codigo consumidos, perfil trocado e sessoes revogadas na mesma transacao.
@@ -229,6 +263,7 @@ async function reenrollWithRecoveryCode({ email, codigo, senha, imagesBase64 }) 
 module.exports = {
   MESSAGES,
   RECOVERY_PURPOSE,
+  isRecoveryCodeExpired,
   reenrollWithRecoveryCode,
   sendRecoveryCode,
 };

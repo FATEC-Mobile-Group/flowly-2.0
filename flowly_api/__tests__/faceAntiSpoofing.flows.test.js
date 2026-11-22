@@ -118,7 +118,8 @@ const flows = {
         _id: newId(), userId: user._id, operator: 'operador@flowly.test', reason: 'Titular sem acesso ao rosto antigo.',
         status: 'active', ownershipAttempts: 0, ownershipExpiresAt: new Date(), expiresAt: new Date(Date.now() + 30 * 60000),
       });
-      mockDb.tokens.push({ _id: newId(), userId: user._id, purpose: 'face_recovery', codigo: hashSecurityCode('face_recovery', CODE), token: 'x' });
+      // criadoEm como no documento real (default do modelo): o prazo do codigo e conferido no servico.
+      mockDb.tokens.push({ _id: newId(), userId: user._id, purpose: 'face_recovery', codigo: hashSecurityCode('face_recovery', CODE), token: 'x', criadoEm: new Date() });
     },
     send: () =>
       request(app).post('/api/face/recovery/re-enroll').send({ email: EMAIL, codigo: CODE, senha: PASSWORD, imagesBase64: IMAGES }),
