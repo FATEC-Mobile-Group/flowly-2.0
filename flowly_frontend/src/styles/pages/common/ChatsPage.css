@@ -42,6 +42,13 @@
   box-shadow: 0 16px 38px rgba(0, 0, 0, 0.35);
 }
 
+/* Envio sem confirmacao do servidor: aviso, nao erro. */
+.chat-blocked-popup.page.warning {
+  border-color: rgba(255, 193, 7, 0.55);
+  background: rgba(58, 42, 6, 0.94);
+  color: #fff4d6;
+}
+
 .chat-blocked-popup.page span {
   grid-column: 1 / 2;
   font-size: 0.9rem;

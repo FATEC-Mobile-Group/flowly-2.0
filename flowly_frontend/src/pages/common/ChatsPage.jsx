@@ -4,6 +4,7 @@ import apiClient, { getFullApiUrl } from '../../config/apiClient';
 import Sidebar from '../../components/layout/Sidebar';
 import { authUtils } from '../../config/authUtils';
 import { API_ENDPOINTS } from '../../config/config';
+import { CHAT_SEND_TITLES, sendChatMessage } from '../../utils/chatSend';
 import '../../styles/pages/common/ChatsPage.css';
 
 const formatMessageTime = (dateStr) => {
@@ -25,9 +26,11 @@ const ChatsPage = () => {
   const [loadingEquipes, setLoadingEquipes] = useState(true);
   const [loadingMensagens, setLoadingMensagens] = useState(false);
   const [erro, setErro] = useState('');
-  const [blockedPopup, setBlockedPopup] = useState('');
+  const [sendNotice, setSendNotice] = useState(null);
+  const [sending, setSending] = useState(false);
 
   const socketRef = useRef(null);
+  const sendingRef = useRef(false);
   const endRef = useRef(null);
   const userId = authUtils.getUserId();
 
@@ -111,10 +114,6 @@ const ChatsPage = () => {
       setMessages((prev) => [...prev, msg]);
     });
 
-    socket.on('message_blocked', (payload) => {
-      setBlockedPopup(payload?.message || 'Mensagem bloqueada.');
-    });
-
     loadHistory();
 
     return () => {
@@ -126,37 +125,49 @@ const ChatsPage = () => {
     scrollToBottom();
   }, [messages]);
 
-  const handleSendMessage = (event) => {
+  // O texto so sai do campo quando o servidor confirma a gravacao; recusa ou falha mantem o rascunho.
+  const handleSendMessage = async (event) => {
     event.preventDefault();
     const texto = novaMensagem.trim();
-    if (!texto || !selectedEquipe || !socketRef.current) {
+    if (!texto || !selectedEquipe || sendingRef.current) {
       return;
     }
 
-    socketRef.current.emit('send_message', {
-      equipeId: selectedEquipe,
-      texto,
-    });
-
-    setNovaMensagem('');
+    sendingRef.current = true;
+    setSending(true);
+    setSendNotice(null);
+    try {
+      const result = await sendChatMessage(socketRef.current, { equipeId: selectedEquipe, texto });
+      if (result.status === 'sent') {
+        setNovaMensagem('');
+      } else {
+        setSendNotice({ status: result.status, message: result.message });
+      }
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
   };
 
   useEffect(() => {
-    if (!blockedPopup) return undefined;
-    const timeout = setTimeout(() => setBlockedPopup(''), 4500);
+    if (!sendNotice) return undefined;
+    const timeout = setTimeout(() => setSendNotice(null), 8000);
     return () => clearTimeout(timeout);
-  }, [blockedPopup]);
+  }, [sendNotice]);
 
   return (
     <div className="chats-page">
       <Sidebar />
 
       <main className="chats-content">
-        {blockedPopup && (
-          <div className="chat-blocked-popup page" role="alert">
-            <strong>Mensagem bloqueada</strong>
-            <span>{blockedPopup}</span>
-            <button type="button" onClick={() => setBlockedPopup('')} aria-label="Fechar aviso">x</button>
+        {sendNotice && (
+          <div
+            className={`chat-blocked-popup page ${sendNotice.status === 'uncertain' ? 'warning' : ''}`}
+            role="alert"
+          >
+            <strong>{CHAT_SEND_TITLES[sendNotice.status] || CHAT_SEND_TITLES.error}</strong>
+            <span>{sendNotice.message}</span>
+            <button type="button" onClick={() => setSendNotice(null)} aria-label="Fechar aviso">x</button>
           </div>
         )}
 
@@ -232,9 +243,11 @@ const ChatsPage = () => {
                 onChange={(event) => setNovaMensagem(event.target.value)}
                 placeholder="Digite sua mensagem..."
                 disabled={!selectedEquipe}
+                readOnly={sending}
+                maxLength={4000}
               />
-              <button type="submit" disabled={!selectedEquipe || !novaMensagem.trim()}>
-                Enviar
+              <button type="submit" disabled={!selectedEquipe || !novaMensagem.trim() || sending}>
+                {sending ? 'Enviando...' : 'Enviar'}
               </button>
             </form>
           </section>
