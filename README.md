@@ -29,8 +29,8 @@ A aplicação é composta por:
 * Aplicativo Mobile em Flutter
 * Banco de dados MongoDB
 * Comunicação em tempo real com Socket.IO
-* Infraestrutura com Docker, Cloud Run, Azure Static Web Apps, Kubernetes e Docker Hub
-* Módulo auxiliar em Python para assistente, voz, analytics e comandos
+* Infraestrutura em nuvem com Google Cloud Run, Azure Static Web Apps, Google Cloud Storage e Secret Manager, com containers Docker (manifests Kubernetes e imagens no Docker Hub mantidos como alternativa)
+* Assistente em Python para comandos por texto e voz, com confirmação explícita das alterações, e analytics
 * Microserviço Python para reconhecimento facial
 
 ---
@@ -47,7 +47,8 @@ flowly-2.0/
 ├── flowly_iot_face/    # Microserviço Python de reconhecimento facial
 │
 ├── flowly_api/k8s/     # Manifests Kubernetes da API e MongoDB
-└── flowly_frontend/k8s/# Manifest Kubernetes do frontend
+├── flowly_frontend/k8s/# Manifest Kubernetes do frontend
+└── .github/workflows/  # CI (Quality) e deploy do frontend no Azure Static Web Apps
 
 ```
 <img width="1304" height="586" alt="arquitetura" src="https://github.com/user-attachments/assets/af18d19d-bb61-4780-91c2-bbf94df10381" />
@@ -87,7 +88,7 @@ flowly-2.0/
 | Tecnologia | Uso no projeto | Justificativa |
 | ---------- | -------------- | ------------- |
 | React | Interface web em `flowly_frontend` | Componentizacao para telas de login, dashboards, tarefas, equipes, chat e perfil. |
-| React Scripts | Build e ambiente CRA | Mantem scripts de desenvolvimento, teste e build ja adotados no projeto. |
+| Vite | Build e servidor de desenvolvimento | Gera o build estatico publicado no Azure Static Web Apps; variaveis `VITE_*` sao embutidas no build. |
 | React Router DOM | Navegacao | Organiza rotas publicas, protegidas, admin e usuario. |
 | Axios | Cliente HTTP | Centraliza chamadas REST para a API Node. |
 | Socket.IO Client | Tempo real no navegador | Integra o chat e eventos em tempo real com a API. |
@@ -98,6 +99,8 @@ flowly-2.0/
 | React Toastify | Feedback ao usuario | Exibe notificacoes visuais para acoes e erros. |
 | Three.js/OGL | Efeitos visuais | Apoia componentes visuais e fundos interativos da interface. |
 | Cypress/Testing Library | Testes web | Cobre fluxos E2E e testes de componentes. |
+| Vitest | Execucao dos testes de componentes | Roda os testes do frontend (`npm test`), inclusive no CI. |
+| Web Speech API | Voz no navegador | Reconhecimento de fala e resposta falada do assistente, nativos do Chrome/Edge. |
 
 </details>
 
@@ -134,7 +137,8 @@ flowly-2.0/
 | SpeechRecognition | Speech-to-text | Captura comandos de voz em pt-BR quando o modo de voz e usado. |
 | pyttsx3 | Text-to-speech local | Permite resposta falada sem depender de servico externo no modo local. |
 | pymongo | Persistencia de analytics | Grava insights/eventos diretamente no MongoDB quando configurado. |
-| Functions Framework | Runtime HTTP | Expoe o assistente como endpoint em Google Cloud Functions/Run. |
+| Functions Framework | Runtime HTTP | Expoe o assistente como endpoint HTTP no Google Cloud Run. |
+| google-auth | Autenticacao IAM opcional | Gera o ID token do servico quando a API esta privada no Cloud Run (`FLOWLY_API_IAM_ENABLED=true`). |
 | Celery/Redis | Fila opcional | Suporta processamento assincromo de analytics quando ha worker separado. |
 | python-dotenv | Configuracao local | Carrega variaveis do `.env` durante desenvolvimento. |
 
@@ -164,13 +168,15 @@ flowly-2.0/
 
 | Tecnologia | Uso no projeto | Justificativa |
 | ---------- | -------------- | ------------- |
-| Docker | Containers da API, frontend e servicos Python | Padroniza ambiente e facilita deploy. |
-| Google Cloud Run | Deploy de API, assistente e face | Executa containers HTTP com escala sob demanda. |
+| Docker | Containers da API, frontend e servicos Python | Padroniza ambiente e facilita deploy. Cada servico tem seu `Dockerfile`. |
+| Google Cloud Run | Deploy de API, assistente e face | Executa containers HTTP com escala sob demanda (regiao `southamerica-east1`). |
 | Google Cloud Storage | Uploads | Armazena anexos fora do ciclo de vida dos containers. |
+| Google Secret Manager | Segredos dos servicos | Guarda o segredo `flowly-assistant-operations-prod` (versao 1), vinculado a API e ao assistente como `ASSISTANT_OPERATIONS_SECRET`. |
+| Google Cloud Build | Deploy continuo dos servicos Cloud Run | Tres gatilhos ativos (regiao `global`) publicam automaticamente `flowly-api-backend`, `flowly-assistente-voz` e `flowly-recon-facial` a cada push na `main`. |
 | Azure Static Web Apps | Frontend web publicado | Hospeda build estatico React com HTTPS. |
-| Kubernetes | Manifests em `k8s/` | Mantem alternativa/registro de deploy orquestrado para API, frontend e MongoDB. |
-| Docker Hub | Publicacao de imagens | Suporta distribuicao das imagens geradas. |
-| GitHub Actions | CI/CD documentado | Automatiza builds e publicacao quando configurado no repositorio remoto. |
+| Kubernetes | Manifests em `k8s/` | Mantem alternativa/registro de deploy orquestrado para API, frontend e MongoDB (nao usada na producao atual). |
+| Docker Hub | Imagens da alternativa Kubernetes | Os manifests `k8s/` referenciam imagens publicadas no Docker Hub. |
+| GitHub Actions | CI e deploy do frontend | `Quality` testa API, frontend, assistente, servico facial e mobile; o workflow do Azure publica o frontend a cada push na `main`. |
 
 </details>
 
@@ -306,6 +312,24 @@ Pode:
 * Insights restritos às equipes das quais o administrador participa
 * Alertas com nome do usuário e motivo traduzido/formatado
 
+## Assistente de Voz e Texto
+
+Disponível:
+
+* Comandos por texto ou por voz em português (reconhecimento de fala nativo do Chrome/Edge)
+* Consultas: minhas tarefas, backlog, detalhes de uma tarefa, perfil, equipes, membros e mensagens da equipe
+* Pedidos em linguagem natural, como "liste as tarefas que já tenho cadastradas" ou "quais tarefas tenho?"
+* Perguntas pendentes e seleção de tarefas que continuam entre mensagens, mesmo com várias instâncias do assistente
+* Memória curta da conversa para fatos ditos pelo usuário (ex.: "minha prioridade de hoje é X"), sem executar nenhuma ação
+* Escuta que conclui sozinha após uma pausa de 2 s, encerra sem fala em 8 s e dura no máximo 30 s, com botões Cancelar e Concluir
+* Alterações (criar equipe ou tarefa, comentar, adicionar subtarefa, atribuir, mudar status e cronômetro) só depois de um cartão de confirmação com o resumo da operação, confirmado por botão, texto ou voz
+
+Desativado por segurança:
+
+* Exclusões pelo assistente: nunca executadas, por nenhum caminho
+* Alterações pelo assistente: **desativadas em produção** (`FLOWLY_ASSISTANT_WRITES_ENABLED` desligada, que também é o padrão); funcionam apenas no ambiente em que a variável estiver como `true`
+* Respostas ambíguas ("sim", "ok", ruído de voz) e transcrições incompletas nunca executam uma alteração
+
 ---
 
 # API REST
@@ -330,6 +354,7 @@ POST /api/auth/recuperar-senha/redefinir
 
 ```http
 GET /api/users
+GET /api/users/search
 GET /api/users/me
 PUT /api/users/me
 PUT /api/users/me/password
@@ -362,9 +387,12 @@ POST   /api/tarefas/:id/comentarios
 POST   /api/tarefas/:id/subtarefas
 PUT    /api/tarefas/:id/subtarefas/:subId
 POST   /api/tarefas/:id/anexos
+PUT    /api/tarefas/:id/atribuir-para-mim
 PUT    /api/tarefas/:id/status
 PUT    /api/tarefas/:id/cronometro
 ```
+
+> Criar equipe, criar tarefa, comentar, adicionar subtarefa, atribuir para mim, mudar status e iniciar/pausar o cronômetro aceitam o cabeçalho opcional `Idempotency-Key`. Com ele, uma repetição da mesma requisição não executa de novo (a resposta original é devolvida com `Idempotency-Replayed: true`). Sem o cabeçalho, as rotas funcionam como antes.
 
 ### Notificações
 
@@ -382,8 +410,27 @@ GET  /api/face/health
 POST /api/face/enroll
 POST /api/face/verify
 POST /api/face/skip-enrollment
+POST /api/face/recovery/send-code
+POST /api/face/recovery/re-enroll
 GET  /api/face/status
 POST /api/face/enroll-profile
+```
+
+### Assistente (rotas internas)
+
+Usadas somente pelo assistente Python, nunca pelo navegador. Exigem o segredo interno `X-Assistant-Operations-Secret` e o JWT do usuário com sessão válida.
+
+```http
+POST /api/assistant/operations
+GET  /api/assistant/operations/current
+GET  /api/assistant/operations/:id/result
+POST /api/assistant/operations/:id/claim
+POST /api/assistant/operations/:id/complete
+POST /api/assistant/operations/:id/retry
+POST /api/assistant/operations/:id/cancel
+GET  /api/assistant/conversations/current
+PUT  /api/assistant/conversations/current
+POST /api/assistant/conversations/current/clear
 ```
 
 ### Admin e Storage
@@ -398,87 +445,147 @@ GET  /api/storage/files/:encodedPath
 ---
 
 # Arquitetura Cloud
+
+O Flowly 2.0 é distribuído entre dois provedores de nuvem. O **Microsoft Azure** hospeda o frontend estático. O **Google Cloud** executa os três serviços em containers no Cloud Run, guarda os arquivos e os segredos e analisa as imagens. O banco é um MongoDB gerenciado (Atlas). Todos os serviços são *stateless*: o estado (dados, confirmações do assistente, contexto das conversas e chaves de idempotência) fica no MongoDB. Assim, o Cloud Run pode criar ou remover instâncias sem perder informação.
+
+**Estado atual da produção:**
+
+* A `main` está no commit `1e27e24`, com o PR #26 integrado.
+* O frontend está publicado no Azure Static Web Apps.
+* A API, o assistente e o serviço facial estão publicados no Cloud Run, no projeto GCP `projeto-functions`, região `southamerica-east1`.
+* As alterações de dados pelo assistente estão **desativadas** em produção.
+
+## Componentes e responsabilidades
+
+| Componente | Pasta | Hospedagem | Responsabilidade |
+| ---------- | ----- | ---------- | ---------------- |
+| Frontend Web | `flowly_frontend` | Azure Static Web Apps | Interface React (build Vite). O navegador chama a API e o assistente diretamente, por HTTPS. |
+| API | `flowly_api` | Google Cloud Run (`flowly-api-backend`) | Regras de negócio, autenticação JWT com validação da sessão, chat em tempo real (Socket.IO), uploads, orquestração do reconhecimento facial e registro das confirmações e do contexto do assistente. |
+| Assistente | `flowly_assistente` | Google Cloud Run (`flowly-assistente-voz`) | Interpreta comandos de texto e voz em português. Consulta e altera dados **somente pela API**, com o JWT do próprio usuário. |
+| Reconhecimento facial | `flowly_iot_face` | Google Cloud Run (gatilho `flowly-recon-facial`) | Gera embeddings, verifica rostos e aplica anti-spoofing. É chamado apenas pela API, nunca pelo navegador ou pelo app. |
+| App mobile | `flowly_mobal` | Dispositivo do usuário | Consome a mesma API (REST e Socket.IO). |
+| Banco de dados | — | MongoDB Atlas | Coleções do sistema. Transações (replica set) são usadas pela idempotência e pela recuperação facial. |
+| Arquivos | — | Google Cloud Storage | Anexos e fotos de perfil, servidos por URLs assinadas. |
+| Moderação de imagens | — | Google Vision API | Analisa imagens antes de armazená-las. |
+| Segredos | — | Google Secret Manager | `flowly-assistant-operations-prod` (versão 1): o segredo interno entre assistente e API, vinculado aos dois serviços. |
+| CI/CD | — | GitHub Actions e Google Cloud Build | Testes em todo pull request; deploy automático do frontend (Azure) e dos três serviços Cloud Run (gatilhos do Cloud Build) a cada push na `main`. |
+
+## Diagrama da arquitetura
+
+```mermaid
+flowchart LR
+  subgraph Clientes["Clientes"]
+    Web["Navegador<br/>web e voz no Chrome/Edge"]
+    Mobile["App Flutter"]
+  end
+
+  subgraph Azure["Microsoft Azure"]
+    SWA["Azure Static Web Apps<br/>React + Vite (build estático)"]
+  end
+
+  subgraph GCP["Google Cloud - projeto-functions - southamerica-east1"]
+    API["Cloud Run: flowly-api-backend<br/>Node.js + Express + Socket.IO"]
+    ASSIST["Cloud Run: flowly-assistente-voz<br/>Python + Functions Framework"]
+    FACE["Cloud Run: serviço facial<br/>Flask + Gunicorn + DeepFace"]
+    GCS[("Cloud Storage<br/>anexos e fotos")]
+    VISION["Vision API<br/>moderação de imagens"]
+    SM["Secret Manager<br/>flowly-assistant-operations-prod"]
+  end
+
+  DB[("MongoDB Atlas<br/>dados, confirmações, contexto<br/>e chaves de idempotência")]
+  SMTP["Servidor SMTP<br/>2FA e recuperação de senha"]
+
+  Web -->|"HTTPS: arquivos do site"| SWA
+  Web -->|"REST /api e Socket.IO com JWT"| API
+  Web -->|"/api/v1/messages e /standby com JWT"| ASSIST
+  Mobile -->|"REST e Socket.IO com JWT"| API
+
+  ASSIST -->|"REST com o JWT do usuário<br/>e Idempotency-Key nas escritas"| API
+  ASSIST -->|"/api/assistant/operations e /conversations<br/>segredo interno + JWT"| API
+  ASSIST -.->|"ID token IAM, quando a API é privada"| API
+  ASSIST -->|"analytics via pymongo"| DB
+
+  API -->|"Mongoose"| DB
+  API -->|"SDK e URLs assinadas"| GCS
+  API -->|"moderação de uploads"| VISION
+  API -->|"/embed, /verify e /verify-multi<br/>com segredo de serviço"| FACE
+  API -.->|"moderação complementar, opcional"| ASSIST
+  API -->|"Nodemailer"| SMTP
+  SM -.->|"ASSISTANT_OPERATIONS_SECRET"| API
+  SM -.->|"ASSISTANT_OPERATIONS_SECRET"| ASSIST
+```
+
+## Comunicação entre os serviços
+
+1. **Navegador → Azure Static Web Apps:** baixa o site (HTML, JS e CSS). As URLs da API e do assistente vêm das variáveis `VITE_*`, fixadas no build.
+2. **Navegador e app → API:** REST e Socket.IO com o JWT do usuário. A cada requisição e a cada evento, a API confere no banco a versão da sessão e o papel da conta.
+3. **Navegador → Assistente:** cada mensagem (texto ou transcrição da voz) vai para `POST /api/v1/messages` com o JWT do usuário. O assistente não tem banco próprio de tarefas: consulta e altera tudo pela API, com o mesmo JWT. Assim, ele nunca tem mais permissão que o próprio usuário.
+4. **Assistente → API (rotas internas):** as confirmações de escrita (`/api/assistant/operations`) e o contexto das conversas (`/api/assistant/conversations`) ficam na API e no MongoDB. Essas rotas exigem o segredo interno `ASSISTANT_OPERATIONS_SECRET`, além do JWT. Com isso, qualquer instância do assistente continua a conversa ou executa a confirmação da outra, sem executar duas vezes.
+5. **Assistente → API privada (opcional):** com `FLOWLY_API_IAM_ENABLED=true`, o assistente também envia um ID token do Google em `X-Serverless-Authorization`, com a identidade da própria conta de serviço. Isso permite manter a API privada no Cloud Run, como no ambiente de homologação.
+6. **API → serviço facial:** chamadas autenticadas pelo `FACE_SERVICE_SECRET` (o mesmo valor nos dois serviços).
+7. **API → Cloud Storage e Vision API:** os arquivos passam pela moderação antes de serem armazenados e são entregues por URLs assinadas.
+
+## Segurança na nuvem
+
+* **Segredos:** nunca vão para o repositório. O segredo interno entre assistente e API fica no Secret Manager (`flowly-assistant-operations-prod`, versão 1) e é vinculado aos dois serviços. Os demais são configurados nos próprios serviços do Cloud Run.
+* **Rotas internas fail-closed:** sem o segredo interno configurado, ou sem os índices obrigatórios no MongoDB, as rotas internas do assistente respondem 503 em vez de operar sem proteção.
+* **Confirmação explícita:** toda alteração pedida ao assistente gera uma operação com resumo. Ela só é executada se a confirmação trouxer o mesmo `operationId` mostrado na tela, dentro do prazo.
+* **Idempotência:** as escritas do assistente usam `Idempotency-Key`. Uma repetição (rede instável, duas instâncias, clique duplo) nunca executa a mesma alteração duas vezes.
+* **Chave de desligamento:** `FLOWLY_ASSISTANT_WRITES_ENABLED` vem desligada por padrão e está desligada em produção. Exclusões nunca são feitas pelo assistente.
+* **CORS explícito:** em produção, a API recusa iniciar com `CORS_ORIGIN` curinga; o assistente aceita uma única origem (`FLOWLY_CORS_ORIGIN`).
+* **Biometria isolada:** o serviço facial não é exposto aos clientes; só a API o chama.
+
+## CI/CD
+
+```mermaid
+flowchart LR
+  Dev["Equipe"]
+  GH["GitHub<br/>FATEC-Mobile-Group/flowly-2.0"]
+  Quality["GitHub Actions: Quality<br/>API: Jest + npm audit<br/>Frontend: Vitest + build + npm audit<br/>Assistente: unittest<br/>Facial: sintaxe - Mobile: flutter analyze"]
+  SWAFlow["GitHub Actions: Azure Static Web Apps<br/>npm run build (Vite)"]
+  Preview["Ambiente de preview do Static Web Apps"]
+  SWA["Azure Static Web Apps<br/>produção"]
+  CB["Cloud Build - 3 gatilhos, região global<br/>flowly-api-backend<br/>flowly-assistente-voz<br/>flowly-recon-facial"]
+  CR["Cloud Run - southamerica-east1<br/>API, assistente e serviço facial"]
+
+  Dev -->|"push ou pull request"| GH
+  GH -->|"pull request e push na main"| Quality
+  GH -->|"push na main"| SWAFlow
+  GH -->|"pull request"| Preview
+  SWAFlow --> SWA
+  GH -->|"push na main"| CB
+  CB -->|"nova revisão de cada serviço"| CR
+  Dev -.->|"alternativa: gcloud run deploy --source"| CR
+```
+
+* **Quality** (`.github/workflows/quality.yml`): roda em todo pull request e em todo push na `main`.
+  * API: testes Jest e `npm audit`.
+  * Frontend: testes Vitest, build e `npm audit`.
+  * Assistente: testes Python, após instalar o `requirements.txt`.
+  * Serviço facial: checagem de sintaxe.
+  * Mobile: `flutter analyze`.
+* **Frontend** (`.github/workflows/azure-static-web-apps-*.yml`): o merge na `main` gera o build e publica no Azure Static Web Apps. Cada pull request ganha um ambiente de preview. As URLs da API e do assistente vêm de secrets do repositório.
+* **Serviços Cloud Run:** três gatilhos do Cloud Build (região `global`, branch `^main$`) publicam automaticamente uma nova revisão a cada push na `main`. São eles `flowly-api-backend`, `flowly-assistente-voz` e `flowly-recon-facial`. Foi assim que os três serviços entraram em produção depois do merge do PR #26. A configuração dos gatilhos fica no Google Cloud, não no repositório.
+* **Deploy manual (alternativa):** `gcloud run deploy --source` continua disponível para publicar um serviço fora do fluxo automático (ver o procedimento do serviço facial em [Variáveis de Ambiente](#variáveis-de-ambiente)).
+* **Workflows de Docker Hub:** os que estão em `flowly_api/.github` e `flowly_frontend/.github` não são executados, porque o GitHub só lê `.github/workflows` na raiz do repositório.
+* **Índices do MongoDB:** os modelos do assistente e da idempotência não criam índices automaticamente (`autoIndex` desligado). Os índices obrigatórios são criados por migração antes do deploy, e a API recusa operar sem eles.
+
+## Alternativa Kubernetes (versionada em `/k8s`, não usada na produção atual)
+
 ```mermaid
 flowchart TB
-  %% Usuários
-  WebUser[Usuário Web / Admin]
-  MobileUser[Usuário Mobile Flutter]
-
-  %% CI/CD
-  subgraph CICD["CI/CD"]
-    GitHub[GitHub Repository]
-    GHActions[GitHub Actions]
-    DockerHub[Docker Hub]
+  DockerHub["Docker Hub<br/>flowly-api e flowly-frontend"]
+  subgraph K8S["Cluster Kubernetes"]
+    FrontSvc["frontend-service<br/>NodePort :80"]
+    FrontDeploy["frontend-deployment<br/>1 réplica"]
+    ApiSvc["api-service<br/>ClusterIP :5000"]
+    ApiDeploy["api-deployment<br/>2 réplicas"]
+    MongoSvc["mongodb-service<br/>:27017"]
+    MongoDeploy["mongodb deployment<br/>1 réplica mongo:5"]
   end
 
-  %% Azure
-  subgraph Azure["Azure"]
-    SWA[Azure Static Web Apps<br/>React build estático]
-  end
-
-  %% Google Cloud
-  subgraph GCP["Google Cloud Platform - southamerica-east1"]
-    CloudRunAPI[Cloud Run<br/>flowly-api-backend<br/>Node.js + Express + Socket.IO]
-    CloudRunAssistant[Cloud Run / Functions Framework<br/>flowly-assistente-voz<br/>Python Assistant]
-    CloudRunFace[Cloud Run<br/>flowly_iot_face<br/>Flask + DeepFace]
-    GCS[Google Cloud Storage<br/>Uploads e anexos]
-    Vision[Google Vision API<br/>Moderação de imagens]
-  end
-
-  %% Banco externo
-  subgraph Data["Camada de Dados"]
-    MongoAtlas[MongoDB Atlas<br/>Banco Flowly]
-  end
-
-  %% Email externo
-  SMTP[SMTP Provider<br/>E-mails 2FA / recuperação]
-
-  %% Kubernetes alternativo
-  subgraph K8S["Alternativa Kubernetes versionada em /k8s"]
-    FrontDeploy[frontend-deployment<br/>1 réplica]
-    FrontSvc[frontend-service<br/>NodePort :80]
-    ApiDeploy[api-deployment<br/>2 réplicas]
-    ApiSvc[api-service<br/>ClusterIP :5000]
-    MongoDeploy[mongodb deployment<br/>1 réplica mongo:5]
-    MongoSvc[mongodb-service<br/>:27017]
-  end
-
-  %% Fluxo de deploy
-  GitHub --> GHActions
-  GHActions -->|Build React + deploy| SWA
-  GHActions -. imagens Docker documentadas .-> DockerHub
-  DockerHub -. imagens .-> CloudRunAPI
-  DockerHub -. imagens .-> CloudRunAssistant
-  DockerHub -. imagens .-> CloudRunFace
-  DockerHub -. imagens .-> FrontDeploy
-  DockerHub -. imagens .-> ApiDeploy
-
-  %% Acesso dos clientes
-  WebUser -->|HTTPS| SWA
-  MobileUser -->|HTTPS REST| CloudRunAPI
-  MobileUser -->|WebSocket Socket.IO| CloudRunAPI
-
-  %% Frontend
-  SWA -->|REST /api| CloudRunAPI
-  SWA -->|Socket.IO| CloudRunAPI
-  SWA -->|Assistente HTTP| CloudRunAssistant
-
-  %% Backend principal
-  CloudRunAPI -->|Mongoose / MONGO_URI| MongoAtlas
-  CloudRunAPI -->|Signed URLs / Storage SDK| GCS
-  CloudRunAPI -->|Safe Search / labels / OCR| Vision
-  CloudRunAPI -->|FACE_SERVICE_URL<br/>/health /embed /verify /verify-multi| CloudRunFace
-  CloudRunAPI -->|UPLOAD_MODERATION_URL opcional| CloudRunAssistant
-  CloudRunAPI -->|Nodemailer| SMTP
-
-  %% Assistente
-  CloudRunAssistant -->|FLOWLY_API_BASE_URL| CloudRunAPI
-  CloudRunAssistant -->|Analytics / insights| MongoAtlas
-
-  %% Face
-  CloudRunFace -->|Processamento facial<br/>DeepFace + TensorFlow| CloudRunFace
-
-  %% Kubernetes interno
+  DockerHub -.->|"imagens"| FrontDeploy
+  DockerHub -.->|"imagens"| ApiDeploy
   FrontSvc --> FrontDeploy
   FrontDeploy --> ApiSvc
   ApiSvc --> ApiDeploy
@@ -504,6 +611,12 @@ flowchart TB
 | ActivityLog  | Histórico de ações       |
 | FaceProfile  | Embeddings faciais e status de cadastro biométrico |
 | AssistantInsight | Eventos e insights do assistente |
+| AssistantOperation | Confirmações de escrita do assistente (resumo, estado, prazo e chave de idempotência) |
+| AssistantConversation | Contexto curto das conversas do assistente (perguntas pendentes, seleção de tarefas e fatos ditos), com prazo de expiração |
+| IdempotencyKey | Registro das requisições com `Idempotency-Key`, para não repetir uma escrita |
+| TwoFactorToken | Códigos temporários (15 minutos) de verificação de e-mail, recuperação de senha e recuperação facial |
+| FaceRecoveryAuthorization | Autorizações da recuperação facial excepcional |
+| SecurityAuditEvent | Eventos de auditoria de segurança, sem dados sensíveis |
 
 ---
 
@@ -525,7 +638,10 @@ flowchart TB
 * Cypress
 * Jest
 * React Testing Library
-* GitHub Actions
+* Vitest
+* unittest (Python), no assistente
+* flutter analyze, no mobile
+* GitHub Actions (workflow `Quality`, em todo pull request e push na `main`)
 
 ## Fluxos testados
 
@@ -539,6 +655,8 @@ flowchart TB
 * Atualização de status no Kanban após selecionar uma equipe diferente da padrão
 * Pausa/remoção visual do cronômetro ao pausar ou alterar status da tarefa
 * Navegação inicial
+* Assistente: confirmação explícita das escritas, vínculo ao `operationId`, idempotência, contexto compartilhado entre instâncias, memória curta, chave de desligamento das escritas e autenticação IAM opcional
+* Captura de voz: pausa, silêncio, duração máxima, Concluir, Cancelar e resultados parciais nunca enviados como comando
 
 ---
 
@@ -554,6 +672,8 @@ flowchart TB
 * Variáveis de ambiente
 * Restrição de uploads
 * Configuração CORS
+* Confirmação explícita e idempotência nas alterações feitas pelo assistente
+* Segredo interno entre assistente e API, e IAM opcional para API privada no Cloud Run
 
 ## Usabilidade
 
@@ -727,7 +847,8 @@ nosso design Figma e ver a evolução [aqui](https://www.figma.com/design/bAzWl5
 
 * Containerização da API
 * Containerização do Frontend
-* Publicação no Docker Hub
+* Containerização do assistente e do serviço facial (imagens executadas no Cloud Run)
+* Publicação no Docker Hub (imagens usadas pelos manifests Kubernetes)
 
 ## Kubernetes
 
@@ -735,12 +856,13 @@ nosso design Figma e ver a evolução [aqui](https://www.figma.com/design/bAzWl5
 * Deploy do Frontend
 * Deploy do MongoDB
 * Comunicação entre serviços
+* Alternativa versionada; a produção atual usa Cloud Run e Azure Static Web Apps
 
 ## CI/CD
 
-* Build automatizado
-* Push de imagens
-* GitHub Actions
+* Testes automatizados no GitHub Actions (`Quality`) em todo pull request
+* Build e publicação automática do frontend no Azure Static Web Apps a cada push na `main`
+* Deploy automático da API, do assistente e do serviço facial no Cloud Run por gatilhos do Cloud Build a cada push na `main` (detalhes em [Arquitetura Cloud](#arquitetura-cloud))
 
 ---
 
@@ -790,6 +912,13 @@ python main.py --cli
 
 ```
 
+Para subir o assistente como servidor HTTP local, igual ao container do Cloud Run:
+
+```bash
+cd flowly_assistente
+functions-framework --target trigger_http --port 8080
+```
+
 ---
 
 # Variáveis de Ambiente
@@ -813,10 +942,15 @@ MONGO_URI=mongodb+srv://USER:PASSWORD@CLUSTER/Flowly?retryWrites=true&w=majority
 
 # Autenticação
 JWT_SECRET=GERAR_UM_SEGREDO_LONGO_COM_32_BYTES_OU_MAIS
+JWT_FACE_SECRET=GERAR_OUTRO_SEGREDO_LONGO
+JWT_FILE_SECRET=GERAR_OUTRO_SEGREDO_LONGO
 JWT_EXPIRES_IN=7d
 
 # Reconhecimento facial: API Node chama o serviço Python
 FACE_SERVICE_URL=https://SEU_FLOWLY_FACE_IOT_CLOUD_RUN
+# Obrigatórios em produção. FACE_SERVICE_SECRET tem o mesmo valor do serviço facial.
+FACE_SERVICE_SECRET=GERAR_UM_SEGREDO_LONGO_IGUAL_NO_SERVICO_FACIAL
+FACE_EMBEDDING_KEY=CHAVE_PARA_CRIPTOGRAFAR_OS_EMBEDDINGS
 FACE_MATCH_THRESHOLD=0.46
 FACE_VERIFY_THRESHOLD=0.50
 FACE_DUPLICATE_THRESHOLD=0.46
@@ -840,6 +974,13 @@ UPLOAD_MODERATION_REQUIRED=false
 
 # Analytics interno do assistente via HTTP, se usado
 ASSISTANT_ANALYTICS_SECRET=GERAR_UM_SEGREDO_LONGO_SE_USAR_INGEST_HTTP
+
+# Confirmações e contexto do assistente (rotas /api/assistant/*)
+# Mesmo valor no assistente; no mínimo 43 caracteres. Ausente: as rotas internas respondem 503.
+ASSISTANT_OPERATIONS_SECRET=GERAR_32_BYTES_ALEATORIOS_EM_BASE64URL
+# Opcionais (os valores abaixo são os padrões)
+ASSISTANT_OPERATION_CONFIRM_SECONDS=120
+ASSISTANT_CONVERSATION_TTL_SECONDS=900
 
 # SMTP
 HOST=smtp.example.com
@@ -868,14 +1009,14 @@ A recuperação exige MongoDB com transações (replica set, como o Atlas). Num 
 ### Frontend Web (`flowly_frontend`)
 
 ```env
-# Variáveis de build do React
-REACT_APP_API_URL=https://SEU_BACKEND_CLOUD_RUN/api
-REACT_APP_API_PUBLIC_URL=https://SEU_BACKEND_CLOUD_RUN
-REACT_APP_SOCKET_URL=https://SEU_BACKEND_CLOUD_RUN
-REACT_APP_ASSISTANT_URL=https://SEU_ASSISTENTE_CLOUD_RUN
+# Variáveis de build do Vite
+VITE_API_URL=https://SEU_BACKEND_CLOUD_RUN/api
+VITE_API_PUBLIC_URL=https://SEU_BACKEND_CLOUD_RUN
+VITE_SOCKET_URL=https://SEU_BACKEND_CLOUD_RUN
+VITE_ASSISTANT_URL=https://SEU_ASSISTENTE_CLOUD_RUN
 ```
 
-> `REACT_APP_*` é embutido no build. Alterar essas variáveis exige novo build/deploy do frontend.
+> `VITE_*` é embutido no build. Alterar essas variáveis exige novo build/deploy do frontend. No GitHub Actions, os valores vêm dos secrets `REACT_APP_API_URL`, `REACT_APP_API_PUBLIC_URL`, `REACT_APP_SOCKET_URL` e `REACT_APP_ASSISTANT_URL`, repassados ao build como `VITE_*`.
 
 ### Assistente (`flowly_assistente`)
 
@@ -885,6 +1026,16 @@ FLOWLY_API_BASE_URL=https://SEU_BACKEND_CLOUD_RUN/api
 FLOWLY_API_TIMEOUT_SEC=20
 FLOWLY_MATCH_THRESHOLD=78
 FLOWLY_CORS_ORIGIN=https://SEU_FRONTEND_AZURE_STATIC_WEB_APPS
+
+# API privada no Cloud Run (IAM). Desligado salvo "true": envia o ID token da conta de serviço
+# em X-Serverless-Authorization. Audience = URL-base do serviço da API, sem /api.
+FLOWLY_API_IAM_ENABLED=false
+FLOWLY_API_IAM_AUDIENCE=
+
+# Confirmações e contexto compartilhados: mesmo valor da API (mínimo 43 caracteres)
+ASSISTANT_OPERATIONS_SECRET=GERAR_32_BYTES_ALEATORIOS_EM_BASE64URL
+# Alterações pelo assistente: desligadas salvo "true". Exclusões nunca são executadas.
+FLOWLY_ASSISTANT_WRITES_ENABLED=false
 
 # Em cloud, o token do usuário chega por Authorization: Bearer <token>
 FLOWLY_API_TOKEN=
@@ -899,8 +1050,8 @@ FLOWLY_ANALYTICS_COLLECTION=assistantinsights
 # Fila local no próprio container
 FLOWLY_ANALYTICS_QUEUE_MODE=local
 FLOWLY_LOCAL_WORKER_THREADS=2
-FLOWLY_CONVERSATION_STORE=/tmp/flowly_conversation_state.json
-FLOWLY_CONVERSATION_TTL_SEC=900
+# O contexto das conversas fica na API (/api/assistant/conversations), não em arquivo local.
+# O prazo dele é configurado na API (ASSISTANT_CONVERSATION_TTL_SECONDS).
 
 # Contrato de voz/TTS para navegador e modo local
 FLOWLY_LANGUAGE=pt-BR
@@ -924,9 +1075,9 @@ FACE_VERIFY_THRESHOLD=0.50
 
 > Em Cloud Run, não configure `HOST` nem `PORT` para o serviço facial. O container já usa a porta injetada pela plataforma.
 
-`FACE_SERVICE_SECRET` vem do Secret Manager e precisa ter o mesmo valor configurado na API. Sem ele, `/embed`, `/verify` e `/verify-multi` respondem 503; só `/health` continua respondendo.
+`FACE_SERVICE_SECRET` é obrigatório e precisa ter o mesmo valor na API e no serviço facial. Configure-o nos dois serviços como segredo, nunca no repositório, em imagens ou em logs, com acesso restrito a quem administra os serviços. Sem ele, `/embed`, `/verify` e `/verify-multi` respondem 503; só `/health` continua respondendo.
 
-Cada nova revisão herda os segredos da anterior. Para o deploy não removê-los:
+Quando o segredo é vinculado a partir do Secret Manager, cada nova revisão herda os segredos da anterior. Para o deploy não removê-los:
 
 * repita o vínculo em todo deploy (é idempotente): `--update-secrets FACE_SERVICE_SECRET=<NOME_DO_SEGREDO>:<VERSAO>`;
 * não use `--set-secrets` sem incluir `FACE_SERVICE_SECRET`, nem `--clear-secrets`;
@@ -971,6 +1122,8 @@ O módulo `flowly_assistente` concentra o assistente HTTP/CLI, comandos por text
 
 * Processamento de comandos do assistente
 * Consulta à API principal com JWT do usuário
+* Confirmação explícita das alterações, registrada na API (`AssistantOperation`) e executada com `Idempotency-Key`
+* Contexto das conversas e memória curta guardados na API (`AssistantConversation`), compartilhados entre instâncias do Cloud Run
 * Coleta de eventos e indicadores do uso do assistente
 * Persistência de analytics em MongoDB ou arquivo local
 * Fila opcional para processamento assíncrono com Celery/Redis
@@ -983,6 +1136,7 @@ O módulo `flowly_assistente` concentra o assistente HTTP/CLI, comandos por text
 * pyttsx3
 * pymongo
 * Functions Framework
+* google-auth
 * Celery
 * Redis
 
@@ -1011,21 +1165,12 @@ O módulo `flowly_assistente` concentra o assistente HTTP/CLI, comandos por text
 
 ---
 
-# Usuários Mockados para teste até 12/06/2026
-## [Acesse o Flowly aqui para testes](https://nice-beach-076f39a0f.7.azurestaticapps.net)
-### ADM
+# Acesso para testes
+## [Acesse o Flowly aqui](https://green-cliff-033f5810f.3.azurestaticapps.net)
 
-```env
-LOGIN=chucklesadm@bwmyga.com
-SENHA=A1234567a.
-```
+O frontend de produção é publicado nesse endereço do Azure Static Web Apps pelo workflow do GitHub Actions.
 
-### USER
-
-```env
-LOGIN=freddiem@bltiwd.com
-SENHA=A1234567a.
-```
+Existem contas de teste para os perfis **Administrador** e **Usuário**. As credenciais não são publicadas no repositório; solicite-as à equipe.
 
 ---
 
