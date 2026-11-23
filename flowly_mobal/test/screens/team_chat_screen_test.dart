@@ -74,7 +74,8 @@ void main() {
 
     // Enquanto espera o servidor, não há segundo envio.
     expect(find.byIcon(Icons.send_rounded), findsNothing);
-    await tester.tap(find.byType(IconButton));
+    // O composer também tem o botão de anexo: toca no de envio (desabilitado).
+    await tester.tap(find.byTooltip('Enviando...'));
     await tester.pump();
     expect(service.sentTexts, <String>['texto recusado']);
 
