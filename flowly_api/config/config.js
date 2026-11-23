@@ -57,6 +57,14 @@ const config = {
       maxAttempts: 5,
     },
   },
+  // Gestao de perfis admin/user (services/adminRoleService.js). A lista so identifica quem opera um processo
+  // local com acesso ao banco: nao e autenticacao. Sem operadores, as acoes de operador ficam desligadas.
+  adminRoles: {
+    operators: (process.env.ADMIN_ROLE_OPERATORS || '')
+      .split(',')
+      .map((operator) => operator.trim())
+      .filter(Boolean),
+  },
 };
 
 config.validateRuntime = () => {

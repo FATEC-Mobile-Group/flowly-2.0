@@ -31,6 +31,10 @@ const applyUpdate = (doc, update) => {
   Object.entries(update.$inc || {}).forEach(([key, amount]) => {
     doc[key] = (Number(doc[key]) || 0) + amount;
   });
+  Object.entries(update.$addToSet || {}).forEach(([key, value]) => {
+    const list = Array.isArray(doc[key]) ? doc[key] : [];
+    doc[key] = list.some((item) => same(item, value)) ? list : [...list, value];
+  });
 };
 
 const query = (value) => {
@@ -54,10 +58,15 @@ const createMemoryModel = (db, collection) => {
   };
 
   Object.assign(model, {
-    create: jest.fn(async (data) => {
-      const doc = { _id: newId(), ...data };
-      rows().push(doc);
-      return doc;
+    // Como o Mongoose: create(doc) devolve o documento; create([docs], { session }) devolve a lista.
+    create: jest.fn(async (data, options) => {
+      model.track(options);
+      const insert = (item) => {
+        const doc = { _id: newId(), ...item };
+        rows().push(doc);
+        return doc;
+      };
+      return Array.isArray(data) ? data.map(insert) : insert(data);
     }),
     findOne: jest.fn((filter) => query(rows().find((doc) => matches(doc, filter)) || null)),
     findById: jest.fn((id) => query(rows().find((doc) => same(doc._id, id)) || null)),

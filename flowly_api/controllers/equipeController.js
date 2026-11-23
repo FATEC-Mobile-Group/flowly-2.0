@@ -270,7 +270,7 @@ exports.editarEquipe = async (req, res) => {
 
     await garantirCriadorComoMembro(req.user.id);
 
-    const equipeAtual = await Equipe.findOne({ _id: req.params.id, membros: req.user.id }).select('createdBy');
+    const equipeAtual = await Equipe.findOne({ _id: req.params.id, membros: req.user.id }).select('createdBy membros');
     if (!equipeAtual) {
       return res.status(404).json({ erro: 'Equipe não encontrada' });
     }
@@ -278,23 +278,49 @@ exports.editarEquipe = async (req, res) => {
     const dadosAtualizacao = { nome: formatarNomeEquipe(nome) };
 
     if (atualizarMembros) {
+      const criadorId = String(equipeAtual.createdBy || req.user.id);
+      const membrosAtuais = new Set((equipeAtual.membros || []).map(String));
       const membrosUnicos = [...new Set(membros.map((id) => id.trim()))];
-      const membrosSemCriador = membrosUnicos.filter((id) => String(id) !== String(equipeAtual.createdBy || req.user.id));
-      const usuarios = await User.find({ _id: { $in: membrosSemCriador }, tipo: 'user' }).select('_id');
-      if (usuarios.length !== membrosSemCriador.length) {
+      const membrosSemCriador = membrosUnicos.filter((id) => String(id) !== criadorId);
+
+      // Integrante novo segue a regra de sempre: so usuario comum. Nenhum admin entra por aqui.
+      const novos = membrosSemCriador.filter((id) => !membrosAtuais.has(String(id)));
+      // Quem ja era membro continua, mesmo promovido a admin depois (services/adminRoleService.js):
+      // basta a conta ainda existir. Assim editar o nome ou a lista nao derruba vinculos legitimos.
+      const mantidos = membrosSemCriador.filter((id) => membrosAtuais.has(String(id)));
+
+      const [novosValidos, mantidosValidos] = await Promise.all([
+        novos.length ? User.find({ _id: { $in: novos }, tipo: 'user' }).select('_id') : [],
+        mantidos.length ? User.find({ _id: { $in: mantidos }, tipo: { $in: ['user', 'admin'] } }).select('_id') : [],
+      ]);
+      if (novosValidos.length !== novos.length || mantidosValidos.length !== mantidos.length) {
         return res.status(400).json({ erro: 'Alguns membros não são usuarios válidos' });
       }
 
-      dadosAtualizacao.membros = [...new Set([...membrosSemCriador, String(equipeAtual.createdBy || req.user.id)])];
+      dadosAtualizacao.membros = [...new Set([...membrosSemCriador, criadorId])];
     }
 
-    const equipeAtualizada = await Equipe.findByIdAndUpdate(
-      req.params.id,
-      dadosAtualizacao,
-      { new: true }
-    ).populate('membros', 'nome email fotoPerfil');
+    // Com lista de membros: grava so se a lista ainda for exatamente a que foi lida e validada acima.
+    // Outra edicao no meio do caminho (ex.: retirou um admin) faz esta falhar com 409, em vez de
+    // sobrescrever a outra e reintroduzir quem saiu. So o nome continua sem condicao, como antes.
+    const equipeAtualizada = atualizarMembros
+      ? await Equipe.findOneAndUpdate(
+        { _id: req.params.id, membros: Array.from(equipeAtual.membros || []) },
+        dadosAtualizacao,
+        { new: true }
+      ).populate('membros', 'nome email fotoPerfil')
+      : await Equipe.findByIdAndUpdate(
+        req.params.id,
+        dadosAtualizacao,
+        { new: true }
+      ).populate('membros', 'nome email fotoPerfil');
 
     if (!equipeAtualizada) {
+      if (atualizarMembros && await Equipe.exists({ _id: req.params.id, membros: req.user.id })) {
+        return res.status(409).json({
+          erro: 'A lista de membros foi alterada por outra edição. Recarregue a equipe e tente novamente.',
+        });
+      }
       return res.status(404).json({ erro: 'Equipe não encontrada' });
     }
 
