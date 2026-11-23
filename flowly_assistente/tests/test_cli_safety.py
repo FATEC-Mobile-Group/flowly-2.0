@@ -415,5 +415,18 @@ class ConfirmationAnswerTests(CliTestCase):
                 self.assertEqual(cli.api.calls, [])
 
 
+class TaskPeriodQueryTests(CliTestCase):
+    def test_period_queries_only_read_my_tasks_even_with_writes_on(self):
+        for writes in (None, "true"):
+            with self.subTest(writes=writes):
+                # O CLI confirma cada comando (erro de transcricao), inclusive leituras.
+                cli = run_cli("user", ["tarefas atrasadas", "o que tenho para hoje?"], answers=["sim", "sim"], writes=writes)
+                self.assertEqual(cli.api.calls, [("my_tasks", ()), ("my_tasks", ())])
+                self.assertEqual(cli.api.writes, [])
+                # A tarefa ficticia nao tem prazo: nao e atrasada nem de hoje (nada inventado).
+                self.assertIn("Você não tem tarefas atrasadas.", cli.said)
+                self.assertIn("Você não tem tarefas previstas para hoje.", cli.said)
+
+
 if __name__ == "__main__":
     unittest.main()

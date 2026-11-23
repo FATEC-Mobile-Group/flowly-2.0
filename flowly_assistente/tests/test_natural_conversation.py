@@ -78,12 +78,14 @@ class ListingParaphraseTests(unittest.TestCase):
     def test_direct_requests_for_own_tasks(self):
         parser = CommandParser(threshold=78)
         for phrase in (MSG_3, "quais tarefas tenho?", "Quais tarefas eu tenho?", "mostre minhas tarefas",
-                       "me mostra as tarefas que tenho", "que tarefas tenho hoje?", "liste minhas tarefas",
+                       "me mostra as tarefas que tenho", "liste minhas tarefas",
                        "consegue listar minhas tarefas?", "quais são as minhas tarefas", "exiba as tarefas que tenho"):
             with self.subTest(phrase=phrase):
                 match = parser.match(phrase)
                 self.assertIsNotNone(match)
                 self.assertEqual(match.command.key, "my_tasks")
+        # Com "hoje", a consulta passou a ser a das tarefas de hoje (somente leitura, ver test_task_queries.py).
+        self.assertEqual(parser.match("que tarefas tenho hoje?").command.key, "tasks_today")
 
     def test_help_questions_negations_and_statements_are_not_listings(self):
         parser = CommandParser(threshold=78)

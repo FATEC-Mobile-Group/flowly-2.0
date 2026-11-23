@@ -18,6 +18,7 @@ from flowly_assistant.commands import (
 )
 from flowly_assistant.settings import Settings, get_settings
 from flowly_assistant.speech_service import SpeechService
+from flowly_assistant.task_queries import TASK_QUERY_KEYS, build_reply, run_query
 from flowly_assistant.tts_service import TTSService
 
 
@@ -543,6 +544,9 @@ class FlowlyAssistant:
 
         if key == "my_tasks":
             return self.api.my_tasks()
+        if key in TASK_QUERY_KEYS:
+            # Somente leitura: tarefas do proprio usuario filtradas pelo periodo (como no assistente web).
+            return run_query(TASK_QUERY_KEYS[key], self.api.my_tasks())
         if key == "backlog":
             return self.api.backlog()
         if key == "assign_to_me":
@@ -561,6 +565,10 @@ class FlowlyAssistant:
         raise RuntimeError(f"Comando não implementado: {key}")
 
     def _respond_success(self, key: str, result: Any) -> None:
+        if key in TASK_QUERY_KEYS and isinstance(result, dict) and result.get("type"):
+            self._say(build_reply(result)[1])
+            return
+
         if key in {"my_tasks", "backlog", "list_teams", "my_teams", "list_users"}:
             n = len(result) if isinstance(result, list) else 0
             self._say(f"Ok. Encontrei {n} itens.")

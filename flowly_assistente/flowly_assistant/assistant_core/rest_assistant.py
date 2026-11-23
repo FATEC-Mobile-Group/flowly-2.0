@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from flowly_assistant.api_client import APIError, APIResponse, FlowlyAPIClient
 from flowly_assistant.api_config import configured_api_base_url
+from flowly_assistant.task_queries import TASK_QUERY_KEYS, build_reply, run_query
 from flowly_assistant.command_parser import (
     STRICT_PARAM_WORDS,
     CommandParser,
@@ -63,6 +64,9 @@ def tts_payload(text: str, *, enabled: bool = True, language: str = "pt-BR") -> 
 
 
 def reply_text(command_key: str, result: Any) -> str:
+    if command_key in TASK_QUERY_KEYS and isinstance(result, dict) and result.get("type"):
+        return build_reply(result)[0]
+
     if command_key in {"my_tasks", "backlog", "list_teams", "my_teams", "list_users"}:
         n = len(result) if isinstance(result, list) else 0
         return f"Ok. Encontrei {n} itens."
@@ -502,6 +506,9 @@ class RestAssistant:
             return self.api.add_subtask(params["task_id"], params["descricao"])
         if key == "my_tasks":
             return self.api.my_tasks()
+        if key in TASK_QUERY_KEYS:
+            # Somente leitura: as tarefas do proprio usuario (a API autoriza), filtradas aqui pelo periodo.
+            return run_query(TASK_QUERY_KEYS[key], self.api.my_tasks())
         if key == "backlog":
             return self.api.backlog()
         if key == "assign_to_me":
