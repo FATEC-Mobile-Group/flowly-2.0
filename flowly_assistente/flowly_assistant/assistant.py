@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import re
 import time
+import unicodedata
 from typing import Any, Dict, Optional
 
 from difflib import SequenceMatcher
 
 from flowly_assistant.api_client import APIError, FlowlyAPIClient
-from flowly_assistant.command_parser import CommandParser, Match
+from flowly_assistant.command_parser import CommandParser, Match, is_write_command
+from flowly_assistant.commands import (
+    DISABLED_COMMAND_REPLY,
+    DISABLED_COMMANDS,
+    WRITES_DISABLED_REPLY,
+    Command,
+    assistant_writes_enabled,
+)
 from flowly_assistant.settings import Settings, get_settings
 from flowly_assistant.speech_service import SpeechService
 from flowly_assistant.tts_service import TTSService
@@ -16,8 +24,27 @@ from flowly_assistant.tts_service import TTSService
 OBJ_ID_RE = re.compile(r"\b[a-fA-F0-9]{24}\b")
 
 
-YES = {"sim", "confirmo", "isso", "pode", "correto", "ok"}
-NO = {"não", "nao", "negativo", "cancela", "cancelar"}
+# Confirmacao explicita: a resposta INTEIRA, normalizada (minusculas, sem acento e sem pontuacao), precisa ser
+# exatamente uma destas. Nada de prefixo: "sei la", "so um momento", "sera" ou "simmm" nao autorizam nada.
+YES = frozenset({"sim", "confirmo", "sim confirmo"})
+# Negativas e cancelamentos: a resposta inteira ou a primeira palavra. Cancelar e sempre o lado seguro.
+NO = frozenset({"nao", "n", "negativo", "cancela", "cancelar", "cancele"})
+
+
+def normalize_answer(text: str) -> str:
+    text = unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode("ascii")
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower()).split())
+
+
+def classify_answer(text: str) -> Optional[bool]:
+    """True so para confirmacao explicita; False para negativa/cancelamento; None quando nao da para saber."""
+    answer = normalize_answer(text)
+    if answer in YES:
+        return True
+    words = answer.split()
+    if words and (answer in NO or words[0] in NO):
+        return False
+    return None
 
 
 class FlowlyAssistant:
@@ -64,6 +91,13 @@ class FlowlyAssistant:
             if match.command.key == "exit":
                 self._say("Encerrando. Até mais!")
                 return
+
+            # Mesmas travas do assistente web, antes de perguntar parametros, resolver nomes na API ou confirmar:
+            # comando desativado (delete_task) nunca executa; escrita so com FLOWLY_ASSISTANT_WRITES_ENABLED ligada.
+            blocked = self._blocked_reply(match.command)
+            if blocked:
+                self._say(blocked)
+                continue
 
             # hierarchy check (antes de chamar API)
             if not self._has_permission(match.command.role_required):
@@ -122,6 +156,15 @@ class FlowlyAssistant:
             # se não der, seguimos sem bloquear; a checagem de permissão fica conservadora
             pass
 
+    @staticmethod
+    def _blocked_reply(command: Command) -> Optional[str]:
+        """Motivo para recusar o comando sem tocar em nada, ou None se ele pode seguir."""
+        if command.key in DISABLED_COMMANDS:
+            return DISABLED_COMMAND_REPLY
+        if is_write_command(command) and not assistant_writes_enabled():
+            return WRITES_DISABLED_REPLY
+        return None
+
     def _has_permission(self, required: str) -> bool:
         if required == "any":
             return True
@@ -171,13 +214,15 @@ class FlowlyAssistant:
             except Exception:
                 res = input("\nConfirma? (sim/nao): ").strip().lower()
 
-            if res in YES or res.startswith("s"):
+            decision = classify_answer(res)
+            if decision is True:
                 return True
-            if res in NO or res.startswith("n"):
+            if decision is False:
                 return False
 
             self._ask("Não entendi. Responda sim ou não.")
 
+        # Sem resposta clara nas tentativas: nada e executado.
         return False
 
     def _confirmation_text(self, match: Match, params: Dict[str, str]) -> str:
@@ -466,6 +511,10 @@ class FlowlyAssistant:
 
     def _execute(self, match: Match, params: Dict[str, str]) -> Any:
         key = match.command.key
+        # Segunda barreira: mesmo chamado por outro caminho, comando bloqueado nao chega a API.
+        blocked = self._blocked_reply(match.command)
+        if blocked:
+            raise APIError(blocked)
 
         if key == "me":
             return self.api.me()
@@ -507,8 +556,7 @@ class FlowlyAssistant:
             return self.api.create_task(descricao=params["descricao"], equipe=params["equipe"])
         if key == "list_tasks":
             return self.api.list_tasks()
-        if key == "delete_task":
-            return self.api.delete_task(params["task_id"])
+        # delete_task nao tem execucao aqui: e bloqueado acima (DISABLED_COMMANDS), como no assistente web.
 
         raise RuntimeError(f"Comando não implementado: {key}")
 
