@@ -7,6 +7,7 @@ const logActivity = require('../utils/activityLogger');
 const { notifyUsers, persistNotifications, emitNotifications } = require('../utils/notificationService');
 const bucket = require('../services/storage');
 const { getSignedUrl, getObjectPath } = require('../services/storage');
+const { montarContentDisposition } = require('../utils/contentDisposition');
 const { createIdempotencyService, IdempotentRequestError } = require('../services/idempotencyService');
 const {
   executarTransicao,
@@ -1529,15 +1530,6 @@ const carregarAnexoAcessivel = async (req) => {
   if (!anexo) return { status: 404, body: ANEXO_NAO_ENCONTRADO };
 
   return { tarefa, filtro, anexo };
-};
-
-// Content-Disposition com o nome original: fallback ASCII sem aspas/controle e filename* em UTF-8 (RFC 5987).
-const montarContentDisposition = (nome) => {
-  const original = String(nome || 'arquivo');
-  const fallback = original.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_').trim() || 'arquivo';
-  const utf8 = encodeURIComponent(original)
-    .replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
-  return `attachment; filename="${fallback}"; filename*=UTF-8''${utf8}`;
 };
 
 // ALL: baixar anexo da tarefa, com o nome original.
