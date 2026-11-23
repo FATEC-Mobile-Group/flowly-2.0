@@ -1,10 +1,27 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FaPaperclip } from 'react-icons/fa';
 import createSocketConnection from '../../config/socketClient';
 import apiClient, { getFullApiUrl } from '../../config/apiClient';
 import Sidebar from '../../components/layout/Sidebar';
 import { authUtils } from '../../config/authUtils';
 import { API_ENDPOINTS } from '../../config/config';
 import { CHAT_SEND_TITLES, sendChatMessage } from '../../utils/chatSend';
+import {
+  CHAT_ATTACHMENT_ACCEPT,
+  IMAGE_TYPES,
+  buildAttachmentForm,
+  describeChatUploadError,
+  isAttachmentMessage,
+  mergeMessages,
+  newClientMessageId,
+  uploadChatAttachment,
+  validateChatFile,
+} from '../../utils/chatAttachments';
+import {
+  AttachmentContent,
+  AttachmentLightbox,
+  ComposerAttachmentPreview,
+} from '../../components/chat/ChatAttachment';
 import '../../styles/pages/common/ChatsPage.css';
 
 const formatMessageTime = (dateStr) => {
@@ -18,6 +35,8 @@ const formatMessageTime = (dateStr) => {
   return `${day}/${month}/${year} ${hours}:${minutes}`;
 };
 
+const WARNING_NOTICES = new Set(['uncertain', 'warning']);
+
 const ChatsPage = () => {
   const [equipes, setEquipes] = useState([]);
   const [selectedEquipe, setSelectedEquipe] = useState(null);
@@ -28,11 +47,28 @@ const ChatsPage = () => {
   const [erro, setErro] = useState('');
   const [sendNotice, setSendNotice] = useState(null);
   const [sending, setSending] = useState(false);
+  // Anexo escolhido e ainda nao enviado: { file, localUrl } (localUrl so para imagem, gerada do arquivo local).
+  const [draft, setDraft] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(null);
+  const [lightbox, setLightbox] = useState(null);
+  const [liveStatus, setLiveStatus] = useState('');
 
   const socketRef = useRef(null);
   const sendingRef = useRef(false);
   const endRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const draftRef = useRef(null);
+  const abortRef = useRef(null);
+  const messagesRef = useRef([]);
+  const selectedEquipeRef = useRef(null);
+  // Ultima tentativa do anexo: repetir com o mesmo arquivo, legenda e equipe reaproveita o clientMessageId.
+  const lastAttemptRef = useRef(null);
   const userId = authUtils.getUserId();
+
+  messagesRef.current = messages;
+  selectedEquipeRef.current = selectedEquipe;
+  draftRef.current = draft;
 
   const getInitials = (name = 'Usuario') =>
     name
@@ -89,11 +125,17 @@ const ChatsPage = () => {
       return;
     }
 
+    // Outra equipe: o anexo escolhido continua, mas como um envio novo (outro clientMessageId).
+    lastAttemptRef.current = null;
+    setLightbox(null);
+    setMessages([]);
+
     const loadHistory = async () => {
       setLoadingMensagens(true);
       try {
         const res = await apiClient.get(`/equipes/${selectedEquipe}/messages`);
-        setMessages(res.data || []);
+        // Mescla com o que ja chegou pelo socket enquanto o historico carregava, sem duplicar.
+        setMessages((prev) => mergeMessages(res.data || [], prev));
       } catch (error) {
         setErro('Erro ao carregar mensagens do chat.');
       } finally {
@@ -101,17 +143,36 @@ const ChatsPage = () => {
       }
     };
 
+    // Reconexao: o que chegou enquanto o socket estava fora vem pelo historico (?after=), sem duplicar.
+    const syncAfterReconnect = async (equipeId) => {
+      const last = [...messagesRef.current].reverse().find((message) => message?.createdAt);
+      const after = last ? new Date(last.createdAt) : null;
+      try {
+        const res = await apiClient.get(`/equipes/${equipeId}/messages`, {
+          params: after && !Number.isNaN(after.getTime()) ? { after: after.toISOString() } : undefined,
+        });
+        if (selectedEquipeRef.current === equipeId) {
+          setMessages((prev) => mergeMessages(prev, res.data || []));
+        }
+      } catch (_error) {
+        // Sem sincronizacao agora: a proxima reconexao ou a troca de equipe recarrega o historico.
+      }
+    };
+
     socketRef.current?.disconnect();
 
     const socket = createSocketConnection();
     socketRef.current = socket;
+    let connectedBefore = false;
 
     socket.on('connect', () => {
       socket.emit('join_equipe', selectedEquipe);
+      if (connectedBefore) syncAfterReconnect(selectedEquipe);
+      connectedBefore = true;
     });
 
     socket.on('receive_message', (msg) => {
-      setMessages((prev) => [...prev, msg]);
+      setMessages((prev) => mergeMessages(prev, msg));
     });
 
     loadHistory();
@@ -125,11 +186,101 @@ const ChatsPage = () => {
     scrollToBottom();
   }, [messages]);
 
+  // Ao sair da pagina: cancela o envio em andamento e libera a miniatura local.
+  useEffect(() => () => {
+    abortRef.current?.abort();
+    if (draftRef.current?.localUrl) URL.revokeObjectURL(draftRef.current.localUrl);
+  }, []);
+
+  const replaceDraft = useCallback((next) => {
+    setDraft((current) => {
+      if (current?.localUrl) URL.revokeObjectURL(current.localUrl);
+      return next;
+    });
+    lastAttemptRef.current = null;
+  }, []);
+
+  const openFilePicker = () => {
+    if (!selectedEquipe || uploading) return;
+    fileInputRef.current?.click();
+  };
+
+  const onFileSelected = (event) => {
+    const file = event.target.files?.[0];
+    // Permite escolher o mesmo arquivo de novo depois de remove-lo.
+    event.target.value = '';
+    if (!file) return; // selecao cancelada: nada muda (texto e anexo anterior ficam)
+    const problema = validateChatFile(file);
+    if (problema) {
+      setSendNotice({ status: 'error', title: problema.title, message: problema.message });
+      return;
+    }
+    setSendNotice(null);
+    replaceDraft({ file, localUrl: IMAGE_TYPES.has(file.type) ? URL.createObjectURL(file) : null });
+  };
+
+  const removeDraft = () => replaceDraft(null);
+
+  const cancelUpload = () => abortRef.current?.abort();
+
+  // Envio do anexo: um clientMessageId por envio; repetir o mesmo (falha, cancelamento) reaproveita o id.
+  const sendAttachment = async () => {
+    const equipeId = selectedEquipe;
+    const { file } = draft;
+    const legenda = novaMensagem.trim();
+    const last = lastAttemptRef.current;
+    const clientMessageId = last && last.file === file && last.legenda === legenda && last.equipeId === equipeId
+      ? last.clientMessageId
+      : newClientMessageId();
+    lastAttemptRef.current = { clientMessageId, legenda, file, equipeId };
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    sendingRef.current = true;
+    setUploading(true);
+    setProgress(0);
+    setSendNotice(null);
+    setLiveStatus(`Enviando ${file.name}.`);
+    try {
+      const res = await uploadChatAttachment({
+        equipeId,
+        form: buildAttachmentForm({ file, clientMessageId, legenda }),
+        signal: controller.signal,
+        onProgress: setProgress,
+      });
+      const message = res.data?.message;
+      if (message && selectedEquipeRef.current === equipeId) {
+        setMessages((prev) => mergeMessages(prev, message));
+      }
+      replaceDraft(null);
+      setNovaMensagem('');
+      setLiveStatus(`${file.name} enviado.`);
+    } catch (error) {
+      const aviso = describeChatUploadError(error);
+      // 409: o id ja foi usado com outro conteudo; o proximo envio usa um id novo.
+      if (error?.response?.status === 409) lastAttemptRef.current = null;
+      setSendNotice({ status: aviso.kind, title: aviso.title, message: aviso.message });
+      setLiveStatus(aviso.title);
+    } finally {
+      abortRef.current = null;
+      sendingRef.current = false;
+      setUploading(false);
+      setProgress(null);
+    }
+  };
+
   // O texto so sai do campo quando o servidor confirma a gravacao; recusa ou falha mantem o rascunho.
   const handleSendMessage = async (event) => {
     event.preventDefault();
+    if (!selectedEquipe || sendingRef.current) {
+      return;
+    }
+    if (draft) {
+      await sendAttachment();
+      return;
+    }
     const texto = novaMensagem.trim();
-    if (!texto || !selectedEquipe || sendingRef.current) {
+    if (!texto) {
       return;
     }
 
@@ -155,6 +306,14 @@ const ChatsPage = () => {
     return () => clearTimeout(timeout);
   }, [sendNotice]);
 
+  const showAttachmentNotice = useCallback((aviso) => {
+    setSendNotice({ status: aviso.kind, title: aviso.title, message: aviso.message });
+  }, []);
+
+  const closeLightbox = useCallback(() => setLightbox(null), []);
+
+  const busy = sending || uploading;
+
   return (
     <div className="chats-page">
       <Sidebar />
@@ -162,14 +321,16 @@ const ChatsPage = () => {
       <main className="chats-content">
         {sendNotice && (
           <div
-            className={`chat-blocked-popup page ${sendNotice.status === 'uncertain' ? 'warning' : ''}`}
+            className={`chat-blocked-popup page ${WARNING_NOTICES.has(sendNotice.status) ? 'warning' : ''}`}
             role="alert"
           >
-            <strong>{CHAT_SEND_TITLES[sendNotice.status] || CHAT_SEND_TITLES.error}</strong>
+            <strong>{sendNotice.title || CHAT_SEND_TITLES[sendNotice.status] || CHAT_SEND_TITLES.error}</strong>
             <span>{sendNotice.message}</span>
             <button type="button" onClick={() => setSendNotice(null)} aria-label="Fechar aviso">x</button>
           </div>
         )}
+
+        <div className="chats-sr-only" aria-live="polite">{liveStatus}</div>
 
         <div className="chats-header">
           <h2>Chats</h2>
@@ -223,7 +384,13 @@ const ChatsPage = () => {
                       {!isMine && renderAvatar(msg.user)}
                       <div className="chat-message-stack">
                         {!isMine && <span className="chat-author">{userName}</span>}
-                        <div className="chat-bubble">{msg.texto}</div>
+                        {isAttachmentMessage(msg) ? (
+                          <div className="chat-bubble chat-bubble-attachment">
+                            <AttachmentContent message={msg} onOpenImage={setLightbox} onError={showAttachmentNotice} />
+                          </div>
+                        ) : (
+                          <div className="chat-bubble">{msg.texto}</div>
+                        )}
                         <span className="chat-message-time">
                           {formatMessageTime(msg.createdAt)}
                         </span>
@@ -236,23 +403,58 @@ const ChatsPage = () => {
               <div ref={endRef} />
             </div>
 
-            <form className="chats-input-row" onSubmit={handleSendMessage}>
-              <input
-                type="text"
-                value={novaMensagem}
-                onChange={(event) => setNovaMensagem(event.target.value)}
-                placeholder="Digite sua mensagem..."
-                disabled={!selectedEquipe}
-                readOnly={sending}
-                maxLength={4000}
-              />
-              <button type="submit" disabled={!selectedEquipe || !novaMensagem.trim() || sending}>
-                {sending ? 'Enviando...' : 'Enviar'}
-              </button>
-            </form>
+            <div className="chats-composer">
+              {draft && (
+                <ComposerAttachmentPreview
+                  draft={draft}
+                  progress={progress}
+                  uploading={uploading}
+                  onRemove={removeDraft}
+                  onReplace={openFilePicker}
+                  onCancel={cancelUpload}
+                />
+              )}
+              <form className="chats-input-row" onSubmit={handleSendMessage}>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="chats-file-input"
+                  accept={CHAT_ATTACHMENT_ACCEPT}
+                  onChange={onFileSelected}
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  data-testid="chat-file-input"
+                />
+                <button
+                  type="button"
+                  className="chats-attach-button"
+                  onClick={openFilePicker}
+                  disabled={!selectedEquipe || uploading}
+                  aria-label="Anexar arquivo (PNG, JPG ou PDF, até 10 MB)"
+                  title="Anexar arquivo"
+                >
+                  <FaPaperclip aria-hidden="true" />
+                </button>
+                <input
+                  type="text"
+                  value={novaMensagem}
+                  onChange={(event) => setNovaMensagem(event.target.value)}
+                  placeholder={draft ? 'Adicione uma legenda (opcional)...' : 'Digite sua mensagem...'}
+                  aria-label={draft ? 'Legenda do arquivo' : 'Mensagem'}
+                  disabled={!selectedEquipe}
+                  readOnly={busy}
+                  maxLength={4000}
+                />
+                <button type="submit" disabled={!selectedEquipe || (!draft && !novaMensagem.trim()) || busy}>
+                  {busy ? 'Enviando...' : 'Enviar'}
+                </button>
+              </form>
+            </div>
           </section>
         </div>
       </main>
+
+      {lightbox && <AttachmentLightbox image={lightbox} onClose={closeLightbox} />}
     </div>
   );
 };
