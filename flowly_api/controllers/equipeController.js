@@ -4,6 +4,31 @@ const Message = require('../models/Message');
 const mongoose = require('mongoose');
 const { getSignedUrl } = require('../services/storage');
 const { createIdempotencyService, IdempotentRequestError } = require('../services/idempotencyService');
+const { toPublicMessage } = require('../services/chatAttachmentService');
+
+const MAX_LIMITE_MENSAGENS = 200;
+const DATA_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+
+// Paginacao opcional do historico. Valores invalidos respondem 400 em vez de virar consulta inesperada.
+const lerPaginacaoMensagens = (query = {}) => {
+  const pagina = {};
+  if (query.limit !== undefined) {
+    const limit = Number(query.limit);
+    if (typeof query.limit !== 'string' || !/^\d+$/.test(query.limit) || limit < 1 || limit > MAX_LIMITE_MENSAGENS) {
+      return { erro: `limit deve ser um inteiro entre 1 e ${MAX_LIMITE_MENSAGENS}.` };
+    }
+    pagina.limit = limit;
+  }
+  for (const campo of ['before', 'after']) {
+    if (query[campo] === undefined) continue;
+    const data = typeof query[campo] === 'string' && DATA_ISO.test(query[campo]) ? new Date(query[campo]) : null;
+    if (!data || Number.isNaN(data.getTime())) {
+      return { erro: `${campo} deve ser uma data ISO 8601 em UTC (ex.: 2026-11-23T12:00:00.000Z).` };
+    }
+    pagina[campo] = data;
+  }
+  return pagina;
+};
 
 const assinarFotoUsuarioMensagem = async (message) => {
   const messageObject = typeof message.toObject === 'function' ? message.toObject() : message;
@@ -362,11 +387,30 @@ exports.getMessages = async (req, res) => {
     const equipe = await Equipe.findOne({ _id: req.params.id, membros: req.user.id }).select('_id');
     if (!equipe) return res.status(404).json({ erro: 'Equipe nÃ£o encontrada' });
 
-    const messages = await Message.find({ equipe: req.params.id })
+    // Paginacao opcional (?limit, ?before, ?after em ISO 8601). Sem parametros: historico completo, como antes.
+    const pagina = lerPaginacaoMensagens(req.query);
+    if (pagina.erro) return res.status(400).json({ erro: pagina.erro });
+
+    const filtro = { equipe: req.params.id };
+    if (pagina.before || pagina.after) {
+      filtro.createdAt = {
+        ...(pagina.before ? { $lt: pagina.before } : {}),
+        ...(pagina.after ? { $gt: pagina.after } : {}),
+      };
+    }
+
+    // Com limite e sem `after`: as N mais recentes (busca decrescente e devolve em ordem cronologica).
+    const maisRecentes = Boolean(pagina.limit) && !pagina.after;
+    let consulta = Message.find(filtro)
       .populate('user', 'nome fotoPerfil')
-      .sort({ createdAt: 1 });
-      
-    res.json(await Promise.all(messages.map(assinarFotoUsuarioMensagem)));
+      .sort({ createdAt: maisRecentes ? -1 : 1 });
+    if (pagina.limit) consulta = consulta.limit(pagina.limit);
+    const messages = await consulta;
+    const ordenadas = maisRecentes ? [...messages].reverse() : messages;
+
+    // Texto: igual ao de antes. Anexo: visao publica, sem caminho do bucket nem URL assinada.
+    const serializadas = await Promise.all(ordenadas.map(assinarFotoUsuarioMensagem));
+    res.json(serializadas.map(toPublicMessage));
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao buscar histórico de mensagens' });
   }
