@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import apiClient from '../../config/apiClient';
 import { API_ENDPOINTS } from '../../config/config';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
@@ -13,11 +14,26 @@ const TarefasUser = () => {
   const [equipeSelecionada, setEquipeSelecionada] = useState('');
   const [mensagem, setMensagem] = useState('');
   const [tarefaInspecionada, setTarefaInspecionada] = useState(null);
+  const location = useLocation();
+  const navigate = useNavigate();
+  // "Ver tarefa" do assistente: abre o detalhe so se a tarefa estiver na lista do proprio usuario (vinda da API).
+  const tarefaPedida = location.state?.abrirTarefaId;
 
   useEffect(() => {
     carregarTarefas();
     carregarEquipes();
   }, []);
+
+  useEffect(() => {
+    if (!tarefaPedida || !Array.isArray(tarefas)) return;
+    const tarefa = tarefas.find((item) => item?._id === tarefaPedida);
+    if (!tarefa) return;
+    const equipeId = typeof tarefa.equipe === 'object' ? tarefa.equipe?._id : tarefa.equipe;
+    if (equipeId) setEquipeSelecionada(equipeId);
+    setTarefaInspecionada(tarefaPedida);
+    // Consome o pedido: voltar ou recarregar a pagina nao reabre o detalhe.
+    navigate(location.pathname, { replace: true, state: null });
+  }, [tarefaPedida, tarefas, navigate, location.pathname]);
 
   const carregarTarefas = async () => {
     try {

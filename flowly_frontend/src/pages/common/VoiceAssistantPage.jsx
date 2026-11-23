@@ -1,8 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FaCheck, FaPaperPlane, FaPowerOff, FaTimes, FaVolumeUp } from 'react-icons/fa';
 import Sidebar from '../../components/layout/Sidebar';
 import { API_ENDPOINTS } from '../../config/config';
 import { authUtils } from '../../config/authUtils';
+import AssistantQueryResults from '../../components/assistant/AssistantQueryResults';
+import { parseAssistantQuery } from '../../utils/assistantQuery';
 import '../../styles/pages/common/VoiceAssistantPage.css';
 
 const SpeechRecognition =
@@ -15,6 +17,11 @@ const initialMessages = [
     text: 'Assistente em standby. Toque no microfone e diga um comando.',
   },
 ];
+
+// Sugestoes do estado inicial (consultas somente leitura do perfil user); enviadas como um comando digitado.
+const SUGGESTIONS = ['Minhas tarefas de hoje', 'O que está atrasado?', 'Como está meu dia?'];
+// Distancia do fim do historico ate a qual uma mensagem nova acompanha a conversa automaticamente.
+const NEAR_BOTTOM_PX = 80;
 
 // Estados da conversa em que o assistente fez uma pergunta e espera a proxima fala.
 const AWAITING_CONVERSATION = new Set([
@@ -234,7 +241,10 @@ function VoiceAssistantPage() {
   const failuresRef = useRef(0);
   // Texto do campo e sua origem: 'typed' (digitado ou recuperado) ou 'voice' (transcricao da sessao em andamento).
   const draftRef = useRef({ text: '', source: 'typed' });
-  const messagesEndRef = useRef(null);
+  // Historico com rolagem propria: acompanha o fim so quando a pessoa ja esta perto dele.
+  const historyRef = useRef(null);
+  const stickToBottomRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
   // Uma conversa por montagem da pagina: atualizar ou reabrir gera outra, e uma confirmacao antiga nao vale nela.
   const conversationIdRef = useRef(`voice-${authUtils.getUserId() || 'guest'}-${Date.now()}`);
   // Confirmacao mostrada: { operationId, conversationId, summary, phase, expiresAt }. So em memoria e so como
@@ -437,7 +447,9 @@ function VoiceAssistantPage() {
 
       const payload = await response.json();
       const reply = payload.reply_text || payload.message || 'Resposta recebida.';
-      addMessage('assistant', reply, { error: !payload.ok });
+      // Metadados da consulta (opcional): so com resposta ok e formato valido; senao fica so o texto.
+      const query = payload.ok ? parseAssistantQuery(payload.query) : null;
+      addMessage('assistant', reply, { error: !payload.ok, ...(query ? { query } : {}) });
       // Resposta tardia (depois do standby ou de outra conversa) nao mexe na confirmacao mostrada.
       if (request.muted || request.conversationId !== conversationIdRef.current) return;
       applyConfirmation(payload);
@@ -708,9 +720,29 @@ function VoiceAssistantPage() {
     setRetryable(false);
   };
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  const scrollToLatest = useCallback(() => {
+    const history = historyRef.current;
+    if (history) history.scrollTop = history.scrollHeight;
+    stickToBottomRef.current = true;
+    setShowJump(false);
+  }, []);
+
+  const handleHistoryScroll = () => {
+    const history = historyRef.current;
+    if (!history) return;
+    const nearBottom = history.scrollHeight - history.scrollTop - history.clientHeight <= NEAR_BOTTOM_PX;
+    stickToBottomRef.current = nearBottom;
+    if (nearBottom) setShowJump(false);
+  };
+
+  // Mensagem nova: acompanha se a pessoa estava no fim (ou se ela mesma enviou); lendo o historico, so avisa.
+  // Antes da pintura e sem rolagem suave: a animacao gerava eventos de scroll no meio do caminho, que pareciam a
+  // pessoa subindo, e a resposta seguinte deixava de ser acompanhada.
+  useLayoutEffect(() => {
+    const last = messages[messages.length - 1];
+    if (stickToBottomRef.current || last?.role === 'user') scrollToLatest();
+    else setShowJump(true);
+  }, [messages, scrollToLatest]);
 
   useEffect(() => () => {
     enterStandby({ silent: true });
@@ -733,6 +765,12 @@ function VoiceAssistantPage() {
     const timer = setTimeout(expire, remaining);
     return () => clearTimeout(timer);
   }, [confirmation, setConfirmation]);
+
+  const sendSuggestion = (text) => {
+    // Mesmo caminho do comando digitado: descarta uma captura em andamento e envia o texto.
+    releaseSession(sessionRef.current, { abort: true });
+    sendUtterance(text);
+  };
 
   const answerConfirmation = (word) => {
     // Botao = a mesma mensagem explicita que a voz ou o texto mandariam, com o operationId mostrado.
@@ -769,12 +807,15 @@ function VoiceAssistantPage() {
     interactionHint = 'Respondendo por voz. Toque na estrela para interromper e falar de novo.';
   }
   const hintId = interactionHint ? 'voice-interaction-hint' : undefined;
+  // Sem conversa ainda: estrela em destaque e sugestoes; com conversa, o historico e o principal.
+  const hasConversation = messages.some((message) => message.id !== 'welcome');
+  const showSuggestions = !hasConversation && authUtils.getUserType() === 'user';
 
   return (
     <div className="admin-page voice-assistant-page">
       <Sidebar />
 
-      <main className="voice-assistant-shell">
+      <main className={`voice-assistant-shell ${hasConversation ? 'has-conversation' : 'is-empty'}`}>
         <section className="voice-assistant-header">
           <div>
             <p className="voice-assistant-kicker">Flowly Voice</p>
@@ -786,20 +827,60 @@ function VoiceAssistantPage() {
           </div>
         </section>
 
-        <section className="voice-chat-panel" aria-live="polite">
-          <div className="voice-chat-messages">
-            {messages.map((message) => (
-              <article
-                key={message.id}
-                className={`voice-message ${message.role} ${message.error ? 'error' : ''}`}
-              >
-                <span className="voice-message-author">
-                  {message.role === 'user' ? 'Você' : 'Assistente'}
-                </span>
-                <p>{message.text}</p>
-              </article>
-            ))}
-            <div ref={messagesEndRef} />
+        <section className="voice-chat-panel">
+          <div className="voice-chat-history">
+            <div
+              ref={historyRef}
+              className="voice-chat-messages"
+              role="log"
+              aria-live="polite"
+              aria-relevant="additions"
+              aria-label="Conversa com o assistente"
+              onScroll={handleHistoryScroll}
+            >
+              {messages.map((message) => (
+                <article
+                  key={message.id}
+                  className={`voice-message ${message.role} ${message.error ? 'error' : ''} ${message.query ? 'has-query' : ''}`}
+                >
+                  <span className="voice-message-author">
+                    {message.role === 'user' ? 'Você' : 'Assistente'}
+                  </span>
+                  {message.query ? (
+                    <AssistantQueryResults query={message.query} replyText={message.text} />
+                  ) : (
+                    <p className="voice-message-text">{message.text}</p>
+                  )}
+                </article>
+              ))}
+              {showSuggestions && (
+                <div className="voice-suggestions" role="group" aria-label="Sugestões de perguntas">
+                  {SUGGESTIONS.map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      onClick={() => sendSuggestion(suggestion)}
+                      disabled={processing}
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {processing && (
+                // O estado ja e anunciado pelo indicador do cabecalho; aqui so o retorno visual na conversa.
+                <div className="voice-typing" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+              )}
+            </div>
+            {showJump && (
+              <button type="button" className="voice-jump-latest" onClick={scrollToLatest}>
+                Ir para a mensagem mais recente
+              </button>
+            )}
           </div>
 
           {confirmation && (
