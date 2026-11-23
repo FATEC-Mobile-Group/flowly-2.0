@@ -400,7 +400,7 @@ class ReadContractAndPermissionTests(ReadResponseTestCase):
             ("token-user", "listar usuarios"),  # recusado pela API (somente admin)
             ("token-user", "buscar usuario pessoa"),
             ("token-user", "listar equipes"),  # recusado pelo assistente (comando de admin)
-            ("token-user", "listar tarefas"),
+            # "listar tarefas" do colaborador agora consulta as proprias tarefas (test_role_listing.py).
             ("token-admin", "minhas tarefas"),  # comando de colaborador
         ):
             with self.subTest(token=token, utterance=utterance):

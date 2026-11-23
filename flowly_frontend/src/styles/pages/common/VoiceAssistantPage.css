@@ -5,7 +5,10 @@
 
 /* Tres regioes: cabecalho compacto, conversa (ocupa o resto, com rolagem propria) e rodape fixo.
    A altura vem do viewport (dvh acompanha a barra do navegador no celular); nenhuma regiao tem altura fixa. */
+/* No app, .admin-page e display: flex (DashboardAdmin.css, carregado pelas rotas): sem flex: 1 o shell encolhia
+   ate a largura do conteudo e o estado inicial ficava na metade esquerda. */
 .voice-assistant-shell {
+  flex: 1 1 auto;
   margin-left: 260px;
   height: 100vh;
   height: 100dvh;
@@ -1006,6 +1009,17 @@
   flex: 1 1 260px;
   max-width: 560px;
   text-align: left;
+}
+
+/* Menu lateral recolhido (78 px), como nas outras telas. */
+.sidebar.collapsed ~ .voice-assistant-shell {
+  margin-left: 78px;
+}
+
+@media (max-width: 768px) {
+  .sidebar.collapsed ~ .voice-assistant-shell {
+    margin-left: 0;
+  }
 }
 
 /* O botao global de aparencia (fixo no canto superior direito) nao cobre o estado do assistente. */

@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 from difflib import SequenceMatcher
 
 from flowly_assistant.api_client import APIError, FlowlyAPIClient
-from flowly_assistant.command_parser import CommandParser, Match, is_write_command
+from flowly_assistant.command_parser import CommandParser, Match, is_write_command, resolve_for_role
 from flowly_assistant.commands import (
     DISABLED_COMMAND_REPLY,
     DISABLED_COMMANDS,
@@ -84,7 +84,8 @@ class FlowlyAssistant:
             if utterance is None:
                 continue
 
-            match = self.parser.match(utterance)
+            # Mesma regra do assistente web: "listar tarefas" de um colaborador sao as tarefas dele.
+            match = resolve_for_role(self.parser.match(utterance), self.user_type, self.parser.commands)
             if match is None:
                 self._say("Não consegui identificar o comando. Pode repetir?")
                 continue

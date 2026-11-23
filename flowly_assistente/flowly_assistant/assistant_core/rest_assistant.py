@@ -14,6 +14,7 @@ from flowly_assistant.command_parser import (
     CommandParser,
     Match,
     is_write_command,
+    resolve_for_role,
     strict_param_value,
 )
 from flowly_assistant.commands import (
@@ -126,7 +127,8 @@ class RestAssistant:
             return self._error("missing_utterance", "Diga um comando.", 400)
 
         user_type = self._detect_user_type()
-        match = self.parser.match(utterance)
+        # Perfil validado pela API: "listar tarefas" de um colaborador vira a consulta das proprias tarefas.
+        match = resolve_for_role(self.parser.match(utterance), user_type, self.parser.commands)
         if match is None:
             return self._error("unrecognized_command", "Não consegui identificar o comando. Pode repetir?", 400)
 
