@@ -1,16 +1,21 @@
 .voice-assistant-page {
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
+/* Tres regioes: cabecalho compacto, conversa (ocupa o resto, com rolagem propria) e rodape fixo.
+   A altura vem do viewport (dvh acompanha a barra do navegador no celular); nenhuma regiao tem altura fixa. */
 .voice-assistant-shell {
   margin-left: 260px;
   height: 100vh;
-  padding: 34px;
+  height: 100dvh;
+  padding: 22px 28px 18px;
   color: var(--text-primary);
   overflow: hidden;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  box-sizing: border-box;
 }
 
 .voice-assistant-header {
@@ -18,12 +23,12 @@
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  margin-bottom: 22px;
+  margin-bottom: 14px;
   flex-shrink: 0;
 }
 
 .voice-assistant-kicker {
-  margin: 0 0 6px;
+  margin: 0 0 2px;
   color: #45d6a3;
   font-size: 0.78rem;
   font-weight: 800;
@@ -33,7 +38,7 @@
 .voice-assistant-header h1 {
   margin: 0;
   color: var(--text-primary);
-  font-size: 2rem;
+  font-size: 1.6rem;
   font-weight: 800;
 }
 
@@ -81,25 +86,38 @@
   box-shadow: 0 0 0 6px rgba(56, 189, 248, 0.16);
 }
 
+/* Antes: height: calc(100vh - 130px) somado ao flex: 1 passava da altura real (cabecalho + padding ~150 px)
+   e o overflow: hidden do shell cortava o fim; a estrela reservava 190 px fixos e o historico virava uma faixa. */
 .voice-chat-panel {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
-  height: calc(100vh - 130px);
-  display: grid;
-  grid-template-rows: minmax(240px, 1fr) auto auto;
-  gap: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   overflow: hidden;
 }
 
+.voice-chat-history {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: var(--surface-bg);
+}
+
 .voice-chat-messages {
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
-  padding: 12px 4px;
+  padding: 18px 18px 28px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .voice-chat-messages::-webkit-scrollbar {
@@ -116,18 +134,30 @@
 }
 
 .voice-message {
-  width: min(680px, 88%);
-  padding: 14px 16px;
-  border-radius: 8px;
+  flex-shrink: 0;
+  align-self: flex-start;
+  max-width: min(760px, 82%);
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 12px 16px;
+  border-radius: 14px 14px 14px 4px;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
+  border-left: 3px solid rgba(168, 85, 247, 0.55);
   box-shadow: var(--glass-shadow);
 }
 
 .voice-message.user {
   align-self: flex-end;
+  border-radius: 14px 14px 4px 14px;
+  border-left-width: 1px;
   background: rgba(69, 214, 163, 0.12);
   border-color: rgba(69, 214, 163, 0.32);
+}
+
+/* Respostas com lista de tarefas usam a largura disponivel (sem ficar estreitas no desktop). */
+.voice-message.has-query {
+  width: min(760px, 82%);
 }
 
 .voice-message.error {
@@ -147,6 +177,8 @@
   margin: 0;
   color: var(--text-primary);
   line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .voice-orb-zone {
@@ -155,8 +187,8 @@
   gap: 10px;
   align-items: center;
   justify-content: center;
-  min-height: 190px;
   flex-shrink: 0;
+  padding: 6px 0;
   position: relative;
 }
 
@@ -446,8 +478,13 @@
     flex-direction: column;
   }
 
-  .voice-message {
-    width: 100%;
+  .voice-message,
+  .voice-message.has-query {
+    max-width: 94%;
+  }
+
+  .voice-message.has-query {
+    width: 94%;
   }
 
   .voice-command-form {
@@ -456,9 +493,11 @@
   }
 
   .voice-chat-panel {
-    height: calc(100vh - 174px);
-    gap: 18px;
-    grid-template-rows: minmax(160px, 1fr) auto auto;
+    gap: 10px;
+  }
+
+  .voice-chat-messages {
+    padding: 14px 12px 22px;
   }
 
   .voice-star-btn {
@@ -471,9 +510,6 @@
     height: 60px;
   }
 
-  .voice-orb-zone {
-    min-height: 150px;
-  }
 }
 
 /* Rainbow click ripple effect */
@@ -510,12 +546,8 @@
 }
 
 /* Confirmacao de escrita ligada a operacao mostrada (resumo da API + Confirmar/Cancelar). */
-.voice-chat-panel:has(.voice-confirmation) {
-  grid-template-rows: minmax(140px, 1fr) auto auto auto;
-  gap: 16px;
-}
-
 .voice-confirmation {
+  flex-shrink: 0;
   max-height: 40vh;
   overflow-y: auto;
   padding: 14px 16px;
@@ -660,7 +692,6 @@
 
 @media (max-height: 760px) {
   .voice-chat-panel:has(.voice-confirmation) {
-    grid-template-rows: minmax(56px, 1fr) auto auto auto;
     gap: 10px;
   }
 
@@ -677,5 +708,376 @@
   .voice-confirmation {
     padding: 10px 12px;
     gap: 6px;
+  }
+}
+
+/* ---------- Conversa: estado inicial, sugestoes, digitando, voltar ao fim ---------- */
+.voice-assistant-shell.is-empty .voice-chat-messages {
+  justify-content: center;
+  align-items: center;
+}
+
+.voice-assistant-shell.is-empty .voice-message {
+  align-self: center;
+  text-align: center;
+  border-left-width: 1px;
+  border-radius: 14px;
+}
+
+.voice-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.voice-suggestions button {
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(168, 85, 247, 0.45);
+  background: var(--glass-bg);
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.voice-suggestions button:hover:not(:disabled) {
+  border-color: rgba(168, 85, 247, 0.85);
+}
+
+.voice-suggestions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.voice-typing {
+  flex-shrink: 0;
+  align-self: flex-start;
+  display: inline-flex;
+  gap: 5px;
+  padding: 12px 16px;
+  border-radius: 14px 14px 14px 4px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+}
+
+.voice-typing span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  animation: voiceTyping 1.2s ease-in-out infinite;
+}
+
+.voice-typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.voice-typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes voiceTyping {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.voice-jump-latest {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: #2563eb;
+  color: #fff;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  box-shadow: var(--glass-shadow);
+  cursor: pointer;
+}
+
+/* ---------- Resultado das consultas de tarefas (campo query) ---------- */
+.voice-query {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.voice-query-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.voice-query-counts li {
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  background: var(--surface-bg);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.voice-query-counts li strong {
+  color: var(--text-primary);
+  font-size: 1rem;
+  margin-right: 4px;
+}
+
+.voice-query-counts li.alert {
+  border-color: rgba(255, 91, 91, 0.5);
+}
+
+.voice-query-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.voice-query-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  background: var(--surface-bg);
+}
+
+.voice-query-item.overdue {
+  border-left: 3px solid #ef4444;
+}
+
+.voice-query-index {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(168, 85, 247, 0.18);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.voice-query-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.voice-query-title {
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.voice-query-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.voice-query-chip {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.voice-query-chip.deadline.overdue {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.55);
+}
+
+[data-theme="light"] .voice-query-chip.deadline.overdue {
+  color: #b91c1c;
+}
+
+.voice-query-chip.status.em_andamento {
+  border-color: rgba(56, 189, 248, 0.55);
+}
+
+.voice-query-chip.urgency.alta {
+  border-color: rgba(251, 191, 36, 0.7);
+}
+
+.voice-query-open,
+.voice-query-all {
+  flex: 0 0 auto;
+  color: #60a5fa;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+
+[data-theme="light"] .voice-query-open,
+[data-theme="light"] .voice-query-all {
+  color: #1d4ed8;
+}
+
+.voice-query-open:hover,
+.voice-query-all:hover {
+  text-decoration: underline;
+}
+
+.voice-query-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.voice-query-more {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.voice-query-note,
+.voice-query-hint {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.voice-suggestions button:focus-visible,
+.voice-jump-latest:focus-visible,
+.voice-query-open:focus-visible,
+.voice-query-all:focus-visible,
+.voice-query-more:focus-visible,
+.voice-star-btn:focus-visible,
+.voice-command-form button:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+/* ---------- Com conversa: a estrela fica compacta ao lado das orientacoes ---------- */
+.voice-assistant-shell.has-conversation .voice-orb-zone {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 0;
+}
+
+.voice-assistant-shell.has-conversation .voice-star-btn {
+  width: 58px;
+  height: 58px;
+}
+
+.voice-assistant-shell.has-conversation .voice-star-svg {
+  width: 42px;
+  height: 42px;
+}
+
+.voice-assistant-shell.has-conversation .voice-interaction-hint {
+  flex: 1 1 260px;
+  max-width: 560px;
+  text-align: left;
+}
+
+/* O botao global de aparencia (fixo no canto superior direito) nao cobre o estado do assistente. */
+@media (min-width: 769px) {
+  .voice-assistant-header {
+    padding-right: 64px;
+  }
+}
+
+/* Sem conversa: a estrela continua em destaque abaixo das boas-vindas. */
+.voice-assistant-shell.is-empty .voice-star-btn {
+  width: 104px;
+  height: 104px;
+}
+
+@media (max-width: 768px) {
+  .voice-assistant-shell {
+    height: 100dvh;
+    padding: 76px 14px 14px;
+  }
+
+  .voice-assistant-header {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+
+  .voice-assistant-header h1 {
+    font-size: 1.3rem;
+  }
+
+  .voice-assistant-shell.is-empty .voice-star-btn {
+    width: 84px;
+    height: 84px;
+  }
+
+  .voice-assistant-shell.has-conversation .voice-star-btn {
+    width: 52px;
+    height: 52px;
+  }
+
+  .voice-query-item {
+    flex-wrap: wrap;
+  }
+
+  .voice-query-open {
+    margin-left: 34px;
+  }
+}
+
+@media (max-height: 640px) {
+  .voice-assistant-shell {
+    padding-top: 14px;
+  }
+
+  .voice-assistant-shell.is-empty .voice-star-btn {
+    width: 72px;
+    height: 72px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-typing span,
+  .voice-star-btn::before,
+  .voice-star-btn::after,
+  .rainbow-ripple.active {
+    animation: none;
+  }
+
+  .voice-star-btn,
+  .voice-star-svg,
+  .star-path-hover {
+    transition: none;
   }
 }
