@@ -41,6 +41,7 @@ from flowly_assistant.operations_client import FINGERPRINT, UUID_V4, OperationsC
 from flowly_assistant.queues.analytics_queue import AnalyticsQueue
 from flowly_assistant.storage.analytics_repository import AnalyticsRepository
 from flowly_assistant.conversation_client import ConversationStateClient
+from flowly_assistant.task_queries import TASK_QUERY_KEYS, build_reply, metadata, urgent_follow_up
 from flowly_assistant.operations_client import OPERATIONS_SECRET_ENV
 from flowly_assistant.storage.conversation_memory import (
     MEMORY_SUFFIX,
@@ -150,6 +151,15 @@ def command_in_answer(text: str, commands: list) -> Optional[Any]:
 
 # Respostas de consulta: reply_text (tela) traz a lista completa; tts.text (fala) resume.
 SELECTABLE_TASK_LIMIT = 10  # tarefas guardadas no estado da conversa para selecao
+# Acompanhamento sobre a lista mostrada ("e quais sao as mais urgentes?"): so leitura da lista ja guardada.
+URGENCY_FOLLOW_UP_WORDS = frozenset({
+    "urgente", "urgentes", "urgencia", "prioritaria", "prioritarias", "prioritario", "prioritarios",
+    "importante", "importantes", "prioridade",
+})
+TASK_QUERY_UNAVAILABLE_REPLY = (
+    "Não consegui consultar suas tarefas agora. Isso não quer dizer que você não tenha tarefas; "
+    "tente novamente em instantes."
+)
 SPOKEN_TASK_LIMIT = 5
 SPOKEN_NAME_LIMIT = 8
 ACCOUNT_TYPE_LABELS = {"admin": "administrador", "user": "colaborador"}
@@ -517,6 +527,8 @@ class MessageAgent:
                 )
 
         pending = self.conversations.get(conversation_id)
+        if pending and pending.get("mode") == "task_selection" and self._is_task_query(content):
+            pending = None  # a resposta da nova consulta grava (ou limpa) a selecao
         if pending:
             return self._continue_pending_command(
                 conversation_id=conversation_id,
@@ -635,6 +647,15 @@ class MessageAgent:
 
         command_payload, command_status = self.assistant.handle(content, supplied_params)
         status = 200 if command_payload.get("ok") else command_status
+        if (
+            not command_payload.get("ok")
+            and match.command.key in TASK_QUERY_KEYS
+            and command_payload.get("error") in {"api_error", "internal_error"}
+        ):
+            command_payload.pop("message", None)  # detalhe tecnico da falha nao vai para a tela
+            command_payload = self._with_reply(
+                command_payload, TASK_QUERY_UNAVAILABLE_REPLY, TASK_QUERY_UNAVAILABLE_REPLY
+            )
         if command_payload.get("ok"):
             command_payload = self._prepare_follow_up(
                 conversation_id=conversation_id,
@@ -847,6 +868,8 @@ class MessageAgent:
 
     def _prepare_follow_up(self, *, conversation_id: str, command_key: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         result = payload.get("result")
+        if command_key in TASK_QUERY_KEYS and isinstance(result, dict) and result.get("type"):
+            return self._task_query_follow_up(conversation_id=conversation_id, payload=payload, query=result)
         if command_key in {"my_tasks", "backlog", "list_tasks"}:
             tasks = _dict_items(result)
             display, spoken = self._tasks_reply(tasks)
@@ -881,6 +904,37 @@ class MessageAgent:
             display, spoken = self._messages_reply(_dict_items(result), team_label)
         else:
             return payload
+        return self._with_reply(payload, display, spoken)
+
+    def _is_task_query(self, content: str) -> bool:
+        if is_confirmation(content):
+            return False
+        match = self.parser.match(content)
+        return match is not None and match.command.key in TASK_QUERY_KEYS
+
+    def _task_query_follow_up(self, *, conversation_id: str, payload: Dict[str, Any], query: Dict[str, Any]) -> Dict[str, Any]:
+        """Consulta por periodo: texto so com os dados filtrados, metadados para a interface e a lista guardada
+        para "detalhes da 1" / "e quais sao as mais urgentes?". Nada e gravado alem do contexto da conversa."""
+        display, spoken = build_reply(query)
+        payload["query"] = metadata(query)
+        tasks = [task for task in (query.get("tasks") or []) if isinstance(task, dict)]
+        if self.context_available:
+            if tasks and query.get("type") != "summary":
+                self.conversations.save(
+                    conversation_id,
+                    {
+                        "mode": "task_selection",
+                        "tasks": [self._compact_task(task) for task in tasks[:SELECTABLE_TASK_LIMIT]],
+                    },
+                )
+                payload["conversation"] = {
+                    "id": conversation_id,
+                    "status": "browsing_tasks",
+                    "options": ["details", "assign_to_me", "cancel"],
+                }
+            else:
+                # Sem lista numerada: nenhuma selecao antiga continua valendo para "a 1".
+                self.conversations.clear(conversation_id)
         return self._with_reply(payload, display, spoken)
 
     def _with_reply(self, payload: Dict[str, Any], display: str, spoken: str) -> Dict[str, Any]:
@@ -1717,6 +1771,24 @@ class MessageAgent:
         if not tasks:
             self.conversations.clear(conversation_id)
             return self._error("invalid_conversation", "Perdi a lista de tarefas. Pode pedir para listar novamente?", 400)
+
+        words = set(plain_words(content))
+        if words & URGENCY_FOLLOW_UP_WORDS and not task_position_refs(content) and not self._tasks_named_in(content, tasks):
+            top, display, spoken = urgent_follow_up(tasks)
+            if top:
+                # A numeracao mostrada passa a ser a da nova lista.
+                self.conversations.save(conversation_id, {"mode": "task_selection", "tasks": top})
+            return self._task_conversation_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                status="browsing_tasks" if top else "awaiting_task_selection",
+                text=display,
+                spoken=spoken,
+                ok=True,
+                action_executed=False,
+            )
 
         selected_id = pending.get("selected_task_id")
         selected_task = next((task for task in tasks if task.get("_id") == selected_id), None)

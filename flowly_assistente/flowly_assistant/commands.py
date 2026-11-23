@@ -66,6 +66,31 @@ def get_commands() -> List[Command]:
             phrases=["minhas tarefas", "listar minhas tarefas", "ver minhas tarefas"],
             required_params=[],
         ),
+        # Consultas por periodo (somente leitura, mesma rota de my_tasks; filtro em task_queries.py).
+        # Sem frases: reconhecidas so pelo detector de periodo do parser (detect_task_period), para nao
+        # mudar a semelhanca aproximada dos comandos que ja existiam.
+        *[
+            Command(
+                key=key,
+                title=title,
+                method="GET",
+                route="GET /api/tarefas/minhas",
+                controller_method="tarefaController.minhasTarefas",
+                role_required="user",
+                phrases=[],
+                required_params=[],
+            )
+            for key, title in (
+                ("tasks_today", "tarefas de hoje"),
+                ("tasks_tomorrow", "tarefas de amanhã"),
+                ("tasks_overdue", "tarefas atrasadas"),
+                ("tasks_week", "tarefas desta semana"),
+                ("tasks_next_week", "tarefas da próxima semana"),
+                ("tasks_upcoming", "próximas entregas"),
+                ("tasks_pending", "tarefas em aberto"),
+                ("tasks_summary", "resumo do dia"),
+            )
+        ],
         Command(
             key="backlog",
             title="listar backlog",

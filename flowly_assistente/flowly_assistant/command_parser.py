@@ -72,6 +72,99 @@ TASK_HELP_WORDS = frozenset({
 })
 
 
+# --- Consultas de tarefas por periodo (somente leitura) ---------------------------------------------------------
+# Marcador de periodo + sinal de que a pergunta e sobre as proprias tarefas/rotina. Sem acento, minusculas.
+PERIOD_TASK_CUES = frozenset({
+    "tarefa", "tarefas", "atividade", "atividades", "entrega", "entregas", "entregar", "pendencia", "pendencias",
+    "pendente", "pendentes", "prazo", "prazos", "afazeres", "demanda", "demandas", "fazer", "trabalho", "trabalhos",
+    "vence", "vencem", "vencer", "vencendo", "vencida", "vencidas", "vencido", "vencidos", "atrasada", "atrasadas",
+    "atrasado", "atrasados",
+})
+PERIOD_OWN_CUES = frozenset({"tenho", "preciso", "devo", "minha", "minhas", "meu", "meus", "mim", "comigo"})
+# Frase com verbo de escrita so vira consulta quando comeca como pergunta ou pedido de leitura
+# ("o que preciso concluir hoje?", "mostre o que falta terminar hoje"); "concluir as tarefas de hoje" nao.
+PERIOD_READ_STARTS = frozenset({
+    "o", "que", "quais", "qual", "quanto", "quantas", "quantos", "tenho", "preciso", "devo", "como", "me", "fala",
+    "fale", "diga", "diz", "existe", "existem", "ha", "tem",
+}) | LIST_REQUEST_VERBS | READ_VERBS
+_OVERDUE_PHRASES = (
+    "passou do prazo", "passaram do prazo", "fora do prazo", "prazo vencido", "prazos vencidos", "em atraso",
+    "ja venceu", "ja venceram",
+)
+_UPCOMING_PHRASES = (
+    "proximos dias", "proximas entregas", "proxima entrega", "proximos prazos", "proximo prazo", "proximas tarefas",
+    "proximas atividades", "em breve", "vao vencer", "vai vencer", "a vencer", "proximos 7 dias", "proximos sete dias",
+)
+_NEXT_WEEK_PHRASES = ("proxima semana", "semana que vem", "semana seguinte")
+_PAST_WEEK_PHRASES = ("semana passada", "ultima semana", "semana anterior")
+_SUMMARY_PHRASES = (
+    "meu dia", "minha rotina", "mais importante", "mais importantes", "por onde comeco", "fazer primeiro",
+    "como estou", "como esta minha semana",
+)
+_SUMMARY_WORDS = frozenset({"resumo", "resuma", "resumir", "panorama", "rotina", "prioridade", "prioridades"})
+
+
+def detect_task_period(text: str) -> Optional[str]:
+    """Periodo de uma consulta das proprias tarefas ("today", "tomorrow", "overdue", "week", "next_week",
+    "upcoming", "pending", "summary") ou None. Nunca decide escrita."""
+    words = plain_words(text)
+    if not words:
+        return None
+    found = set(words)
+    joined = f" {' '.join(words)} "
+
+    def has(phrases: Tuple[str, ...]) -> bool:
+        return any(f" {phrase} " in joined for phrase in phrases)
+
+    overdue = has(_OVERDUE_PHRASES) or any(
+        w.startswith(("atrasad", "vencid")) or w in {"atraso", "atrasos", "venceu", "venceram"} for w in words
+    )
+    today = "hoje" in found or " do dia " in joined
+    tomorrow = "amanha" in found
+    next_week = has(_NEXT_WEEK_PHRASES)
+    week = "semana" in found and not next_week and not has(_PAST_WEEK_PHRASES)
+    upcoming = has(_UPCOMING_PHRASES) or bool(found & {"vence", "vencem", "vencendo"})
+    pending = bool(found & {"pendencia", "pendencias", "pendente", "pendentes", "afazeres"}) or has(("em aberto",))
+    summary = has(_SUMMARY_PHRASES) or bool(found & _SUMMARY_WORDS)
+
+    if not (overdue or today or tomorrow or next_week or week or upcoming or pending or summary):
+        return None
+    if not (found & PERIOD_TASK_CUES or found & PERIOD_OWN_CUES or has(("meu dia", "minha rotina"))):
+        return None  # "como esta o tempo hoje?": tempo, mas nao sobre as proprias tarefas
+    if WRITE_INTENT_RE.search(" ".join(words)) and words[0] not in PERIOD_READ_STARTS:
+        return None  # ordem de escrita ("concluir as tarefas de hoje"): fica com o fluxo de escrita/ambiguo
+
+    if overdue and (today or summary):
+        return "summary"  # "o que esta atrasado ou vence hoje?", "resumo das atrasadas e de hoje"
+    if overdue:
+        return "overdue"
+    if summary and not (tomorrow or next_week or week):
+        return "summary"
+    if today:
+        return "today"
+    if tomorrow:
+        return "tomorrow"
+    if next_week:
+        return "next_week"
+    if week:
+        return "week"
+    if upcoming:
+        return "upcoming"
+    return "pending"
+
+
+PERIOD_COMMAND_KEYS = {
+    "today": "tasks_today",
+    "tomorrow": "tasks_tomorrow",
+    "overdue": "tasks_overdue",
+    "week": "tasks_week",
+    "next_week": "tasks_next_week",
+    "upcoming": "tasks_upcoming",
+    "pending": "tasks_pending",
+    "summary": "tasks_summary",
+}
+
+
 def is_write_command(command: Command) -> bool:
     return (command.method or "").strip().upper() in WRITE_METHODS
 
@@ -333,6 +426,14 @@ class CommandParser:
             return Match(command=write_cmd, score=100, params=self._extract_params(write_cmd, raw))
 
         read_commands = [c for c in self.commands if c.key != "exit" and not is_write_command(c)]
+
+        # Consulta das proprias tarefas por periodo ("o que tenho para hoje?", "tenho algo vencido?"): so leitura.
+        period = detect_task_period(text)
+        if period is not None:
+            key = PERIOD_COMMAND_KEYS[period]
+            cmd = next((c for c in read_commands if c.key == key), None)
+            if cmd is not None:
+                return Match(command=cmd, score=100, params={})
 
         # Prefer exact phrase matches (avoids fuzzy ties where superset phrases score 100).
         for cmd in read_commands:
