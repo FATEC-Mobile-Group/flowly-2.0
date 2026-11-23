@@ -415,6 +415,16 @@ class ConfirmationAnswerTests(CliTestCase):
                 self.assertEqual(cli.api.calls, [])
 
 
+class RoleListingTests(CliTestCase):
+    def test_listar_tarefas_follows_the_profile(self):
+        for user_type, api_method in (("user", "my_tasks"), ("admin", "list_tasks")):
+            with self.subTest(user_type=user_type):
+                cli = run_cli(user_type, ["listar tarefas"], answers=["sim"])
+                self.assertEqual([name for name, _ in cli.api.calls], [api_method])
+                self.assertNotIn("Você não tem permissão para esse comando.", cli.said)
+                self.assertEqual(cli.api.writes, [])
+
+
 class TaskPeriodQueryTests(CliTestCase):
     def test_period_queries_only_read_my_tasks_even_with_writes_on(self):
         for writes in (None, "true"):

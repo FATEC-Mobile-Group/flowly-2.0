@@ -176,6 +176,24 @@ class Match:
     params: Dict[str, str]
 
 
+# Mesma frase, consulta equivalente do perfil autenticado (tipo lido da API em /users/me, nunca do cliente).
+# "listar tarefas" de um colaborador sao as tarefas dele (my_tasks, GET /api/tarefas/minhas); a lista geral
+# (list_tasks, GET /api/tarefas) continua exclusiva do admin. So leituras; nenhuma permissao e ampliada.
+ROLE_READ_EQUIVALENTS = {("list_tasks", "user"): "my_tasks"}
+
+
+def resolve_for_role(match: Optional[Match], user_type: Optional[str], commands: list) -> Optional[Match]:
+    if match is None:
+        return None
+    key = ROLE_READ_EQUIVALENTS.get((match.command.key, user_type))
+    if key is None:
+        return match
+    equivalent = next((cmd for cmd in commands if cmd.key == key), None)
+    if equivalent is None or is_write_command(equivalent) or is_write_command(match.command):
+        return match
+    return Match(command=equivalent, score=match.score, params={})
+
+
 def _normalize(text: str) -> str:
     text = (text or "").strip().lower()
     text = re.sub(r"[\t\n\r]+", " ", text)
@@ -544,7 +562,7 @@ class CommandParser:
         """"my_tasks" (pedido das proprias tarefas), "help" (ajuda/capacidade, nao lista) ou None (sem decisao)."""
         words = plain_words(text)
         found = set(words)
-        if not found & TASK_WORDS:
+        if not found & (TASK_WORDS | {"atividade", "atividades"}):
             return None
         listing = bool(found & LIST_REQUEST_VERBS)
         if not listing and (found & TASK_HELP_WORDS or (words and words[0] == "como")):

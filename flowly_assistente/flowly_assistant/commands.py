@@ -63,7 +63,7 @@ def get_commands() -> List[Command]:
             route="GET /api/tarefas/minhas",
             controller_method="tarefaController.minhasTarefas",
             role_required="user",
-            phrases=["minhas tarefas", "listar minhas tarefas", "ver minhas tarefas"],
+            phrases=["minhas tarefas", "listar minhas tarefas", "ver minhas tarefas", "minhas atividades"],
             required_params=[],
         ),
         # Consultas por periodo (somente leitura, mesma rota de my_tasks; filtro em task_queries.py).
