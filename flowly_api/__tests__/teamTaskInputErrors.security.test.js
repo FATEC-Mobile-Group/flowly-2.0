@@ -50,7 +50,8 @@ jest.mock('../models/User', () => ({
   find: jest.fn((filter) =>
     mockQuery(
       mockState.users.filter(
-        (user) => filter._id.$in.some((id) => mockSame(id, user._id)) && user.tipo === filter.tipo
+        (user) => filter._id.$in.some((id) => mockSame(id, user._id)) &&
+          (filter.tipo?.$in ? filter.tipo.$in.includes(user.tipo) : user.tipo === filter.tipo)
       )
     )
   ),
@@ -77,6 +78,16 @@ jest.mock('../models/Equipe', () => {
     if (equipe) Object.assign(equipe, update);
     return mockQuery(equipe);
   });
+  // Como o MongoDB com { membros: [lista] }: casa so se o array for exatamente igual, na mesma ordem.
+  Equipe.findOneAndUpdate = jest.fn((filter, update) => {
+    const equipe = byId(filter._id);
+    const mesmaLista = equipe && equipe.membros.length === filter.membros.length &&
+      equipe.membros.every((id, index) => mockSame(id, filter.membros[index]));
+    if (!mesmaLista) return mockQuery(null);
+    Object.assign(equipe, update);
+    return mockQuery(equipe);
+  });
+  Equipe.exists = jest.fn(async (filter) => (byId(filter._id) ? { _id: filter._id } : null));
   Equipe.findOneAndDelete = jest.fn(async () => null);
   return Equipe;
 });
@@ -225,6 +236,7 @@ describe('D62: entradas invalidas e erros internos em equipes, tarefas e perfil'
     expect(Equipe.prototype.save).not.toHaveBeenCalled();
     expect(Equipe.updateMany).not.toHaveBeenCalled();
     expect(Equipe.findByIdAndUpdate).not.toHaveBeenCalled();
+    expect(Equipe.findOneAndUpdate).not.toHaveBeenCalled();
     expect(Tarefa.prototype.save).not.toHaveBeenCalled();
     expect(Tarefa.findOneAndUpdate).not.toHaveBeenCalled();
     expect(Comment.prototype.save).not.toHaveBeenCalled();

@@ -31,7 +31,8 @@ jest.mock('../models/User', () => ({
   find: jest.fn((filter) =>
     mockQuery(
       mockState.users.filter(
-        (user) => filter._id.$in.some((id) => mockSame(id, user._id)) && user.tipo === filter.tipo
+        (user) => filter._id.$in.some((id) => mockSame(id, user._id)) &&
+          (filter.tipo?.$in ? filter.tipo.$in.includes(user.tipo) : user.tipo === filter.tipo)
       )
     )
   ),
@@ -51,16 +52,30 @@ jest.mock('../models/Equipe', () => {
       return {};
     }),
     find: jest.fn(() => mockQuery(mockState.equipes)),
+    // Como o banco: a leitura devolve uma copia do momento da consulta, nao o documento vivo.
     findOne: jest.fn((filter) => {
       const equipe = byId(filter._id);
       const membro = equipe && equipe.membros.some((id) => mockSame(id, filter.membros));
-      return mockQuery(membro ? equipe : null);
+      return mockQuery(membro ? { ...equipe, membros: [...equipe.membros] } : null);
     }),
     // Sem operadores, o Mongoose trata o objeto como $set dos campos enviados.
     findByIdAndUpdate: jest.fn((id, update) => {
       const equipe = byId(id);
       if (equipe) Object.assign(equipe, update);
       return mockQuery(equipe);
+    }),
+    // Como o MongoDB com { membros: [lista] }: casa so se o array for exatamente igual, na mesma ordem.
+    findOneAndUpdate: jest.fn((filter, update) => {
+      const equipe = byId(filter._id);
+      const mesmaLista = equipe && equipe.membros.length === filter.membros.length &&
+        equipe.membros.every((id, index) => mockSame(id, filter.membros[index]));
+      if (!mesmaLista) return mockQuery(null);
+      Object.assign(equipe, update);
+      return mockQuery(equipe);
+    }),
+    exists: jest.fn(async (filter) => {
+      const equipe = byId(filter._id);
+      return equipe && equipe.membros.some((id) => mockSame(id, filter.membros)) ? { _id: equipe._id } : null;
     }),
   };
 });
@@ -107,9 +122,15 @@ describe('D64: editar equipe sem a lista de membros nao apaga a equipe', () => {
   const membros = () => ids(equipe.membros);
   const original = () => ids([criador._id, a._id, b._id]);
 
+  // Nenhum dos dois caminhos de gravacao (so nome / lista de membros condicionada) foi usado.
+  const expectNoWrite = () => {
+    expect(Equipe.findByIdAndUpdate).not.toHaveBeenCalled();
+    expect(Equipe.findOneAndUpdate).not.toHaveBeenCalled();
+  };
+
   const expectUntouched = () => {
     expect(Equipe.updateMany).not.toHaveBeenCalled();
-    expect(Equipe.findByIdAndUpdate).not.toHaveBeenCalled();
+    expectNoWrite();
     expect(User.find).not.toHaveBeenCalled();
     expect(equipe.nome).toBe('Equipe Original');
     expect(membros()).toEqual(original());
@@ -226,7 +247,7 @@ describe('D64: editar equipe sem a lista de membros nao apaga a equipe', () => {
 
       expect(res.status).toBe(400);
       expect(res.body).toEqual({ erro: 'Alguns membros não são usuarios válidos' });
-      expect(Equipe.findByIdAndUpdate).not.toHaveBeenCalled();
+      expectNoWrite();
       expect(membros()).toEqual(original());
     });
 
@@ -234,7 +255,7 @@ describe('D64: editar equipe sem a lista de membros nao apaga a equipe', () => {
       const res = await edit({ nome: 'Nova', membros: [String(new mongoose.Types.ObjectId())] });
 
       expect(res.status).toBe(400);
-      expect(Equipe.findByIdAndUpdate).not.toHaveBeenCalled();
+      expectNoWrite();
     });
 
     test('nome continua obrigatorio (D62)', async () => {
@@ -253,7 +274,7 @@ describe('D64: editar equipe sem a lista de membros nao apaga a equipe', () => {
 
       expect(res.status).toBe(404);
       expect(res.body).toEqual({ erro: 'Equipe não encontrada' });
-      expect(Equipe.findByIdAndUpdate).not.toHaveBeenCalled();
+      expectNoWrite();
     });
 
     test('admin que nao e membro continua 404', async () => {
@@ -274,6 +295,196 @@ describe('D64: editar equipe sem a lista de membros nao apaga a equipe', () => {
       expect((await edit({ nome: 'Nova', membros: [] }, { token })).status).toBe(status);
       expect(equipe.nome).toBe('Equipe Original');
       expect(membros()).toEqual(original());
+    });
+  });
+
+  // Integrante que ja era membro e foi promovido a admin (services/adminRoleService.js) continua vinculado.
+  describe('membro promovido a admin depois de entrar na equipe', () => {
+    beforeEach(() => {
+      a.tipo = 'admin';
+    });
+
+    test('editar o nome mantendo a lista atual nao rejeita o membro promovido', async () => {
+      const res = await edit({ nome: 'renomeada', membros: [String(a._id), String(b._id)] });
+
+      expect(res.status).toBe(200);
+      expect(equipe.nome).toBe('Renomeada');
+      expect(membros().sort()).toEqual(original().sort());
+    });
+
+    test('adicionar um usuario comum novo continua funcionando ao lado do membro promovido', async () => {
+      const res = await edit({ nome: 'Nova', membros: [String(a._id), String(b._id), String(semEquipe._id)] });
+
+      expect(res.status).toBe(200);
+      expect(membros().sort()).toEqual(ids([criador._id, a._id, b._id, semEquipe._id]).sort());
+    });
+
+    test('adicionar um admin que nao era membro continua 400, sem mudar a equipe', async () => {
+      const res = await edit({ nome: 'Nova', membros: [String(a._id), String(b._id), String(outroAdmin._id)] });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ erro: 'Alguns membros não são usuarios válidos' });
+      expectNoWrite();
+      expect(membros()).toEqual(original());
+      expect(equipe.nome).toBe('Equipe Original');
+    });
+
+    test('o criador pode retirar o membro promovido normalmente', async () => {
+      const res = await edit({ nome: 'Nova', membros: [String(b._id)] });
+
+      expect(res.status).toBe(200);
+      expect(membros().sort()).toEqual(ids([criador._id, b._id]).sort());
+    });
+
+    test('retirado, o membro promovido nao volta por esta rota (seria um admin novo)', async () => {
+      await edit({ nome: 'Nova', membros: [String(b._id)] });
+      Equipe.findByIdAndUpdate.mockClear();
+      Equipe.findOneAndUpdate.mockClear();
+
+      const res = await edit({ nome: 'Nova', membros: [String(a._id), String(b._id)] });
+
+      expect(res.status).toBe(400);
+      expectNoWrite();
+      expect(membros()).not.toContain(String(a._id));
+    });
+
+    test('membro antigo cuja conta nao existe mais continua 400 (regra anterior preservada)', async () => {
+      mockState.users = mockState.users.filter((user) => !mockSame(user._id, b._id));
+
+      const res = await edit({ nome: 'Nova', membros: [String(a._id), String(b._id)] });
+
+      expect(res.status).toBe(400);
+      expectNoWrite();
+    });
+
+    test('a validacao consulta novos so como user e os mantidos como user ou admin', async () => {
+      await edit({ nome: 'Nova', membros: [String(a._id), String(semEquipe._id)] });
+
+      const filtros = User.find.mock.calls.map(([filtro]) => filtro);
+      expect(filtros).toEqual(expect.arrayContaining([
+        { _id: { $in: [String(semEquipe._id)] }, tipo: 'user' },
+        { _id: { $in: [String(a._id)] }, tipo: { $in: ['user', 'admin'] } },
+      ]));
+    });
+
+    test('sem a lista de membros, so o nome muda e o vinculo continua', async () => {
+      const res = await edit({ nome: 'So o nome' });
+
+      expect(res.status).toBe(200);
+      expect(User.find).not.toHaveBeenCalled();
+      expect(membros()).toEqual(original());
+    });
+  });
+
+  // Protecao otimista: a lista so e gravada se ainda for exatamente a que foi lida e validada.
+  describe('edicoes concorrentes da lista de membros', () => {
+    const CONFLITO = { erro: 'A lista de membros foi alterada por outra edição. Recarregue a equipe e tente novamente.' };
+
+    // As duas edicoes leem a lista antes de qualquer gravacao (o pior caso), de forma deterministica.
+    const sincronizarLeituras = (leituras) => {
+      let liberar;
+      const ambasLeram = new Promise((resolve) => { liberar = resolve; });
+      const lerOriginal = Equipe.findOne.getMockImplementation();
+      Equipe.findOne.mockImplementation((filter) => {
+        const resultado = lerOriginal(filter);
+        leituras.count += 1;
+        if (leituras.count === 2) liberar();
+        return resultado;
+      });
+      const gravarOriginal = Equipe.findOneAndUpdate.getMockImplementation();
+      Equipe.findOneAndUpdate.mockImplementation((filter, update) => {
+        const query = ambasLeram.then(() => gravarOriginal(filter, update));
+        query.populate = () => query;
+        return query;
+      });
+      return () => {
+        Equipe.findOne.mockImplementation(lerOriginal);
+        Equipe.findOneAndUpdate.mockImplementation(gravarOriginal);
+      };
+    };
+
+    test('duas edicoes simultaneas da lista: uma grava, a outra recebe 409 e nao sobrescreve', async () => {
+      const restaurar = sincronizarLeituras({ count: 0 });
+      try {
+        const [semA, semB] = await Promise.all([
+          edit({ nome: 'Nova', membros: [String(b._id)] }),
+          edit({ nome: 'Nova', membros: [String(a._id)] }),
+        ]);
+
+        expect([semA.status, semB.status].sort()).toEqual([200, 409]);
+        const perdedora = semA.status === 409 ? semA : semB;
+        expect(perdedora.body).toEqual(CONFLITO);
+        const esperado = semA.status === 200 ? [criador._id, b._id] : [criador._id, a._id];
+        expect(membros().sort()).toEqual(ids(esperado).sort());
+      } finally {
+        restaurar();
+      }
+    });
+
+    test('lista desatualizada nao reintroduz o admin retirado por outra edicao', async () => {
+      a.tipo = 'admin';
+      const restaurar = sincronizarLeituras({ count: 0 });
+      try {
+        const [retirada, desatualizada] = await Promise.all([
+          edit({ nome: 'Nova', membros: [String(b._id)] }),
+          edit({ nome: 'Nova', membros: [String(a._id), String(b._id), String(semEquipe._id)] }),
+        ]);
+
+        const statuses = [retirada.status, desatualizada.status];
+        expect(statuses.sort()).toEqual([200, 409]);
+        if (retirada.status === 200) {
+          expect(membros()).not.toContain(String(a._id));
+          expect(desatualizada.body).toEqual(CONFLITO);
+        }
+      } finally {
+        restaurar();
+      }
+    });
+
+    test('depois do 409, a mesma edicao com a lista atual grava normalmente', async () => {
+      equipe.membros = [criador._id, b._id];
+      Equipe.findOne.mockImplementationOnce(() => mockQuery({ ...equipe, membros: [criador._id, a._id, b._id] }));
+
+      const conflito = await edit({ nome: 'Nova', membros: [String(a._id), String(b._id)] });
+
+      expect(conflito.status).toBe(409);
+      expect(conflito.body).toEqual(CONFLITO);
+      expect(membros()).toEqual(ids([criador._id, b._id]));
+      expect(equipe.nome).toBe('Equipe Original');
+
+      const repeticao = await edit({ nome: 'Nova', membros: [String(b._id), String(semEquipe._id)] });
+      expect(repeticao.status).toBe(200);
+      expect(membros().sort()).toEqual(ids([criador._id, b._id, semEquipe._id]).sort());
+    });
+
+    test('a gravacao da lista e condicionada a lista lida, na mesma ordem', async () => {
+      await edit({ nome: 'Nova', membros: [String(a._id)] });
+
+      const [filtro] = Equipe.findOneAndUpdate.mock.calls[0];
+      expect(ids(filtro.membros)).toEqual(original());
+      expect(Equipe.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    test('edicao so do nome continua sem condicao e convive com a edicao da lista', async () => {
+      const [nome, lista] = await Promise.all([
+        edit({ nome: 'so o nome' }),
+        edit({ nome: 'Lista', membros: [String(a._id)] }),
+      ]);
+
+      expect([nome.status, lista.status]).toEqual([200, 200]);
+      expect(membros().sort()).toEqual(ids([criador._id, a._id]).sort());
+    });
+
+    test('equipe apagada entre a leitura e a gravacao continua 404, nao 409', async () => {
+      Equipe.findOneAndUpdate.mockImplementationOnce(() => {
+        mockState.equipes = [];
+        return mockQuery(null);
+      });
+
+      const res = await edit({ nome: 'Nova', membros: [String(a._id)] });
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ erro: 'Equipe não encontrada' });
     });
   });
 });
