@@ -156,6 +156,13 @@ URGENCY_FOLLOW_UP_WORDS = frozenset({
     "urgente", "urgentes", "urgencia", "prioritaria", "prioritarias", "prioritario", "prioritarios",
     "importante", "importantes", "prioridade",
 })
+# Listagens de leitura que substituem uma lista aberta ("ver minhas atividades" depois de "listar tarefas").
+# list_tasks de um colaborador vira my_tasks no RestAssistant (perfil lido de /users/me), nunca aqui.
+LISTING_COMMAND_KEYS = frozenset(TASK_QUERY_KEYS) | {"my_tasks", "list_tasks", "backlog"}
+AMBIGUOUS_LISTING_REPLY = (
+    "Não entendi se você quer uma nova lista de tarefas ou uma tarefa da lista atual. Nada foi alterado. "
+    "Diga, por exemplo, \"listar minhas tarefas\" ou \"detalhes da tarefa 1\"."
+)
 TASK_QUERY_UNAVAILABLE_REPLY = (
     "Não consegui consultar suas tarefas agora. Isso não quer dizer que você não tenha tarefas; "
     "tente novamente em instantes."
@@ -527,8 +534,21 @@ class MessageAgent:
                 )
 
         pending = self.conversations.get(conversation_id)
-        if pending and pending.get("mode") == "task_selection" and self._is_task_query(content):
-            pending = None  # a resposta da nova consulta grava (ou limpa) a selecao
+        if pending and pending.get("mode") == "task_selection":
+            listing = self._listing_request(content, pending)
+            if listing == "new":
+                pending = None  # a resposta da nova consulta grava (ou limpa) a selecao
+            elif listing == "ambiguous":
+                return self._task_conversation_response(
+                    event_id=event["id"],
+                    moderation_score=moderation.score,
+                    queue_result=queue_result,
+                    conversation_id=conversation_id,
+                    status="awaiting_task_selection",
+                    text=AMBIGUOUS_LISTING_REPLY,
+                    ok=True,
+                    action_executed=False,
+                )
         if pending:
             return self._continue_pending_command(
                 conversation_id=conversation_id,
@@ -649,7 +669,7 @@ class MessageAgent:
         status = 200 if command_payload.get("ok") else command_status
         if (
             not command_payload.get("ok")
-            and match.command.key in TASK_QUERY_KEYS
+            and match.command.key in LISTING_COMMAND_KEYS
             and command_payload.get("error") in {"api_error", "internal_error"}
         ):
             command_payload.pop("message", None)  # detalhe tecnico da falha nao vai para a tela
@@ -887,6 +907,9 @@ class MessageAgent:
                     "status": "browsing_tasks",
                     "options": ["details", "assign_to_me", "cancel"],
                 }
+            elif self.context_available:
+                # Nova lista vazia: a selecao anterior nao vale mais para "a 1" / "atribuir a 2".
+                self.conversations.clear(conversation_id)
             return self._with_reply(payload, display, spoken)
 
         team_label = str((payload.get("params") or {}).get("_team_label") or "").strip()
@@ -906,11 +929,21 @@ class MessageAgent:
             return payload
         return self._with_reply(payload, display, spoken)
 
-    def _is_task_query(self, content: str) -> bool:
+    def _listing_request(self, content: str, pending: Dict[str, Any]) -> Optional[str]:
+        """Com uma lista aberta: "new" (nova listagem de leitura, que substitui a lista), "ambiguous" (pede uma
+        listagem geral mas cita numero/nome de uma tarefa da lista) ou None (acompanhamento da lista atual).
+        Usa so o parser existente; escritas, confirmacoes e acompanhamentos ("detalhes da 1") nunca sao "new"."""
         if is_confirmation(content):
-            return False
+            return None
         match = self.parser.match(content)
-        return match is not None and match.command.key in TASK_QUERY_KEYS
+        if match is None or match.command.key not in LISTING_COMMAND_KEYS:
+            return None
+        if match.command.key in TASK_QUERY_KEYS:
+            return "new"  # periodo explicito; numeros ("proximos 7 dias") fazem parte da data
+        tasks = [task for task in pending.get("tasks", []) if isinstance(task, dict)]
+        if task_position_refs(content) or self._tasks_named_in(content, tasks):
+            return "ambiguous"
+        return "new"
 
     def _task_query_follow_up(self, *, conversation_id: str, payload: Dict[str, Any], query: Dict[str, Any]) -> Dict[str, Any]:
         """Consulta por periodo: texto so com os dados filtrados, metadados para a interface e a lista guardada
