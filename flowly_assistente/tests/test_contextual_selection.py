@@ -88,7 +88,7 @@ class PeriodFollowUpParserTests(unittest.TestCase):
 
     def test_refuses_without_article_with_other_words_or_without_period(self):
         for phrase in (
-            "amanhã", "e amanhã?", "excluir as de amanhã", "concluir as de hoje", "e as da sprint 15", "e as da 2",
+            "amanhã", "amanhã?", "e o prazo?", "excluir as de amanhã", "concluir as de hoje", "e as da sprint 15", "e as da 2",
             "e o resumo?", "e as de segunda?", "mostre as de amanhã da equipe alfa", "e as outras", "",
         ):
             with self.subTest(phrase=phrase):
@@ -333,7 +333,7 @@ class ContextualSelectionTests(ReadResponseTestCase):
         self.assertNotIn("selected_task_id", self.state())
         payload, _ = self.say("e as de amanhã?")  # nenhuma: a lista anterior deixa de valer
         self.assertEqual(payload["command"]["key"], "tasks_tomorrow")
-        self.assertIsNone(self.state())
+        self.assertEqual(self.state(), {"mode": "task_selection", "tasks": []})  # sem lista nem tarefa escolhida
 
     def test_follow_up_without_an_open_list_is_not_widened(self):
         payload, _ = self.say("e as de amanhã?")

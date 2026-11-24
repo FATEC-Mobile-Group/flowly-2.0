@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import hmac
 import os
 import re
@@ -24,7 +25,9 @@ from flowly_assistant.command_parser import (
     NON_DIRECTIVE_QUESTION_WORDS,
     STRICT_PARAM_WORDS,
     CommandParser,
+    WRITE_INTENT_RE,
     extract_status_target,
+    is_conditional_period_follow_up,
     is_write_command,
     period_follow_up_utterance,
     plain_words,
@@ -150,13 +153,23 @@ TASK_DETAIL_WORDS_WITH_MIM = frozenset({"detalhe", "detalhes", "informacao", "in
 # Pergunta sobre um dado da tarefa escolhida ("qual é o prazo dela?", "em que equipe ela está?"). Resposta com os
 # dados atuais da API (rota de detalhes), so o que foi perguntado; o que faltar e dito como ausente.
 TASK_ATTRIBUTE_WORDS = (
-    ("prazo", frozenset({"prazo", "vence", "vencimento", "entrega", "data"})),
-    ("status", frozenset({"status", "situacao", "andamento"})),
+    ("prazo", frozenset({"prazo", "vence", "vencer", "vencimento", "entrega", "entregar", "data"})),
+    ("status", frozenset({
+        "status", "situacao", "andamento", "concluida", "concluido", "terminada", "terminado", "finalizada",
+        "finalizado", "pronta", "pronto", "feita", "feito",
+    })),
     ("urgencia", frozenset({"urgencia", "prioridade", "urgente", "prioritaria", "prioritario"})),
     ("equipe", frozenset({"equipe", "time"})),
     ("descricao", frozenset({"descricao"})),
-    ("responsavel", frozenset({"responsavel"})),
+    ("responsavel", frozenset({"responsavel", "cuidando", "cuida"})),
 )
+# Rotulo de cada dado na pergunta de esclarecimento ("Você quis dizer a urgência?").
+TASK_ATTRIBUTE_LABELS = {
+    "prazo": "o prazo", "status": "o status", "urgencia": "a urgência", "prioridade": "a prioridade",
+    "equipe": "a equipe", "descricao": "a descrição", "responsavel": "o responsável",
+}
+# Pergunta sobre a tarefa escolhida (mesmo com um dado desconhecido ou mal transcrito: "qual é a agência dela?").
+TASK_QUESTION_WORDS = frozenset({"qual", "quando", "quem", "como", "onde", "quanto", "quanta"})
 # Pedido sobre a lista ou sobre a propria pessoa, nao sobre uma tarefa: fica com os fluxos de antes.
 TASK_ATTRIBUTE_EXCLUDED_WORDS = frozenset({
     "quais", "mais", "tarefas", "urgentes", "prioritarias", "prioritarios", "importantes",
@@ -230,7 +243,7 @@ TASK_ATTRIBUTE_FILLER_WORDS = TASK_FOLLOW_UP_WORDS | {
     w for _attribute, vocabulary in TASK_ATTRIBUTE_WORDS for w in vocabulary
 } | {
     "qual", "quando", "que", "quem", "em", "na", "no", "nela", "nele", "tem", "ta", "ja", "ainda", "hoje", "amanha",
-    "atual", "atualmente", "dia",
+    "atual", "atualmente", "dia", "tenho", "preciso", "devo", "foi", "sera", "esta",
 }
 
 # Resposta a uma pergunta pendente que e so um comando ("minhas tarefas", "quais são minhas tarefas"):
@@ -266,6 +279,27 @@ URGENCY_FOLLOW_UP_WORDS = frozenset({
 # Listagens de leitura que substituem uma lista aberta ("ver minhas atividades" depois de "listar tarefas").
 # list_tasks de um colaborador vira my_tasks no RestAssistant (perfil lido de /users/me), nunca aqui.
 LISTING_COMMAND_KEYS = frozenset(TASK_QUERY_KEYS) | {"my_tasks", "list_tasks", "backlog"}
+# Depois de uma consulta sem lista numerada (vazia ou resumo): sem tarefas para "a 1"; vale so para trocar o periodo.
+# Mesmo formato aceito pela API de conversas (selecao com lista vazia): nenhum formato novo de estado.
+EMPTY_LISTING_CONTEXT = {"mode": "task_selection", "tasks": []}
+SCOPE_CLARIFY_REPLY = (
+    "A lista aberta é do backlog. Nada foi consultado. Para ver as suas tarefas desse período, diga, por exemplo, "
+    "\"minhas tarefas de amanhã\"."
+)
+
+
+def _unassigned(task: Dict[str, Any]) -> bool:
+    """Tarefa sem responsavel na lista guardada (backlog): nao e uma lista das proprias tarefas."""
+    user = task.get("user")
+    if isinstance(user, dict):
+        return not str(user.get("nome") or user.get("_id") or "").strip()
+    return not str(user or "").strip()
+
+
+PERIOD_CLARIFY_REPLY = (
+    "Não entendi se você quer a lista de tarefas desse período ou saber o prazo da tarefa {title}. "
+    "Diga, por exemplo, \"e as de amanhã\" ou \"ela vence amanhã?\"."
+)
 PLAIN_LISTING_KEYS = frozenset({"my_tasks", "list_tasks", "backlog"})  # listagens sem filtro de data
 AMBIGUOUS_LISTING_REPLY = (
     "Não entendi se você quer uma nova lista de tarefas ou uma tarefa da lista atual. Nada foi alterado. "
@@ -436,10 +470,13 @@ def is_non_directive_text(text: str) -> bool:
     )
 
 
-def authenticated_user_id(api: FlowlyAPIClient) -> Optional[str]:
-    """Identidade confiável: o dono do JWT segundo a API (/users/me), nunca o userId do body."""
+def authenticated_user_id(source: Any) -> Optional[str]:
+    """Identidade confiável: o dono do JWT segundo a API (/users/me), nunca o userId do body.
+
+    source: o RestAssistant desta mensagem (perfil lido uma vez e reaproveitado so nela) ou um FlowlyAPIClient.
+    """
     try:
-        me = api.me()
+        me = source.authenticated_profile() if hasattr(source, "authenticated_profile") else source.me()
     except Exception:
         return None
     if not isinstance(me, dict):
@@ -577,7 +614,7 @@ class MessageAgent:
             # Chave reservada da memoria da conversa: nunca usada como conversa (nao vira estado de comando).
             return self._error("invalid_conversation", "Identificador de conversa inválido.", 400)
 
-        user_id = authenticated_user_id(self.assistant.api)
+        user_id = authenticated_user_id(self.assistant)
         if not user_id:
             return self._error("unauthorized", "Autenticação inválida.", 401)
         self.user_id = user_id
@@ -644,6 +681,14 @@ class MessageAgent:
                 )
 
         pending = self.conversations.get(conversation_id)
+        if pending and pending.get("mode") == "task_selection" and not pending.get("tasks"):
+            # Consulta anterior sem lista: so "e as de hoje?" continua; qualquer outra mensagem segue sem contexto.
+            follow_up = None if is_confirmation(content) else period_follow_up_utterance(content)
+            if follow_up:
+                self._command_content = follow_up
+            else:
+                self.conversations.clear(conversation_id)
+            pending = None
         if pending and pending.get("mode") == "task_selection":
             if weekday_reference(content) and not is_confirmation(content):
                 # "tarefas de sexta-feira", "e as de quarta?": nunca vira a 6ª/4ª tarefa; a lista aberta continua.
@@ -658,6 +703,30 @@ class MessageAgent:
                     action_executed=False,
                 )
             listing = self._listing_request(content, pending)
+            if listing == "clarify_scope":
+                return self._task_conversation_response(
+                    event_id=event["id"],
+                    moderation_score=moderation.score,
+                    queue_result=queue_result,
+                    conversation_id=conversation_id,
+                    status="browsing_tasks",
+                    text=SCOPE_CLARIFY_REPLY,
+                    ok=True,
+                    action_executed=False,
+                )
+            if listing == "clarify_period":
+                selected = next((t for t in pending.get("tasks", []) if isinstance(t, dict)
+                                 and t.get("_id") == pending.get("selected_task_id")), None)
+                return self._task_conversation_response(
+                    event_id=event["id"],
+                    moderation_score=moderation.score,
+                    queue_result=queue_result,
+                    conversation_id=conversation_id,
+                    status="browsing_tasks",
+                    text=PERIOD_CLARIFY_REPLY.format(title=self._task_title(selected)),
+                    ok=True,
+                    action_executed=False,
+                )
             if listing == "new":
                 pending = None  # a resposta da nova consulta grava (ou limpa) a selecao
             elif listing == "ambiguous":
@@ -1047,8 +1116,12 @@ class MessageAgent:
                     "status": "browsing_tasks",
                     "options": ["details", "assign_to_me", "cancel"],
                 }
+            elif self.context_available and command_key == "my_tasks":
+                # Nova lista vazia das proprias tarefas: a selecao anterior nao vale mais para "a 1"; so a troca de
+                # periodo ("e as de hoje?"), que tambem consulta as proprias tarefas, continua na proxima mensagem.
+                self.conversations.save(conversation_id, dict(EMPTY_LISTING_CONTEXT))
             elif self.context_available:
-                # Nova lista vazia: a selecao anterior nao vale mais para "a 1" / "atribuir a 2".
+                # Backlog ou listagem geral vazia: outro escopo; nenhuma continuacao por periodo a partir dela.
                 self.conversations.clear(conversation_id)
             return self._with_reply(payload, display, spoken)
 
@@ -1080,6 +1153,13 @@ class MessageAgent:
             # Troca de periodo sobre a lista aberta ("e as de amanhã?"): vira a consulta completa equivalente.
             follow_up = period_follow_up_utterance(content)
             if follow_up:
+                # A troca de periodo consulta so as proprias tarefas: sobre uma lista de outro escopo (backlog, com
+                # tarefas sem responsavel) pergunta em vez de trocar o escopo em silencio.
+                if any(_unassigned(task) for task in pending.get("tasks", []) if isinstance(task, dict)):
+                    return "clarify_scope"
+                # "e se amanhã?" com uma tarefa escolhida: pode ser sobre ela; pergunta em vez de listar.
+                if is_conditional_period_follow_up(content) and pending.get("selected_task_id"):
+                    return "clarify_period"
                 self._command_content = follow_up
                 return "new"
             return None
@@ -1115,8 +1195,9 @@ class MessageAgent:
                     "options": ["details", "assign_to_me", "cancel"],
                 }
             else:
-                # Sem lista numerada: nenhuma selecao antiga continua valendo para "a 1".
-                self.conversations.clear(conversation_id)
+                # Sem lista numerada: nenhuma selecao antiga continua valendo para "a 1"; so a troca de periodo
+                # ("e amanhã?") continua valendo na proxima mensagem.
+                self.conversations.save(conversation_id, dict(EMPTY_LISTING_CONTEXT))
         return self._with_reply(payload, display, spoken)
 
     def _with_reply(self, payload: Dict[str, Any], display: str, spoken: str) -> Dict[str, Any]:
@@ -2049,6 +2130,23 @@ class MessageAgent:
         # "atribuir configurar alerta para mim" com a 7 selecionada atribuia a 7: palavra que nao e acao nem
         # complemento, sem numero ou nome reconhecido, e uma tarefa que o assistente nao identificou.
         unknown_ref = requested_task is None and any(word not in TASK_FOLLOW_UP_WORDS for word in plain_words(content))
+        if (
+            unknown_ref and selected_task and not position_refs and not named_tasks
+            and self._task_follow_up_action(words_outside) not in ("assign", "conflict")
+            and self._is_selected_task_question(content)
+        ):
+            # Pergunta de leitura sobre a tarefa escolhida que nao foi entendida (ex.: "agência" no lugar de
+            # "urgência"): a selecao continua para a pessoa reformular; nada e executado.
+            return self._task_conversation_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                status="browsing_tasks",
+                text=self._unknown_question_reply(content, selected_task),
+                ok=True,
+                action_executed=False,
+            )
         if requested_task is None and (position_refs or named_tasks or unknown_ref):
             # "atribuir a 11 para mim" com a 7 selecionada atribuia a 7; "a 11 da Marketing" e
             # "Marketing e Configurar Alertas" atribuiam a Marketing. Numero/ordinal invalido, referencias a
@@ -2086,7 +2184,7 @@ class MessageAgent:
             )
             text = (
                 f"Selecionei {selected_task.get('descricao') or 'essa tarefa'}. "
-                "Voce quer detalhes, atribuir para voce ou cancelar?"
+                "Você quer detalhes, atribuir para você ou cancelar?"
             )
             if action == "conflict":
                 text = (
@@ -2295,6 +2393,28 @@ class MessageAgent:
             "tts": tts_payload(WRITES_DISABLED_REPLY, language=str(self.body.get("language") or "pt-BR")),
         }, 403
 
+    def _is_selected_task_question(self, content: str) -> bool:
+        """Frase de pergunta ("qual...", "quando...", "e o ...?", com "ela/dela") sem verbo de escrita."""
+        words = plain_words(content)
+        if not words or WRITE_INTENT_RE.search(" ".join(words)):
+            return False
+        # "o prazo da tarefa configurar alerta": cita outra tarefa pelo nome; nunca vale para a tarefa escolhida.
+        if "tarefa" in words and any(w not in TASK_ATTRIBUTE_FILLER_WORDS for w in words[words.index("tarefa") + 1:]):
+            return False
+        return bool(set(words) & (TASK_QUESTION_WORDS | SINGLE_TASK_PRONOUNS)) or (words[0] == "e" and len(words) <= 4)
+
+    def _unknown_question_reply(self, content: str, task: Dict[str, Any]) -> str:
+        title = self._task_title(task)
+        unknown = [w for w in plain_words(content) if w not in TASK_ATTRIBUTE_FILLER_WORDS and len(w) >= 4]
+        for word in unknown:
+            close = difflib.get_close_matches(word, list(TASK_ATTRIBUTE_LABELS), n=1, cutoff=0.75)
+            if close:
+                label = TASK_ATTRIBUTE_LABELS[close[0]]
+                return (f"Não entendi qual informação você quer sobre a tarefa {title}. "
+                        f"Você quis dizer {label}? Pergunte, por exemplo: \"qual é {label} dela?\"")
+        return (f"Não entendi qual informação você quer sobre a tarefa {title}. "
+                "Você quer saber o prazo, a urgência, o status, a equipe ou o responsável?")
+
     def _task_attributes_asked(self, content: str, named_tasks: list[Dict[str, Any]]) -> list[str]:
         """Dados perguntados sobre uma tarefa ("prazo", "status"...), na ordem fixa; [] se a frase nao e so isso.
 
@@ -2339,7 +2459,7 @@ class MessageAgent:
         else:
             target = selected_task
             if target is None:
-                if attributes == ["urgencia"]:
+                if attributes == ["urgencia"] and not set(plain_words(content)) & SINGLE_TASK_PRONOUNS:
                     return None  # "qual é a prioridade?" sem tarefa escolhida: as mais urgentes da lista, como antes
                 text = "De qual tarefa da lista? Diga o número dela, por exemplo \"o prazo da tarefa 2\", ou cancelar."
                 return self._task_conversation_response(
@@ -2579,7 +2699,7 @@ class MessageAgent:
         detalhes = str(tarefa.get("detalhes") or "").strip()
         display = ". ".join(parts + [f"detalhes: {detalhes[:180]}"]) + "." if detalhes else spoken
         if follow_up:
-            suffix = " Voce pode pedir outra tarefa, atribuir para voce ou cancelar."
+            suffix = " Você pode pedir outra tarefa, atribuir para você ou cancelar."
             return display + suffix, spoken + suffix
         return display, spoken
 
@@ -2825,7 +2945,7 @@ class MessageAgent:
             if not team_ref:
                 return
             resolver_params = {"team_id": team_ref}
-            self.assistant._resolve_refs(resolver_params, self.assistant._detect_user_type() or "user")
+            self.assistant._resolve_refs(resolver_params, self.assistant._detect_user_type(reuse=True) or "user")
             team_id = str(resolver_params.get("team_id") or "")
             # Só aceita equipe do usuário autenticado (inclusive ObjectId digitado na mensagem).
             my_teams = self.assistant.api.list_my_teams()

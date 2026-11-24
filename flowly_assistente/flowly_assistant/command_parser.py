@@ -175,6 +175,10 @@ PERIOD_FOLLOW_UP_WORDS = frozenset({
     "aberto",
 })
 PERIOD_FOLLOW_UP_ARTICLES = frozenset({"as", "os", "das", "dos"})
+# Continuacao curta sem artigo ("e amanhã?", "e para amanhã?", "e hoje?"): so comecando por estas palavras.
+PERIOD_FOLLOW_UP_STARTS = frozenset({"e", "agora", "entao"})
+# "e se amanhã?": provavel troca de periodo, mas ambigua (pode ser sobre a tarefa escolhida); quem chama decide.
+PERIOD_FOLLOW_UP_CONDITIONAL = "se"
 # Frase completa equivalente, reconhecida pelo detector de periodo normal (sem resumo: ele nao vira lista).
 PERIOD_FOLLOW_UP_UTTERANCES = {
     "today": "minhas tarefas de hoje",
@@ -190,13 +194,55 @@ PERIOD_FOLLOW_UP_UTTERANCES = {
 def period_follow_up_utterance(text: str) -> Optional[str]:
     """Frase completa da consulta por periodo pedida como continuacao de uma lista aberta, ou None."""
     words = plain_words(text)
-    if not words or not set(words) & PERIOD_FOLLOW_UP_ARTICLES:
+    if not words:
         return None
-    if any(word not in PERIOD_FOLLOW_UP_WORDS for word in words):
+    continuation = words[0] in PERIOD_FOLLOW_UP_STARTS
+    if not set(words) & PERIOD_FOLLOW_UP_ARTICLES and not continuation:
+        return None
+    allowed = PERIOD_FOLLOW_UP_WORDS | ({PERIOD_FOLLOW_UP_CONDITIONAL} if continuation else set())
+    if any(word not in allowed for word in words):
         return None
     # O assunto implicito e "tarefas"; o resto da decisao (periodo, escrita) e do detector de sempre.
     period = detect_task_period(" ".join(words) + " tarefas")
     return PERIOD_FOLLOW_UP_UTTERANCES.get(period) if period else None
+
+
+def is_conditional_period_follow_up(text: str) -> bool:
+    """ "e se amanhã?": troca de periodo com "se" (ambigua quando ha uma tarefa escolhida)."""
+    return PERIOD_FOLLOW_UP_CONDITIONAL in plain_words(text)
+
+
+# Leituras seguras com negacao, reconhecidas antes da guarda geral (que continua valendo para todo o resto):
+# - "quais tarefas eu não concluí?", "o que eu ainda não terminei?": as pendentes (vocabulario fechado);
+# - "deixa eu ver minhas tarefas": o resto da frase, so se for uma consulta.
+NEGATED_PENDING_STARTS = frozenset({"quais", "que", "o"})
+NEGATED_PENDING_VERBS = frozenset({
+    "conclui", "concluiu", "concluimos", "terminei", "terminou", "finalizei", "fiz", "entreguei", "completei",
+    "acabei",
+})
+NEGATED_PENDING_WORDS = frozenset({
+    "quais", "que", "o", "as", "os", "tarefas", "atividades", "eu", "ainda", "nao", "minhas", "de", "da", "do", "ja",
+}) | NEGATED_PENDING_VERBS
+LET_ME_STARTS = frozenset({"deixa", "deixe"})
+LET_ME_READ_VERBS = frozenset({"ver", "olhar", "conferir", "consultar", "checar", "saber"})
+
+
+def negated_pending_request(text: str) -> bool:
+    words = plain_words(text)
+    if not words or words[0] not in NEGATED_PENDING_STARTS or words.count("nao") != 1:
+        return False
+    if any(word not in NEGATED_PENDING_WORDS for word in words):
+        return False
+    after = [word for word in words[words.index("nao") + 1:] if word != "ainda"]
+    return bool(after) and after[0] in NEGATED_PENDING_VERBS
+
+
+def let_me_read_rest(text: str) -> Optional[str]:
+    """ "deixa eu ver minhas tarefas" -> "ver minhas tarefas" (so com verbo de leitura logo depois)."""
+    words = plain_words(text)
+    if len(words) >= 3 and words[0] in LET_ME_STARTS and words[1] in {"eu", "me"} and words[2] in LET_ME_READ_VERBS:
+        return " ".join(words[2:])
+    return None
 
 
 def is_write_command(command: Command) -> bool:
@@ -456,6 +502,16 @@ class CommandParser:
         text = _normalize(raw)
         if not text:
             return None
+
+        # Leituras com negacao em frases fechadas (nunca escrita): antes da guarda geral, que segue igual.
+        if negated_pending_request(text):
+            cmd = next((c for c in self.commands if c.key == "tasks_pending"), None)
+            if cmd is not None:
+                return Match(command=cmd, score=100, params={})
+        rest = let_me_read_rest(text)
+        if rest is not None:
+            inner = self.match(rest)
+            return inner if inner is not None and not is_write_command(inner.command) else None
 
         # false-positive guard: negation (antes dos atalhos, que disparam ações de escrita)
         if _has_negation(text):

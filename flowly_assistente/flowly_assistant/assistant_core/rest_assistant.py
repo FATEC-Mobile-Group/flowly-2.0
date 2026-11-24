@@ -120,13 +120,25 @@ class RestAssistant:
         self.tts_enabled = tts_enabled
         self.language = language
         self.debug = debug
+        # Perfil do dono do JWT (/users/me) lido nesta mensagem. Cada mensagem cria um RestAssistant novo: nada e
+        # reaproveitado entre pedidos nem entre usuarios. So resposta valida e guardada (falha consulta de novo).
+        self._profile: Optional[Dict[str, Any]] = None
+
+    def authenticated_profile(self) -> Any:
+        if self._profile is not None:
+            return self._profile
+        me = self.api.me()
+        if isinstance(me, dict) and str(me.get("_id") or me.get("id") or "").strip():
+            self._profile = me
+        return me
 
     def handle(self, utterance: str, params: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], int]:
         utterance = (utterance or "").strip()
         if not utterance:
             return self._error("missing_utterance", "Diga um comando.", 400)
+        # Leitura (escritas nunca executam por aqui: sao recusadas ou vao para a confirmacao compartilhada).
 
-        user_type = self._detect_user_type()
+        user_type = self._detect_user_type(reuse=True)
         # Perfil validado pela API: "listar tarefas" de um colaborador vira a consulta das proprias tarefas.
         match = resolve_for_role(self.parser.match(utterance), user_type, self.parser.commands)
         if match is None:
@@ -328,9 +340,11 @@ class RestAssistant:
         # Com o cliente HTTP real, last_response traz status e Idempotency-Replayed.
         return client.last_response or APIResponse(200, data)
 
-    def _detect_user_type(self) -> Optional[str]:
+    def _detect_user_type(self, *, reuse: bool = False) -> Optional[str]:
+        """Perfil do dono do JWT. reuse=True (so leituras desta mensagem) aproveita o perfil ja lido nela; preparar,
+        confirmar e executar escritas sempre consultam /users/me de novo (validacao independente, fail-closed)."""
         try:
-            me = self.api.me()
+            me = self.authenticated_profile() if reuse else self.api.me()
             tipo = (me or {}).get("tipo")
             if isinstance(tipo, str) and tipo.strip().lower() in {"admin", "user"}:
                 return tipo.strip().lower()

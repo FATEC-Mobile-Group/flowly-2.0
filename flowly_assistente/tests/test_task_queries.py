@@ -275,7 +275,7 @@ class AgentTaskQueryTests(ReadResponseTestCase):
         payload, text, _ = self.read("token-user", "Como está meu dia?")
         self.assertEqual(payload["command"]["key"], "tasks_summary")
         self.assertIn("Prioridade sugerida: Revisar relatório", text)
-        self.assertIsNone(self.pending("token-user"))  # resumo nao deixa lista numerada
+        self.assertEqual(self.pending("token-user"), {"mode": "task_selection", "tasks": []})  # sem lista nem tarefa escolhida  # resumo nao deixa lista numerada
         payload, text, _ = self.read("token-user", "Quais entregas tenho nesta semana?")
         self.assertEqual(payload["query"]["range"], {"from": "2026-11-23", "to": "2026-11-29"})
         self.assertIn("1 delas já venceu.", text)
@@ -325,7 +325,7 @@ class AgentTaskQueryTests(ReadResponseTestCase):
         self.assertTrue(text.startswith("Você tem 2 tarefas atrasadas."))
         # Sem tarefas no novo periodo: a selecao antiga nao continua valendo.
         self.read("token-user", "o que tenho para amanhã?")
-        self.assertIsNone(self.pending("token-user"))
+        self.assertEqual(self.pending("token-user"), {"mode": "task_selection", "tasks": []})  # sem lista nem tarefa escolhida
 
     def test_legacy_assist_path_returns_the_filtered_result(self):
         assistant = RestAssistant(api_base_url="https://api.flowly.test/api", token="token-user")

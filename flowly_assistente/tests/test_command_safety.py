@@ -625,6 +625,19 @@ class TaskSelectionSafetyTests(AssistantFlowTestCase):
         self.assertTrue(payload["action_executed"], payload["reply_text"])
         self.assertEqual(self.api.writes(), [("PUT", f"/tarefas/{BACKLOG_TASKS[6]['_id']}/atribuir-para-mim", None)])
 
+    def test_sim_after_a_read_clarification_never_confirms_a_pending_write(self):
+        # Escrita pendente (resumo na tela) + pergunta de leitura nao entendida + "sim": nada e executado.
+        self.browse(select="2")
+        payload, _status = self.send("token-user", "atribuir a segunda para mim")
+        self.assertEqual(payload["conversation"]["status"], "awaiting_confirmation")
+        pending = [op for op in self.ops.ops if op["status"] == "pending"]
+        self.assertEqual(len(pending), 1)
+        for phrase in ("qual é a agência dela?", "sim", "Sim, isso"):
+            with self.subTest(phrase=phrase):
+                self.send("token-user", phrase)
+                self.assert_no_writes()
+        self.assertNotIn("completed", [op["status"] for op in self.ops.ops])
+
     def test_ordinal_or_number_beyond_a_short_list_asks_again(self):
         self.api.backlog = BACKLOG_TASKS[:3]
         for phrase in ("quinta", "atribuir a quarta para mim", "atribuir a 4 para mim"):
