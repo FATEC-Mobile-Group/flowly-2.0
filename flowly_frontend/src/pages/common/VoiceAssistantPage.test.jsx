@@ -129,7 +129,7 @@ describe('R1: resultado provisorio nunca vira comando', () => {
     expect(sentCommands()).toEqual([]);
     expect(input()).toHaveValue('atribuir a 1');
     expect(screen.getByText(/Ouvi “atribuir a 1”, mas o navegador não confirmou a frase e ela pode estar incompleta. Nada foi enviado/)).toBeInTheDocument();
-    expect(statusText()).toBe('Standby');
+    expect(statusText()).toBe('Erro') // falha da escuta: pede acao da pessoa;
   });
 
   test('provisorio seguido de fim sem resultado final: zero envios', async () => {
@@ -512,7 +512,7 @@ describe('Falhas do reconhecimento: mensagem por tipo, nada enviado e microfone 
 
     expect(screen.getByText(message)).toBeInTheDocument();
     expect(sentCommands()).toEqual([]);
-    expect(statusText()).toBe('Standby');
+    expect(statusText()).toBe('Erro') // falha da escuta: pede acao da pessoa;
     // Recuperacao: a proxima tentativa abre uma sessao nova normalmente.
     const next = startListening();
     fire(next.onresult, resultEvent([['meu perfil', true]]));
@@ -581,7 +581,7 @@ describe('Falhas do reconhecimento: mensagem por tipo, nada enviado e microfone 
     await flush();
 
     expect(screen.getByText(/Não consegui ligar o microfone agora/)).toBeInTheDocument();
-    expect(statusText()).toBe('Standby');
+    expect(statusText()).toBe('Erro') // falha da escuta: pede acao da pessoa;
     expect(sentCommands()).toEqual([]);
 
     FakeRecognition.startError = null;
@@ -603,9 +603,9 @@ describe('R5: inicio e encerramento', () => {
 
     expect(FakeRecognition.instances).toHaveLength(1);
     expect(lastSession().start).toHaveBeenCalledTimes(1);
-    expect(statusText()).toBe('Iniciando');
+    expect(statusText()).toBe('Preparando microfone');
     fire(lastSession().onstart);
-    expect(statusText()).toBe('Iniciando');
+    expect(statusText()).toBe('Preparando microfone');
     fire(lastSession().onaudiostart);
     expect(statusText()).toBe('Ouvindo — pode falar');
   });
@@ -714,7 +714,7 @@ describe('Voz do assistente e estados', () => {
     await flush();
     const first = window.speechSynthesis.speak.mock.calls[0][0];
     fire(first.onstart);
-    expect(statusText()).toBe('Falando');
+    expect(statusText()).toBe('Respondendo');
     fire(first.onend);
     expect(statusText()).toBe('Standby');
 
@@ -723,7 +723,7 @@ describe('Voz do assistente e estados', () => {
     const second = window.speechSynthesis.speak.mock.calls[1][0];
     fire(second.onstart);
     fire(first.onend);
-    expect(statusText()).toBe('Falando');
+    expect(statusText()).toBe('Respondendo');
     fire(second.onend);
     expect(statusText()).toBe('Standby');
   });
@@ -972,12 +972,12 @@ describe('Prontidao real do microfone: "Ouvindo" so com o audio chegando', () =>
       clickStart();
       const session = lastSession();
       fire(session.onstart);
-      expect(statusText()).toBe('Iniciando');
+      expect(statusText()).toBe('Preparando microfone');
       expect(screen.getByRole('button', { name: 'Iniciando escuta' })).toBeInTheDocument();
       expect(hintText()).toMatch(/espere aparecer "Ouvindo — pode falar"/);
 
       advance(3000);
-      expect(statusText()).toBe('Iniciando');
+      expect(statusText()).toBe('Preparando microfone');
       expect(hintText()).toMatch(/ainda está abrindo o microfone/);
 
       advance(3000); // 6 s depois do onstart, como nas sessoes reais mais lentas
@@ -1007,7 +1007,7 @@ describe('Prontidao real do microfone: "Ouvindo" so com o audio chegando', () =>
     expect(session.stop).not.toHaveBeenCalled();
     expect(session.abort).not.toHaveBeenCalled();
     expect(FakeRecognition.instances).toHaveLength(1);
-    expect(statusText()).toBe('Iniciando');
+    expect(statusText()).toBe('Preparando microfone');
   });
 
   test('cancelar durante a inicializacao descarta, e eventos tardios dessa sessao nao mudam nada', async () => {
@@ -1027,7 +1027,7 @@ describe('Prontidao real do microfone: "Ouvindo" so com o audio chegando', () =>
     fire(late.audio);
     fire(late.result, resultEvent([['atribuir a 1 para mim', true]]));
     fire(late.end);
-    expect(statusText()).toBe('Iniciando');
+    expect(statusText()).toBe('Preparando microfone');
     expect(sentCommands()).toEqual([]);
 
     fire(second.onaudiostart);
@@ -1050,7 +1050,7 @@ describe('Prontidao real do microfone: "Ouvindo" so com o audio chegando', () =>
 
       expect(session.abort).toHaveBeenCalledTimes(1);
       expect(screen.getByText(/O navegador não abriu o microfone a tempo. Nada foi enviado/)).toBeInTheDocument();
-      expect(statusText()).toBe('Standby');
+      expect(statusText()).toBe('Erro') // falha da escuta: pede acao da pessoa;
       fire(late.result, resultEvent([['meu perfil', true]]));
       fire(late.end);
       expect(sentCommands()).toEqual([]);
@@ -1073,7 +1073,7 @@ describe('Prontidao real do microfone: "Ouvindo" so com o audio chegando', () =>
 
     expect(screen.getByText(/encerrou a escuta antes de abrir o microfone/)).toBeInTheDocument();
     expect(sentCommands()).toEqual([]);
-    expect(statusText()).toBe('Standby');
+    expect(statusText()).toBe('Erro') // falha da escuta: pede acao da pessoa;
   });
 
   test('fala ou resultado antes do audiostart tambem confirmam a captura', async () => {
@@ -1193,7 +1193,7 @@ describe('Escuta limitada a uma fala: pausa nao corta, sem fala fecha, nada parc
       expect(session.abort).toHaveBeenCalledTimes(1);
       expect(sentCommands()).toEqual([]);
       expect(screen.getByText(/Não ouvi nenhuma fala/)).toBeInTheDocument();
-      expect(statusText()).toBe('Standby');
+      expect(statusText()).toBe('Erro') // falha da escuta: pede acao da pessoa;
       advance(60000); // nada reabre sozinho
       expect(FakeRecognition.instances).toHaveLength(1);
       fireEvent.click(retryButton());
@@ -1354,7 +1354,7 @@ describe('Controles da escuta junto da estrela: Cancelar e Concluir', () => {
     await flush();
     const utterance = window.speechSynthesis.speak.mock.calls.at(-1)[0];
     act(() => utterance.onstart());
-    expect(statusText()).toBe('Falando');
+    expect(statusText()).toBe('Respondendo');
     expect(document.querySelector('.voice-interaction-hint')).toHaveTextContent('Respondendo por voz');
   });
 });

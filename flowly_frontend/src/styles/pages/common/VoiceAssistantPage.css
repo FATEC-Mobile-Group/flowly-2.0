@@ -84,9 +84,39 @@
   box-shadow: 0 0 0 6px rgba(168, 85, 247, 0.16);
 }
 
+/* Aguardando resposta: microfone DESLIGADO. Antes era um ponto azul com halo, parecido com o de "Ouvindo"; agora e
+   um anel vazio, sem halo, para nao sugerir captura. */
 .voice-status.awaiting span {
-  background: #38bdf8;
-  box-shadow: 0 0 0 6px rgba(56, 189, 248, 0.16);
+  background: transparent;
+  border: 2px solid #8aa0b6;
+  box-shadow: none;
+}
+
+.voice-status.resuming span {
+  background: #7dd3c0;
+  animation: voice-status-pulse 1.2s ease-in-out infinite;
+}
+
+.voice-status.error span {
+  background: #ef4444;
+  box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.14);
+}
+
+@keyframes voice-status-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-status.resuming span {
+    animation: none;
+  }
+}
+
+.voice-voice-warning {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
 }
 
 /* Antes: height: calc(100vh - 130px) somado ao flex: 1 passava da altura real (cabecalho + padding ~150 px)
