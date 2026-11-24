@@ -174,18 +174,22 @@ python main.py --cli
 
 ## CORS & Cloud Deploy
 
-### CORS Automático
-Headers adicionados automaticamente:
+### CORS
+`FLOWLY_CORS_ORIGIN` lista as origens autorizadas, separadas por vírgula. A resposta devolve somente a origem da
+requisição, e só quando ela está na lista (comparação exata; sem curinga, subdomínio ou `null`):
 ```
-Access-Control-Allow-Origin: *
+Access-Control-Allow-Origin: <origem da requisição>
 Access-Control-Allow-Methods: GET, POST, OPTIONS
 Access-Control-Allow-Headers: Content-Type, Authorization
+Vary: Origin
 ```
 
-Configure via env var:
 ```env
-FLOWLY_CORS_ORIGIN=https://seu-frontend.com
+FLOWLY_CORS_ORIGIN=https://seu-frontend.com,https://seu-preview.com
 ```
+
+`*` não autoriza nenhuma origem. Para desenvolvimento local, liste a origem do Vite (ex.: `http://localhost:5173`).
+Requisições sem `Origin` (servidor a servidor) seguem sem cabeçalhos de CORS. CORS não substitui o JWT.
 
 ### Deploy Google Cloud
 ```bash
@@ -223,7 +227,7 @@ FLOWLY_API_TOKEN=seu_jwt_token
 # HTTP Server
 FLOWLY_API_TIMEOUT_SEC=20
 FLOWLY_MATCH_THRESHOLD=78
-FLOWLY_CORS_ORIGIN=*
+FLOWLY_CORS_ORIGIN=http://localhost:5173
 
 # Debug
 FLOWLY_DEBUG=false
