@@ -28,6 +28,8 @@ class TaskTransitionConflictError extends Error {
 const criterioBooleano = (valor) => (valor === true ? true : { $ne: true });
 const criterioNumero = (valor) => (valor == null || valor === 0 ? { $in: [0, null] } : valor);
 const criterioStatus = (valor) => (valor == null || valor === 'pendente' ? { $in: ['pendente', null] } : valor);
+// tempoGastoSegundos nao tem padrao: ausente/nulo casa com { campo: null } (que no Mongo cobre os dois casos).
+const criterioSegundos = (valor) => (valor == null ? null : valor);
 
 const inicioValido = (valor) => valor instanceof Date && Number.isFinite(valor.getTime());
 
@@ -45,6 +47,7 @@ const montarCondicao = (tarefa, userId) => {
       ? tarefa.ultimaAtualizacaoCronometro
       : { $not: { $type: 'date' } }; // ausente, nulo ou invalido (so chega aqui sem pausa: status -> em_andamento)
     condicao.tempoGasto = criterioNumero(tarefa.tempoGasto);
+    condicao.tempoGastoSegundos = criterioSegundos(tarefa.tempoGastoSegundos);
     condicao.tempoEstimado = criterioNumero(tarefa.tempoEstimado);
     condicao.tempoExcedido = criterioBooleano(tarefa.tempoExcedido);
   }
@@ -77,7 +80,27 @@ const motivoInicioInconsistente = (inicio, agora) => {
   return null;
 };
 
-// Pausa: minutos inteiros (floor) desde o inicio, somados ao acumulado; tempoExcedido pela regra de sempre.
+// Acumulado em segundos antes da sessao: tempoGastoSegundos quando gravado; tarefa anterior ao campo usa o legado
+// tempoGasto (minutos) * 60 como base historica (segundos nunca gravados nao sao reconstruidos). Valor gravado
+// invalido (negativo, NaN, nao numero) e erro real, como no acumulado legado.
+const acumuladoEmSegundos = (tarefa) => {
+  const preciso = tarefa.tempoGastoSegundos;
+  if (preciso !== undefined && preciso !== null) {
+    if (typeof preciso !== 'number' || !Number.isFinite(preciso) || preciso < 0) {
+      throw new Error('Tempo gasto em segundos armazenado invalido');
+    }
+    return Math.floor(preciso);
+  }
+  const base = tarefa.tempoGasto === null ? 0 : tarefa.tempoGasto;
+  if (typeof base !== 'number' || !Number.isFinite(base)) {
+    throw new Error('Tempo gasto armazenado invalido');
+  }
+  return Math.max(Math.floor(base * 60), 0);
+};
+
+// Pausa: segundos inteiros desde o inicio (relogio do servidor), somados ao acumulado preciso; antes era floor em
+// minutos por sessao e 2 min 23 s viravam 2 min. tempoGasto (minutos) e derivado do total, entao os segundos que
+// sobram de uma sessao entram na seguinte. tempoExcedido pela regra de sempre (minutos acumulados > estimado).
 // Inicio ausente/invalido ou no futuro alem da tolerancia: TaskTimerInconsistentError (nada e gravado).
 // Acumulado armazenado invalido e erro real (500), nao algo a corrigir em silencio: ausente vira o padrao 0 na
 // leitura e null conta como 0 (como no codigo legado); undefined so aparece quando o Mongoose nao conseguiu converter
@@ -88,20 +111,18 @@ const calcularPausa = (tarefa, agora) => {
   if (motivo) {
     throw new TaskTimerInconsistentError(motivo, tarefa._id);
   }
-  const minutos = Math.max(Math.floor((agora.getTime() - inicio.getTime()) / 60000), 0); // dentro da tolerancia: 0
-  const base = tarefa.tempoGasto === null ? 0 : tarefa.tempoGasto;
-  if (typeof base !== 'number' || !Number.isFinite(base)) {
-    throw new Error('Tempo gasto armazenado invalido');
-  }
-  const tempoGasto = base + minutos;
-  if (!Number.isFinite(tempoGasto)) {
+  const segundos = Math.max(Math.floor((agora.getTime() - inicio.getTime()) / 1000), 0); // dentro da tolerancia: 0
+  const minutos = Math.floor(segundos / 60); // texto do log ("+N mins"), como antes
+  const tempoGastoSegundos = acumuladoEmSegundos(tarefa) + segundos;
+  if (!Number.isFinite(tempoGastoSegundos)) {
     throw new Error('Tempo gasto calculado invalido');
   }
-  const set = { tempoGasto, cronometroAtivo: false };
+  const tempoGasto = Math.floor(tempoGastoSegundos / 60);
+  const set = { tempoGasto, tempoGastoSegundos, cronometroAtivo: false };
   if (tarefa.tempoEstimado && tempoGasto > tarefa.tempoEstimado) {
     set.tempoExcedido = true;
   }
-  return { minutos, set };
+  return { minutos, segundos, set };
 };
 
 // Transicao de status (legado e caminho com Idempotency-Key): mudar para outro status que nao em_andamento pausa o

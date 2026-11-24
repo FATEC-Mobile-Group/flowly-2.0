@@ -11,6 +11,7 @@ import TarefaModal from "../../components/tarefas/TarefaModal";
 import { chaveDiaLocal, formatarDataEntrega, formatarDia } from "../dashboard/painelGeralUtils";
 import {
   JANELA_PROXIMAS_DIAS,
+  acumuladoEmSegundos,
   avisarCronometroAtualizado,
   formatarDuracao,
   organizarMeuDia,
@@ -32,7 +33,7 @@ const SECOES = [
 const formatarTempo = formatarDuracao;
 
 // Campos do cronometro confirmados pela resposta da API; o resto da tarefa (equipe populada etc.) fica como estava.
-const CAMPOS_CRONOMETRO = ['cronometroAtivo', 'tempoGasto', 'ultimaAtualizacaoCronometro', 'tempoExcedido'];
+const CAMPOS_CRONOMETRO = ['cronometroAtivo', 'tempoGasto', 'tempoGastoSegundos', 'ultimaAtualizacaoCronometro', 'tempoExcedido'];
 const mesclarCronometro = (tarefa, confirmada) => {
   const proxima = { ...tarefa };
   CAMPOS_CRONOMETRO.forEach((campo) => {
@@ -61,8 +62,8 @@ const gerarPDF = (tarefa) => {
   if (tarefa.tempoEstimado) {
     doc.text(`Tempo Estimado: ${formatarTempo(tarefa.tempoEstimado * 60)}`, 20, linhaAtual + (espacoEntreLinhas * 3));
   }
-  if (tarefa.tempoGasto > 0) {
-    doc.text(`Tempo Gasto: ${formatarTempo(tarefa.tempoGasto * 60)}`, 20, linhaAtual + (espacoEntreLinhas * 4));
+  if (acumuladoEmSegundos(tarefa) > 0) {
+    doc.text(`Tempo Gasto: ${formatarTempo(acumuladoEmSegundos(tarefa))}`, 20, linhaAtual + (espacoEntreLinhas * 4));
   }
   doc.setFontSize(10);
   doc.text(`PDF gerado em: ${new Date().toLocaleString()}`, 20, 280);
@@ -150,7 +151,7 @@ function ItemTarefa({
               <span className="meu-dia-sr">Urgência </span>{urgencia}
             </span>
           )}
-          {tarefa.cronometroAtivo && <span>Tempo gasto: {formatarTempo(segundosAtivos ?? (tarefa.tempoGasto || 0) * 60)}</span>}
+          {tarefa.cronometroAtivo && <span>Tempo gasto: {formatarTempo(segundosAtivos ?? acumuladoEmSegundos(tarefa))}</span>}
         </span>
       </div>
       <div className="meu-dia-item-prazo">
@@ -294,6 +295,7 @@ function DashboardUser() {
             status: statusConfirmado,
             ...(confirmada.cronometroAtivo !== undefined ? { cronometroAtivo: confirmada.cronometroAtivo } : {}),
             ...(confirmada.tempoGasto !== undefined ? { tempoGasto: confirmada.tempoGasto } : {}),
+            ...(confirmada.tempoGastoSegundos !== undefined ? { tempoGastoSegundos: confirmada.tempoGastoSegundos } : {}),
             ...(confirmada.ultimaAtualizacaoCronometro !== undefined
               ? { ultimaAtualizacaoCronometro: confirmada.ultimaAtualizacaoCronometro } : {}),
           }

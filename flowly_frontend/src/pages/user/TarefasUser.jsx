@@ -7,6 +7,7 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import Sidebar from '../../components/layout/Sidebar';
 import TarefaModal from '../../components/tarefas/TarefaModal';
 import { validObjectId } from '../../utils/navigationRequests';
+import { avisarCronometroAtualizado } from './meuDiaUtils';
 import '../../styles/pages/user/TarefasUser.css';
 
 const TarefasUser = () => {
@@ -68,6 +69,7 @@ const TarefasUser = () => {
     try {
       await apiClient.put(API_ENDPOINTS.UPDATE_TAREFA(id) + '/status', { status: novoStatus });
       carregarTarefas();
+      avisarCronometroAtualizado(); // a mudanca de status pode ter pausado o cronometro (FloatingTimer atualiza)
     } catch (err) {
       setMensagem('Erro ao atualizar status');
     }
@@ -86,6 +88,7 @@ const TarefasUser = () => {
           : tarefa
       )));
       carregarTarefas();
+      avisarCronometroAtualizado(); // transicao confirmada: o FloatingTimer consulta na hora
       if (response.data.tempoExcedido) {
         setMensagem('Atenção: O tempo estimado para esta tarefa foi excedido!');
       } else {

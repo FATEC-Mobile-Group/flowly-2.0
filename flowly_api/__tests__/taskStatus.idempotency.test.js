@@ -400,7 +400,7 @@ const ERRO_500 = { erro: 'Erro ao atualizar status' };
 const MSG_INCONSISTENTE = 'O cronômetro desta tarefa está inconsistente: o horário de início está ausente, '
   + 'inválido ou no futuro. Nenhum tempo foi contabilizado e a tarefa não foi alterada.';
 const MSG_CONFLITO = 'A tarefa foi alterada por outra operação ao mesmo tempo. Tente novamente.';
-const CAMPOS_DA_TRANSICAO = ['status', 'tempoGasto', 'cronometroAtivo', 'tempoExcedido', 'ultimaAtualizacaoCronometro', 'updatedAt'];
+const CAMPOS_DA_TRANSICAO = ['status', 'tempoGasto', 'tempoGastoSegundos', 'cronometroAtivo', 'tempoExcedido', 'ultimaAtualizacaoCronometro', 'updatedAt'];
 const NAO_FALSIFICAR_ALEM_DE_DATE = [
   'hrtime', 'nextTick', 'performance', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame',
   'requestIdleCallback', 'cancelIdleCallback', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval',
@@ -761,7 +761,7 @@ describe('PUT /api/tarefas/:id/status com Idempotency-Key', () => {
 
     // b) O legado grava entre a leitura e a gravacao da protegida: WriteConflict, o callback repete e recalcula.
     mockDb.logs.splice(0, mockDb.logs.length);
-    Object.assign(tarefa, { status: 'em_andamento', tempoGasto: 10 });
+    Object.assign(tarefa, { status: 'em_andamento', tempoGasto: 10, tempoGastoSegundos: undefined }); // tarefa "antiga" de novo: so o acumulado legado (o preciso da parte anterior sai)
     ativo(30);
     let pausou = false;
     let liberar;

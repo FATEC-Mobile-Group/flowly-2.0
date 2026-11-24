@@ -197,7 +197,7 @@ const id = () => new mongoose.Types.ObjectId().toString();
 const MSG_CONFLITO = 'A tarefa foi alterada por outra operação ao mesmo tempo. Tente novamente.';
 const MSG_INCONSISTENTE = 'O cronômetro desta tarefa está inconsistente: o horário de início está ausente, '
   + 'inválido ou no futuro. Nenhum tempo foi contabilizado e a tarefa não foi alterada.';
-const CAMPOS_DA_TRANSICAO = ['status', 'tempoGasto', 'cronometroAtivo', 'tempoExcedido', 'ultimaAtualizacaoCronometro', 'updatedAt'];
+const CAMPOS_DA_TRANSICAO = ['status', 'tempoGasto', 'tempoGastoSegundos', 'cronometroAtivo', 'tempoExcedido', 'ultimaAtualizacaoCronometro', 'updatedAt'];
 const NAO_FALSIFICAR_ALEM_DE_DATE = [
   'hrtime', 'nextTick', 'performance', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame',
   'requestIdleCallback', 'cancelIdleCallback', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval',
@@ -373,16 +373,17 @@ describe('status e cronometro legados: gravacao condicional e concorrencia', () 
     expect(detalhesLog()).toEqual(['Cronômetro iniciado']);
   });
 
-  test('4. pausa manual normal: soma os minutos inteiros e mantem o inicio gravado (regra atual)', async () => {
+  test('4. pausa manual normal: soma os segundos da sessao ao acumulado e mantem o inicio gravado', async () => {
     ativo(30);
     const inicio = tarefa.ultimaAtualizacaoCronometro.getTime();
     const response = await putCronometro('pausar');
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ msg: 'Cronômetro pausardo com sucesso', tempoExcedido: false });
-    expect(tarefa).toMatchObject({ cronometroAtivo: false, tempoGasto: 40, tempoExcedido: false, status: 'em_andamento' });
+    // Base legada 10 min (600 s) + sessao de 30 min 10 s: os 10 s ficam no acumulado preciso (antes eram descartados).
+    expect(tarefa).toMatchObject({ cronometroAtivo: false, tempoGasto: 40, tempoGastoSegundos: 2410, tempoExcedido: false, status: 'em_andamento' });
     expect(tarefa.ultimaAtualizacaoCronometro.getTime()).toBe(inicio);
     expect(mockDb.gravacoes[0].update.$unset).toBeUndefined();
-    expect(Object.keys(mockDb.gravacoes[0].update.$set).sort()).toEqual(['cronometroAtivo', 'tempoGasto', 'updatedAt']);
+    expect(Object.keys(mockDb.gravacoes[0].update.$set).sort()).toEqual(['cronometroAtivo', 'tempoGasto', 'tempoGastoSegundos', 'updatedAt']);
     expect(mockDb.eventos).toEqual(['gravacao:aplicada', 'log:cronometro_pausado']);
     expect(detalhesLog()).toEqual(['Cronômetro pausado. +30 mins']);
   });
@@ -456,7 +457,7 @@ describe('status e cronometro legados: gravacao condicional e concorrencia', () 
     // b) O status leu; a pausa manual grava antes (+30). O status rele e so muda o status, sem pausar de novo.
     mockDb.logs.splice(0, mockDb.logs.length);
     mockDb.leituras = 0;
-    Object.assign(tarefa, { status: 'em_andamento', tempoGasto: 10 });
+    Object.assign(tarefa, { status: 'em_andamento', tempoGasto: 10, tempoGastoSegundos: undefined }); // tarefa "antiga" de novo: so o acumulado legado (o preciso da parte anterior sai)
     ativo(30);
     const respostaStatus = await comLeituraPausada(1, () => putStatus('pendente'), async () => {
       expect((await putCronometro('pausar')).status).toBe(200);
@@ -657,6 +658,26 @@ describe('status e cronometro legados: gravacao condicional e concorrencia', () 
     expect(mockDb.gravacoes).toHaveLength(gravacoes); // nenhuma recusa grava
     expect((await putCronometro('pausar')).status).toBe(200);
     expect((await putCronometro('pausar')).body).toEqual({ erro: 'Cronômetro já está pausado' });
+  });
+
+  test('18b. rotas reais: 8 min 23 s, pausa, retoma 17 s = 8 min 40 s, relido do banco (reinicio simulado)', async () => {
+    Object.assign(tarefa, { cronometroAtivo: true, tempoGasto: 0, tempoGastoSegundos: undefined,
+      ultimaAtualizacaoCronometro: new Date(Date.now() - 503 * 1000) });
+    expect((await putCronometro('pausar')).status).toBe(200);
+    expect(tarefa).toMatchObject({ cronometroAtivo: false, tempoGastoSegundos: 503, tempoGasto: 8 });
+
+    // Cada requisicao rele a tarefa do banco: e o que acontece depois de reiniciar a API.
+    const inicio = await putCronometro('iniciar');
+    expect(inicio.status).toBe(200);
+    expect(inicio.body.tarefa).toMatchObject({ cronometroAtivo: true, tempoGastoSegundos: 503, tempoGasto: 8 });
+    tarefa.ultimaAtualizacaoCronometro = new Date(Date.now() - 17 * 1000);
+    const pausa = await putCronometro('pausar');
+    expect(pausa.status).toBe(200);
+    expect(pausa.body.tarefa).toMatchObject({ cronometroAtivo: false, tempoGastoSegundos: 520, tempoGasto: 8 });
+    expect(tarefa).toMatchObject({ tempoGastoSegundos: 520, tempoGasto: 8 });
+    // Pausa repetida nao soma de novo.
+    expect((await putCronometro('pausar')).status).toBe(400);
+    expect(tarefa.tempoGastoSegundos).toBe(520);
   });
 
   test('19. campos nao relacionados alterados por outra rota no meio do caminho sao preservados', async () => {
