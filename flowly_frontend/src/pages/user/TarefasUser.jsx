@@ -6,6 +6,7 @@ import { API_ENDPOINTS } from '../../config/config';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import Sidebar from '../../components/layout/Sidebar';
 import TarefaModal from '../../components/tarefas/TarefaModal';
+import { validObjectId } from '../../utils/navigationRequests';
 import '../../styles/pages/user/TarefasUser.css';
 
 const TarefasUser = () => {
@@ -14,9 +15,10 @@ const TarefasUser = () => {
   const [equipeSelecionada, setEquipeSelecionada] = useState('');
   const [mensagem, setMensagem] = useState('');
   const [tarefaInspecionada, setTarefaInspecionada] = useState(null);
+  const [tarefasCarregadas, setTarefasCarregadas] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  // "Ver tarefa" do assistente: abre o detalhe so se a tarefa estiver na lista do proprio usuario (vinda da API).
+  // "Ver tarefa" (assistente, notificacao): abre o detalhe so se a tarefa estiver na lista do proprio usuario.
   const tarefaPedida = location.state?.abrirTarefaId;
 
   useEffect(() => {
@@ -25,15 +27,19 @@ const TarefasUser = () => {
   }, []);
 
   useEffect(() => {
-    if (!tarefaPedida || !Array.isArray(tarefas)) return;
-    const tarefa = tarefas.find((item) => item?._id === tarefaPedida);
-    if (!tarefa) return;
-    const equipeId = typeof tarefa.equipe === 'object' ? tarefa.equipe?._id : tarefa.equipe;
-    if (equipeId) setEquipeSelecionada(equipeId);
-    setTarefaInspecionada(tarefaPedida);
+    if (tarefaPedida == null || !tarefasCarregadas) return;
+    const id = validObjectId(String(tarefaPedida));
+    const tarefa = id && Array.isArray(tarefas) ? tarefas.find((item) => item?._id === id) : null;
+    if (tarefa) {
+      const equipeId = typeof tarefa.equipe === 'object' ? tarefa.equipe?._id : tarefa.equipe;
+      if (equipeId) setEquipeSelecionada(equipeId);
+      setTarefaInspecionada(id);
+    } else {
+      setMensagem('Atenção: a tarefa solicitada não está disponível na sua lista.');
+    }
     // Consome o pedido: voltar ou recarregar a pagina nao reabre o detalhe.
     navigate(location.pathname, { replace: true, state: null });
-  }, [tarefaPedida, tarefas, navigate, location.pathname]);
+  }, [tarefaPedida, tarefas, tarefasCarregadas, navigate, location.pathname]);
 
   const carregarTarefas = async () => {
     try {
@@ -41,6 +47,8 @@ const TarefasUser = () => {
       setTarefas(response.data);
     } catch (error) {
       setMensagem('Erro ao carregar tarefas');
+    } finally {
+      setTarefasCarregadas(true);
     }
   };
 

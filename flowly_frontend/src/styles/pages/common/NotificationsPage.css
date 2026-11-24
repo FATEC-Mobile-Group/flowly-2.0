@@ -126,3 +126,36 @@
     align-items: flex-start;
   }
 }
+
+/* Acoes da notificacao: abrir o recurso de origem e marcar como lida */
+.notification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.notification-actions .open-btn {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--primary-color, #7e57c2);
+  background: var(--primary-color, #7e57c2);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.notification-actions .open-btn:hover {
+  filter: brightness(1.08);
+}
+
+.notification-actions .open-btn:focus-visible,
+.notification-actions .read-btn:focus-visible {
+  outline: 2px solid var(--primary-color, #7e57c2);
+  outline-offset: 2px;
+}
+
+.notification-footer {
+  flex-wrap: wrap;
+  gap: 8px;
+}

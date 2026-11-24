@@ -4,6 +4,7 @@ import { API_ENDPOINTS } from "../../config/config";
 import { Link } from "react-router-dom";
 import "../../styles/pages/admin/DashboardAdmin.css";
 import Sidebar from "../../components/layout/Sidebar";
+import { authUtils } from "../../config/authUtils";
 import ConfirmDialog from "../../components/common/ConfirmDialog";
 
 function DashboardAdmin() {
@@ -153,6 +154,16 @@ function DashboardAdmin() {
                   <Link to={`/admin/equipe/${equipe._id}`} className="btn-edit">
                     Editar
                   </Link>
+                  {(equipe.membros || []).some((membro) => String(membro?._id || membro) === String(authUtils.getUserId())) && (
+                    <Link
+                      to="/admin/chats"
+                      state={{ equipeId: equipe._id }}
+                      className="btn-edit btn-chat"
+                      aria-label={`Abrir chat da equipe ${equipe.nome}`}
+                    >
+                      Abrir chat
+                    </Link>
+                  )}
                   <button
                     className="btn-delete"
                     onClick={() => setDeleteTarget(equipe)}

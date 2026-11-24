@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import apiClient, { getFullApiUrl } from '../../config/apiClient';
+import { Link } from 'react-router-dom';
 import Sidebar from '../../components/layout/Sidebar';
 import { API_ENDPOINTS } from '../../config/config';
 import '../../styles/pages/admin/DashboardAdmin.css';
@@ -85,7 +86,17 @@ function EquipesUser() {
           <section className="equipes-user-grid">
             {equipes.map((equipe) => (
               <article key={equipe._id} className="equipe-user-card">
-                <h3>{equipe.nome}</h3>
+                <div className="equipe-user-card-header">
+                  <h3>{equipe.nome}</h3>
+                  <Link
+                    className="equipe-user-chat"
+                    to="/chats"
+                    state={{ equipeId: equipe._id }}
+                    aria-label={`Abrir chat da equipe ${equipe.nome}`}
+                  >
+                    Abrir chat
+                  </Link>
+                </div>
                 <p>
                   <strong>Membros:</strong> {equipe.membros?.length || 0}
                 </p>
