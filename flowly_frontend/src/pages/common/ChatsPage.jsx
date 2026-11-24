@@ -86,13 +86,24 @@ const ChatsPageContent = ({ requestedEquipeId = null, onRequestHandled }) => {
       .join('')
       .toUpperCase();
 
+  // URLs de foto que ja falharam (assinatura expirada, arquivo ausente): as linhas com a mesma URL
+  // passam direto para as iniciais, sem nova requisicao. So o carregamento seguinte do historico traz URLs novas.
+  const [fotosComFalha, setFotosComFalha] = useState(() => new Set());
+  const marcarFotoComFalha = useCallback((src) => {
+    setFotosComFalha((prev) => (prev.has(src) ? prev : new Set(prev).add(src)));
+  }, []);
+
   const renderAvatar = (user) => {
-    const photo = user?.fotoPerfil;
+    const photo = typeof user?.fotoPerfil === 'string' ? user.fotoPerfil.trim() : '';
     const name = user?.nome || 'Usuario';
+    const src = photo ? getFullApiUrl(photo) : '';
+    const usarFoto = src && !fotosComFalha.has(src);
 
     return (
       <div className="chat-avatar" aria-label={name}>
-        {photo ? <img src={getFullApiUrl(photo)} alt="" /> : <span>{getInitials(name)}</span>}
+        {usarFoto
+          ? <img src={src} alt="" onError={() => marcarFotoComFalha(src)} />
+          : <span>{getInitials(name)}</span>}
       </div>
     );
   };
