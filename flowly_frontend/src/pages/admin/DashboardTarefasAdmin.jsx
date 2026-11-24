@@ -3,6 +3,7 @@ import apiClient from "../../config/apiClient";
 import { API_ENDPOINTS } from "../../config/config";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { validObjectId } from "../../utils/navigationRequests";
+import { formatarDataEntrega } from "../dashboard/painelGeralUtils";
 import { formatarStatus } from "../../config/statusUtils";
 import "../../styles/pages/admin/DashboardAdmin.css";
 import Sidebar from "../../components/layout/Sidebar";
@@ -119,7 +120,7 @@ function DashboardTarefasAdmin() {
                   <div className="task-meta-card">
                     <span className="task-meta-label">Entrega</span>
                     <span className="task-meta-value">
-                      {new Date(tarefa.dataEntrega).toLocaleDateString()}
+                      {formatarDataEntrega(tarefa.dataEntrega, "Sem prazo")}
                     </span>
                   </div>
                   <div className="task-meta-card">

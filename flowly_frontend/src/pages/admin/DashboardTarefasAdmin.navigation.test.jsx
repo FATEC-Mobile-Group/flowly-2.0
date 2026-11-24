@@ -58,6 +58,9 @@ test.each([['inexistente', 'c'.repeat(24)], ['malformado', '../x']])('id %s: avi
 test('sem pedido a lista continua igual e Editar segue para a rota de edicao', async () => {
   renderPage(undefined);
   await screen.findByText('Planilha');
+  // Data de entrega no dia gravado (meia-noite UTC), sem o deslocamento do toLocaleDateString.
+  expect(screen.getByText('Revisar relatório').closest('.task-item')).toHaveTextContent('25/11/2026');
+  expect(screen.getByText('Planilha').closest('.task-item')).toHaveTextContent('26/11/2026');
   expect(screen.queryByRole('status')).toBeNull();
   fireEvent.click(screen.getAllByRole('button', { name: 'Editar' })[0]);
   expect(screen.getByTestId('estado')).toHaveTextContent(`/admin/editar-tarefa/${T1}|null`);

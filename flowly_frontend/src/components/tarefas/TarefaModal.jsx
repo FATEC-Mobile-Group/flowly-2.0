@@ -3,6 +3,7 @@ import { FaDownload, FaFileAlt, FaFileImage, FaFilePdf, FaTrashAlt } from 'react
 import apiClient, { getFullApiUrl } from '../../config/apiClient';
 import { authUtils } from '../../config/authUtils';
 import { formatarStatus } from '../../config/statusUtils';
+import { formatarDataEntrega } from '../../pages/dashboard/painelGeralUtils';
 import { UPLOAD_ACCEPT, describeUploadError, validateUploadFile } from '../../utils/uploadErrors';
 import '../../styles/components/TarefaModal.css';
 
@@ -217,7 +218,7 @@ const TarefaModal = ({ tarefaId, onClose }) => {
               <p><strong>Detalhes:</strong> {tarefa.detalhes || 'Sem detalhes'}</p>
               <p><strong>Status:</strong> {formatarStatus(tarefa.status)}</p>
               <p><strong>Urgência:</strong> {tarefa.urgencia}</p>
-              <p><strong>Prazo:</strong> {tarefa.dataEntrega ? new Date(tarefa.dataEntrega).toLocaleDateString() : 'Não definido'}</p>
+              <p><strong>Prazo:</strong> {formatarDataEntrega(tarefa.dataEntrega, 'Não definido')}</p>
               <p><strong>Tempo Gasto:</strong> {tarefa.tempoGasto || 0} min {tarefa.cronometroAtivo ? '(Ativo)' : ''}</p>
               {tarefa.tags && tarefa.tags.length > 0 && (
                 <div className="tags-list">

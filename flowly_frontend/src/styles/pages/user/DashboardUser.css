@@ -213,3 +213,440 @@
     padding-top: 80px;
   }
 }
+
+/* ---------- Meu Dia (Meu Painel do colaborador) - tudo restrito a .meu-dia ---------- */
+.sidebar.collapsed ~ .dashboard-user.meu-dia {
+  margin-left: 78px;
+}
+
+.meu-dia {
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.meu-dia .meu-dia-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.meu-dia .meu-dia-header h2 {
+  margin: 0;
+}
+
+.meu-dia .meu-dia-data {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.meu-dia .meu-dia-sino {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background: var(--surface-bg);
+  color: var(--text-primary);
+  font-size: 1.15rem;
+  text-decoration: none;
+}
+
+.meu-dia .meu-dia-sino-contador {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: #e53935;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.meu-dia .meu-dia-indicadores {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.meu-dia .meu-dia-indicador {
+  display: grid;
+  gap: 2px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--border-color);
+  background: var(--surface-bg);
+  min-width: 0;
+}
+
+.meu-dia .meu-dia-indicador.is-atrasada {
+  border-left-color: #e53935;
+}
+
+.meu-dia .meu-dia-indicador.is-hoje {
+  border-left-color: #f5a623;
+}
+
+.meu-dia .meu-dia-indicador-rotulo {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.meu-dia .meu-dia-indicador strong {
+  color: var(--text-primary);
+  font-size: 1.8rem;
+  line-height: 1.1;
+}
+
+.meu-dia .meu-dia-indicador-ajuda {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.meu-dia .meu-dia-estado,
+.meu-dia .meu-dia-resumo {
+  color: var(--text-secondary);
+  margin: 0 0 14px;
+}
+
+.meu-dia .meu-dia-estado.is-ok {
+  color: var(--text-primary);
+}
+
+.meu-dia .meu-dia-erro {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(229, 57, 53, 0.45);
+  background: rgba(229, 57, 53, 0.08);
+  color: var(--text-primary);
+}
+
+.meu-dia .meu-dia-erro button,
+.meu-dia .meu-dia-abrir,
+.meu-dia .meu-dia-pdf {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--surface-bg);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.meu-dia .meu-dia-abrir {
+  border-color: var(--primary-color, #7e57c2);
+}
+
+.meu-dia .meu-dia-secao {
+  margin-bottom: 20px;
+}
+
+.meu-dia .meu-dia-secao h3,
+.meu-dia .meu-dia-concluidas summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+.meu-dia .meu-dia-contagem {
+  min-width: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--primary-soft, rgba(126, 87, 194, 0.15));
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.meu-dia .meu-dia-lista {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.meu-dia .meu-dia-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  border-left: 4px solid transparent;
+  background: var(--surface-bg);
+  min-width: 0;
+}
+
+.meu-dia .meu-dia-item.is-atrasada {
+  border-left-color: #e53935;
+}
+
+.meu-dia .meu-dia-item.is-hoje {
+  border-left-color: #f5a623;
+}
+
+.meu-dia .meu-dia-item.is-concluida {
+  opacity: 0.8;
+}
+
+.meu-dia .meu-dia-item-info {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.meu-dia .meu-dia-item-titulo {
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.meu-dia .meu-dia-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.meu-dia .meu-dia-urgencia.urgencia-alta {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.meu-dia .meu-dia-item-prazo {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.meu-dia .meu-dia-relativo {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.meu-dia .meu-dia-selo {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.meu-dia .is-atrasada .meu-dia-selo {
+  border-color: rgba(229, 57, 53, 0.6);
+  color: #e53935;
+}
+
+.meu-dia .is-hoje .meu-dia-selo {
+  border-color: rgba(245, 166, 35, 0.7);
+  color: #c47f00;
+}
+
+[data-theme="dark"] .meu-dia .is-hoje .meu-dia-selo {
+  color: #f5b041;
+}
+
+[data-theme="dark"] .meu-dia .is-atrasada .meu-dia-selo {
+  color: #ff6b6b;
+}
+
+.meu-dia .meu-dia-item-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.meu-dia .meu-dia-item-acoes .start-btn,
+.meu-dia .meu-dia-item-acoes .pause-btn {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.meu-dia .meu-dia-concluidas {
+  margin-top: 8px;
+}
+
+.meu-dia .meu-dia-concluidas summary {
+  cursor: pointer;
+  list-style: revert;
+}
+
+.meu-dia .meu-dia-sino:focus-visible,
+.meu-dia button:focus-visible,
+.meu-dia summary:focus-visible {
+  outline: 2px solid var(--primary-color, #7e57c2);
+  outline-offset: 2px;
+}
+
+/* Alterar status no proprio item (escolher e confirmar) */
+.meu-dia .meu-dia-status-btn,
+.meu-dia .meu-dia-status-form button,
+.meu-dia .meu-dia-status-form select {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--surface-bg);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.meu-dia .meu-dia-status-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex-basis: 100%;
+  justify-content: flex-end;
+}
+
+.meu-dia .meu-dia-status-form select {
+  background: var(--input-bg, var(--surface-bg));
+  font-weight: 500;
+}
+
+.meu-dia .meu-dia-status-form button[type="submit"] {
+  border-color: var(--primary-color, #7e57c2);
+  background: var(--primary-color, #7e57c2);
+  color: #fff;
+}
+
+.meu-dia .meu-dia-status-form button:disabled,
+.meu-dia .meu-dia-status-form select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.meu-dia .meu-dia-status-rotulo {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.meu-dia .meu-dia-status-erro {
+  flex-basis: 100%;
+  text-align: right;
+  color: #e53935;
+  font-size: 0.8rem;
+}
+
+[data-theme="dark"] .meu-dia .meu-dia-status-erro {
+  color: #ff6b6b;
+}
+
+.meu-dia .meu-dia-aviso {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(46, 160, 67, 0.45);
+  background: rgba(46, 160, 67, 0.1);
+  color: var(--text-primary);
+}
+
+.meu-dia select:focus-visible {
+  outline: 2px solid var(--primary-color, #7e57c2);
+  outline-offset: 2px;
+}
+
+/* O botao global de aparencia (fixo no canto superior direito) nao encosta no sino. */
+@media (min-width: 769px) {
+  .meu-dia .meu-dia-header {
+    padding-right: 56px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .meu-dia .meu-dia-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .meu-dia .meu-dia-item-acoes {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .meu-dia .meu-dia-status-form {
+    justify-content: flex-start;
+  }
+
+  .meu-dia .meu-dia-status-erro {
+    text-align: left;
+  }
+}
+
+@media (max-width: 768px) {
+  .sidebar.collapsed ~ .dashboard-user.meu-dia {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .meu-dia .meu-dia-indicadores {
+    gap: 8px;
+  }
+
+  .meu-dia .meu-dia-indicador {
+    padding: 10px;
+  }
+
+  .meu-dia .meu-dia-indicador strong {
+    font-size: 1.4rem;
+  }
+
+  .meu-dia .meu-dia-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .meu-dia .meu-dia-item-prazo {
+    justify-items: start;
+    grid-auto-flow: column;
+    justify-content: start;
+    align-items: center;
+    gap: 8px;
+  }
+}

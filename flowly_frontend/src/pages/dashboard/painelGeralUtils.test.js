@@ -7,6 +7,7 @@ import {
   diferencaEmDias,
   estaAtrasada,
   filtrarPorEquipe,
+  formatarDataEntrega,
   formatarDia,
   formatarTempo,
   listarProximasEntregas,
@@ -266,4 +267,14 @@ test('ordenarEquipesPorNome usa a ordem do portugues e nao altera a lista origin
   const equipes = [{ _id: '1', nome: 'beta' }, { _id: '2', nome: 'Ágil' }, { _id: '3', nome: 'Equipe 10' }, { _id: '4', nome: 'Equipe 2' }];
   expect(ordenarEquipesPorNome(equipes).map((e) => e.nome)).toEqual(['Ágil', 'beta', 'Equipe 2', 'Equipe 10']);
   expect(equipes[0].nome).toBe('beta');
+});
+
+describe('formatarDataEntrega', () => {
+  test('dia gravado em dd/mm/aaaa; sem data valida, o texto informado', () => {
+    expect(formatarDataEntrega('2026-11-24T00:00:00.000Z')).toBe('24/11/2026');
+    expect(formatarDataEntrega('2026-11-24')).toBe('24/11/2026');
+    expect(formatarDataEntrega('2026-12-31T00:00:00.000Z')).toBe('31/12/2026');
+    expect(formatarDataEntrega(null)).toBe('Sem prazo');
+    expect(formatarDataEntrega('ontem', 'Não definido')).toBe('Não definido');
+  });
 });
