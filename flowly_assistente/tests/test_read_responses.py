@@ -270,7 +270,7 @@ class TaskListReplyTests(ReadResponseTestCase):
                 state = self.pending("token-user", conversation)
                 if count == 0:
                     self.assertEqual((display, spoken), ("Não encontrei tarefas para listar.",) * 2)
-                    self.assertIsNone(state)
+                    self.assertEqual(state, {"mode": "task_selection", "tasks": []})  # sem lista nem tarefa escolhida
                     self.assertNotIn("conversation", payload)
                     continue
 
@@ -319,8 +319,8 @@ class TaskListReplyTests(ReadResponseTestCase):
         self.assertIn("detalhes: Detalhe fictício 7", display)
         self.assertNotIn("Detalhe fictício", spoken)
         # No fluxo de selecao, o convite para continuar aparece na tela e na fala.
-        self.assertTrue(display.endswith("Voce pode pedir outra tarefa, atribuir para voce ou cancelar."))
-        self.assertTrue(spoken.endswith("Voce pode pedir outra tarefa, atribuir para voce ou cancelar."))
+        self.assertTrue(display.endswith("Você pode pedir outra tarefa, atribuir para você ou cancelar."))
+        self.assertTrue(spoken.endswith("Você pode pedir outra tarefa, atribuir para você ou cancelar."))
         # Opcao fora das 10 guardadas continua pedindo nova escolha (PR #20).
         payload, display, _spoken = self.read("token-user", "11")
         self.assertEqual(payload["conversation"]["status"], "awaiting_task_selection")

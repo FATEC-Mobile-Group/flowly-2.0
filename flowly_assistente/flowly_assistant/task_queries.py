@@ -213,6 +213,9 @@ def _deadline(task: Dict[str, Any], today: date) -> str:
     day = due_day(task)
     if day is None:
         return "sem prazo"
+    if is_done(task):
+        # Concluida nao esta atrasada; sem a data de conclusao, nao da para dizer se foi no prazo.
+        return f"prazo era {_fmt_day(day)}"
     diff = (day - today).days
     if diff == 0:
         return "vence hoje"
@@ -398,6 +401,11 @@ def urgent_follow_up(
     today = today or today_local()
     if not tasks:
         text = "A lista anterior não tem tarefas."
+        return [], text, text
+    # Concluidas nao entram nas mais urgentes (nem aparecem como vencidas).
+    tasks = [t for t in tasks if not is_done(t)]
+    if not tasks:
+        text = "As tarefas da lista anterior já estão concluídas."
         return [], text, text
     best = max(_urgency(t) for t in tasks)
     if best == 0:

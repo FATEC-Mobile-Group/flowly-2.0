@@ -86,7 +86,7 @@ class ListingContextTests(ReadResponseTestCase):
         self.api.tasks = []
         payload, _ = self.say("minhas tarefas")
         self.assertEqual(payload["reply_text"], "Não encontrei tarefas para listar.")
-        self.assertIsNone(self.selection())
+        self.assertEqual(self.selection(), [])  # nenhuma tarefa da lista antiga
 
     def test_listing_with_a_task_number_asks_instead_of_guessing(self):
         self.say("listar tarefas")
