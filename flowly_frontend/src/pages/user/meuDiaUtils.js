@@ -21,8 +21,16 @@ export const JANELA_PROXIMAS_DIAS = 7;
 // sessao e medida num relogio so. Sem ancora (pagina recarregada), so resta o horario do servidor: a diferenca de
 // relogios nao e mensuravel daqui, entao a sessao nunca fica abaixo de zero (o tempo oficial e o que a API soma na
 // pausa).
+// Acumulado confirmado pela API, em segundos: tempoGastoSegundos (preciso) quando a API o envia; tarefa anterior a
+// esse campo usa tempoGasto (minutos) * 60, a mesma base historica que a API usa ao pausar.
+export const acumuladoEmSegundos = (tarefa) => {
+  const preciso = tarefa?.tempoGastoSegundos;
+  if (typeof preciso === 'number' && Number.isFinite(preciso) && preciso >= 0) return Math.floor(preciso);
+  return Math.max(0, Math.floor((Number(tarefa?.tempoGasto) || 0) * 60));
+};
+
 export const segundosDoCronometro = (tarefa, agora, ancora) => {
-  const base = Math.max(0, Number(tarefa?.tempoGasto) || 0) * 60;
+  const base = acumuladoEmSegundos(tarefa);
   if (!tarefa?.cronometroAtivo) return Math.floor(base);
   const inicioServidor = new Date(tarefa.ultimaAtualizacaoCronometro).getTime();
   if (!Number.isFinite(inicioServidor)) return Math.floor(base);

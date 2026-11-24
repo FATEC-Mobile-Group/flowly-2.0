@@ -341,3 +341,54 @@ describe('etiqueta de urgencia', () => {
     expect(document.querySelector('.meu-dia .urgencia-media, .meu-dia .urgencia-alta, .meu-dia .urgencia-baixa')).toBeNull();
   });
 });
+
+describe('cronometro com segundos persistidos', () => {
+  const tempoNaTela = (descricao) => screen.getByText(descricao).closest('li').textContent.match(/Tempo gasto: ([^E]*?s)/)?.[1];
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(new Date('2026-11-25T15:00:00.000Z'));
+  });
+
+  test('8 min 23 s confirmados, retoma, +17 s = 8 min 40 s; pausa confirma 520 s; retomar parte de 8 min 40 s', async () => {
+    respostaTarefas = () => Promise.resolve({ data: [{ ...tarefas[2], tempoGasto: 8, tempoGastoSegundos: 503 }] });
+    renderPage();
+    await act(async () => {});
+    apiPut.mockResolvedValueOnce({ data: { tarefa: { _id: id('c'), cronometroAtivo: true, tempoGasto: 8, tempoGastoSegundos: 503, ultimaAtualizacaoCronometro: '2026-11-25T15:00:05.000Z' } } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Iniciar cronômetro' }));
+    });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 23s');
+    await act(async () => { vi.advanceTimersByTime(17000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 40s');
+
+    apiPut.mockResolvedValueOnce({ data: { tarefa: { _id: id('c'), cronometroAtivo: false, tempoGasto: 8, tempoGastoSegundos: 520 } } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Pausar cronômetro' }));
+    });
+    apiPut.mockResolvedValueOnce({ data: { tarefa: { _id: id('c'), cronometroAtivo: true, tempoGasto: 8, tempoGastoSegundos: 520, ultimaAtualizacaoCronometro: '2026-11-25T15:01:00.000Z' } } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Iniciar cronômetro' }));
+    });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 40s');
+  });
+
+  test('pagina recarregada com sessao ativa parte do acumulado preciso', async () => {
+    respostaTarefas = () => Promise.resolve({ data: [{ ...tarefas[2], cronometroAtivo: true, tempoGasto: 8, tempoGastoSegundos: 503, ultimaAtualizacaoCronometro: '2026-11-25T14:59:43.000Z' }] });
+    renderPage();
+    await act(async () => {});
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 40s');
+  });
+
+  test('resposta parcial sem o campo novo nao apaga o acumulado preciso nem a equipe', async () => {
+    respostaTarefas = () => Promise.resolve({ data: [{ ...tarefas[2], tempoGasto: 8, tempoGastoSegundos: 503 }] });
+    renderPage();
+    await act(async () => {});
+    apiPut.mockResolvedValueOnce({ data: { tarefa: { _id: id('c'), cronometroAtivo: true, ultimaAtualizacaoCronometro: '2026-11-25T15:00:00.000Z' } } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Iniciar cronômetro' }));
+    });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 23s');
+    expect(screen.getByText('Revisão de amanhã').closest('li')).toHaveTextContent('Alfa');
+  });
+});

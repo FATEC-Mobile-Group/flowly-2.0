@@ -1,5 +1,5 @@
 // Meu Dia: grupos exclusivos, ordem, contadores e datas (dia civil gravado x "hoje" local), sem depender do relogio.
-import { organizarMeuDia, JANELA_PROXIMAS_DIAS, formatarDuracao, segundosDoCronometro } from './meuDiaUtils';
+import { organizarMeuDia, JANELA_PROXIMAS_DIAS, acumuladoEmSegundos, formatarDuracao, segundosDoCronometro } from './meuDiaUtils';
 import { chaveDiaLocal, formatarDataEntrega } from '../dashboard/painelGeralUtils';
 
 const meiaNoiteUTC = (dia) => `${dia}T00:00:00.000Z`;
@@ -142,5 +142,21 @@ describe('cronometro: sessao nunca negativa e independente da idade da tarefa', 
     expect(formatarDuracao(3725)).toBe('1h 2m 5s');
     expect(formatarDuracao(-21)).toBe('0h 0m 0s');
     expect(formatarDuracao(undefined)).toBe('0h 0m 0s');
+  });
+});
+
+describe('acumulado preciso (tempoGastoSegundos) com recuo para o legado', () => {
+  test('preciso quando enviado (zero e legitimo); tarefa antiga usa tempoGasto * 60', () => {
+    expect(acumuladoEmSegundos({ tempoGasto: 8, tempoGastoSegundos: 503 })).toBe(503);
+    expect(acumuladoEmSegundos({ tempoGasto: 8, tempoGastoSegundos: 0 })).toBe(0);
+    expect(acumuladoEmSegundos({ tempoGasto: 8 })).toBe(480);
+    expect(acumuladoEmSegundos({ tempoGasto: 8, tempoGastoSegundos: -5 })).toBe(480);
+    expect(acumuladoEmSegundos({})).toBe(0);
+  });
+
+  test('criterio de aceitacao: 8 min 23 s confirmados + 17 s de sessao = 8 min 40 s', () => {
+    const tarefa = { cronometroAtivo: true, tempoGasto: 8, tempoGastoSegundos: 503, ultimaAtualizacaoCronometro: '2026-11-23T15:00:00.000Z' };
+    expect(formatarDuracao(segundosDoCronometro(tarefa, Date.parse('2026-11-23T15:00:17.000Z')))).toBe('0h 8m 40s');
+    expect(formatarDuracao(segundosDoCronometro({ ...tarefa, cronometroAtivo: false, tempoGastoSegundos: 520 }, Date.now()))).toBe('0h 8m 40s');
   });
 });

@@ -78,3 +78,15 @@ test('polling de 2 minutos continua atualizando sozinho', async () => {
   expect(apiGet).toHaveBeenCalledTimes(2);
   expect(screen.queryByText('Desenvolvimento do F...')).toBeNull();
 });
+
+test('acumulado preciso: 503 s confirmados + 37 s de sessao = 9 min (o legado mostraria 8)', async () => {
+  lista = [{ ...ativa('2026-11-25T14:59:23.000Z'), tempoGasto: 8, tempoGastoSegundos: 503 }];
+  await montar();
+  expect(screen.getByText('9 min')).toBeInTheDocument();
+});
+
+test('tarefa antiga sem o campo novo continua usando tempoGasto', async () => {
+  lista = [{ ...ativa('2026-11-25T14:59:00.000Z'), tempoGasto: 8 }];
+  await montar();
+  expect(screen.getByText('9 min')).toBeInTheDocument();
+});

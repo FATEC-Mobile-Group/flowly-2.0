@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import apiClient from '../../config/apiClient';
 import { authUtils } from '../../config/authUtils';
-import { EVENTO_CRONOMETRO } from '../../pages/user/meuDiaUtils';
+import { EVENTO_CRONOMETRO, acumuladoEmSegundos } from '../../pages/user/meuDiaUtils';
 import '../../styles/components/FloatingTimer.css';
 
 // Cartoes dos cronometros ATIVOS do usuario (nao e uma notificacao temporaria): vem de /tarefas/minhas, com nova
@@ -92,9 +92,11 @@ const FloatingTimer = () => {
   return (
     <div className="floating-timer-container">
       {visiveis.map(t => {
+        // Acumulado preciso (segundos) + sessao em andamento, exibido em minutos inteiros: os segundos que sobraram
+        // de sessoes anteriores entram na conta (antes, minutos legados + minutos da sessao ficavam abaixo do real).
         const startedAt = new Date(t.ultimaAtualizacaoCronometro).getTime();
-        const minsThisSession = Number.isFinite(startedAt) ? Math.max(0, Math.floor((now - startedAt) / 60000)) : 0;
-        const totalMins = (t.tempoGasto || 0) + minsThisSession;
+        const segundosSessao = Number.isFinite(startedAt) ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
+        const totalMins = Math.floor((acumuladoEmSegundos(t) + segundosSessao) / 60);
         const descricao = String(t.descricao || 'Tarefa');
 
         return (

@@ -18,7 +18,10 @@ const tarefaSchema = new mongoose.Schema({
   },
   equipe: { type: mongoose.Schema.Types.ObjectId, ref: 'Equipe', required: true },
   tempoEstimado: { type: Number }, // tempo em minutos
-  tempoGasto: { type: Number, default: 0 }, // tempo em minutos
+  tempoGasto: { type: Number, default: 0 }, // minutos inteiros acumulados (= floor(tempoGastoSegundos / 60) quando houver)
+  // Acumulado preciso em segundos (fonte de verdade da duracao). SEM padrao de proposito: ausente = tarefa anterior a
+  // este campo, cujo acumulado e tempoGasto * 60 (nada de historico e zerado); 0 gravado = zero legitimo.
+  tempoGastoSegundos: { type: Number, min: 0 },
   cronometroAtivo: { type: Boolean, default: false },
   ultimaAtualizacaoCronometro: { type: Date },
   urgencia: {

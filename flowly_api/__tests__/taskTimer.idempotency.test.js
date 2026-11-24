@@ -401,7 +401,7 @@ const JA_ATIVO_400 = { erro: 'Cronômetro já está ativo' };
 const JA_PAUSADO_400 = { erro: 'Cronômetro já está pausado' };
 const KEY_4 = '4b3a2c1d-0e9f-4a8b-9c7d-6e5f4a3b2c1d';
 const KEY_5 = '5c4b3a2d-1e0f-4b9a-8d7c-6f5e4d3c2b1a';
-const CAMPOS_DO_CRONOMETRO = ['tempoGasto', 'cronometroAtivo', 'tempoExcedido', 'ultimaAtualizacaoCronometro', 'updatedAt'];
+const CAMPOS_DO_CRONOMETRO = ['tempoGasto', 'tempoGastoSegundos', 'cronometroAtivo', 'tempoExcedido', 'ultimaAtualizacaoCronometro', 'updatedAt'];
 const MSG_INCONSISTENTE = 'O cronômetro desta tarefa está inconsistente: o horário de início está ausente, '
   + 'inválido ou no futuro. Nenhum tempo foi contabilizado e a tarefa não foi alterada.';
 const MSG_CONFLITO = 'A tarefa foi alterada por outra operação ao mesmo tempo. Tente novamente.';
@@ -773,7 +773,7 @@ describe('PUT /api/tarefas/:id/cronometro com Idempotency-Key', () => {
 
     // Duas pausas: o tempo entra uma vez.
     mockDb.logs.splice(0, mockDb.logs.length);
-    ativo(30, { tempoGasto: 10 });
+    ativo(30, { tempoGasto: 10, tempoGastoSegundos: undefined }); // tarefa "antiga" de novo: so o acumulado legado (o preciso da parte anterior sai)
     await withGate('pauseAfterLock', async ({ pending, release }) => {
       const a = iniciar(putCrono('pausar', { key: KEY_3 }));
       pending.push(a);
@@ -812,7 +812,7 @@ describe('PUT /api/tarefas/:id/cronometro com Idempotency-Key', () => {
 
     // b) A pausa legada grava entre a leitura e a gravacao da protegida: WriteConflict, o callback rele e recusa.
     mockDb.logs.splice(0, mockDb.logs.length);
-    ativo(30, { tempoGasto: 10 });
+    ativo(30, { tempoGasto: 10, tempoGastoSegundos: undefined }); // tarefa "antiga" de novo: so o acumulado legado (o preciso da parte anterior sai)
     const pausa = pausarPrimeiraLeituraNaSessao();
     const sessoes = mockDb.sessions;
     const protegida = iniciar(putCrono('pausar', { key: KEY_2 }));
@@ -849,7 +849,7 @@ describe('PUT /api/tarefas/:id/cronometro com Idempotency-Key', () => {
 
     // b) Pausa protegida com a trava x mudanca de status idempotente: WriteConflict, o status rele e nao pausa.
     mockDb.logs.splice(0, mockDb.logs.length);
-    ativo(30, { tempoGasto: 10, status: 'em_andamento' });
+    ativo(30, { tempoGasto: 10, tempoGastoSegundos: undefined, status: 'em_andamento' }); // tarefa "antiga" de novo: so o acumulado legado (o preciso da parte anterior sai)
     await withGate('pauseAfterLock', async ({ pending, release }) => {
       const pausa = iniciar(putCrono('pausar', { key: KEY_2 }));
       pending.push(pausa);
@@ -868,7 +868,7 @@ describe('PUT /api/tarefas/:id/cronometro com Idempotency-Key', () => {
 
     // c) Status idempotente pausa primeiro (com a trava); a pausa protegida rele e recebe "ja esta pausado".
     mockDb.logs.splice(0, mockDb.logs.length);
-    ativo(30, { tempoGasto: 10, status: 'em_andamento' });
+    ativo(30, { tempoGasto: 10, tempoGastoSegundos: undefined, status: 'em_andamento' }); // tarefa "antiga" de novo: so o acumulado legado (o preciso da parte anterior sai)
     await withGate('pauseAfterLock', async ({ pending, release }) => {
       const status = iniciar(putStatus('concluido', { key: KEY_4 }));
       pending.push(status);
@@ -1053,7 +1053,7 @@ describe('PUT /api/tarefas/:id/cronometro com Idempotency-Key', () => {
     jest.useFakeTimers({ doNotFake: NAO_FALSIFICAR_ALEM_DE_DATE, now: T0 + (29 * 60 + 59.5) * 1000 });
     token = issueAuthToken(colaborador);
     // a) Leitura demorada: o relogio passa de 29:59,5 para 30:00,5 durante a consulta -> 40, nunca 39.
-    Object.assign(tarefa, { cronometroAtivo: true, ultimaAtualizacaoCronometro: new Date(T0), tempoGasto: 10, tempoEstimado: 100 });
+    Object.assign(tarefa, { cronometroAtivo: true, ultimaAtualizacaoCronometro: new Date(T0), tempoGasto: 10, tempoGastoSegundos: undefined, tempoEstimado: 100 });
     mockTx.aposLer = async ({ session }) => {
       if (session) jest.setSystemTime(T0 + (30 * 60 + 0.5) * 1000);
     };
@@ -1066,7 +1066,7 @@ describe('PUT /api/tarefas/:id/cronometro com Idempotency-Key', () => {
     mockDb.logs.splice(0, mockDb.logs.length);
     mockDb.updateCalls.splice(0, mockDb.updateCalls.length);
     jest.setSystemTime(T0 + (29 * 60 + 59.5) * 1000);
-    Object.assign(tarefa, { cronometroAtivo: true, ultimaAtualizacaoCronometro: new Date(T0), tempoGasto: 10, tempoEstimado: 100 });
+    Object.assign(tarefa, { cronometroAtivo: true, ultimaAtualizacaoCronometro: new Date(T0), tempoGasto: 10, tempoGastoSegundos: undefined, tempoEstimado: 100 });
     let primeira = true;
     mockTx.antesDeGravar = async (chamada) => {
       if (chamada.withSession && primeira) {
