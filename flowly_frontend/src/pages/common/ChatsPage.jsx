@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FaPaperclip } from 'react-icons/fa';
+import { useInRouterContext, useLocation, useNavigate } from 'react-router-dom';
 import createSocketConnection from '../../config/socketClient';
 import apiClient, { getFullApiUrl } from '../../config/apiClient';
 import Sidebar from '../../components/layout/Sidebar';
 import { authUtils } from '../../config/authUtils';
 import { API_ENDPOINTS } from '../../config/config';
 import { CHAT_SEND_TITLES, sendChatMessage } from '../../utils/chatSend';
+import { validObjectId } from '../../utils/navigationRequests';
 import {
   CHAT_ATTACHMENT_ACCEPT,
   IMAGE_TYPES,
@@ -37,7 +39,9 @@ const formatMessageTime = (dateStr) => {
 
 const WARNING_NOTICES = new Set(['uncertain', 'warning']);
 
-const ChatsPage = () => {
+// requestedEquipeId: equipe pedida por outra tela (notificacao, Minhas Equipes) via state do React Router.
+// So e atendida se estiver nas equipes autorizadas carregadas da API, uma unica vez (depois vale a escolha manual).
+const ChatsPageContent = ({ requestedEquipeId = null, onRequestHandled }) => {
   const [equipes, setEquipes] = useState([]);
   const [selectedEquipe, setSelectedEquipe] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -64,6 +68,9 @@ const ChatsPage = () => {
   const selectedEquipeRef = useRef(null);
   // Ultima tentativa do anexo: repetir com o mesmo arquivo, legenda e equipe reaproveita o clientMessageId.
   const lastAttemptRef = useRef(null);
+  const requestedEquipeRef = useRef(
+    requestedEquipeId == null ? null : (validObjectId(String(requestedEquipeId)) || 'invalida'),
+  );
   const userId = authUtils.getUserId();
 
   messagesRef.current = messages;
@@ -106,12 +113,27 @@ const ChatsPage = () => {
       try {
         setLoadingEquipes(true);
         const res = await apiClient.get(API_ENDPOINTS.MINHAS_EQUIPES);
+        const lista = Array.isArray(res.data) ? res.data : [];
         setEquipes(res.data || []);
-        if ((res.data || []).length > 0) {
-          setSelectedEquipe(res.data[0]._id);
+        const pedida = requestedEquipeRef.current;
+        requestedEquipeRef.current = null;
+        const autorizada = pedida ? lista.find((equipe) => equipe._id === pedida) : null;
+        if (autorizada) {
+          setSelectedEquipe(autorizada._id);
+        } else if (lista.length > 0) {
+          setSelectedEquipe(lista[0]._id);
         }
+        if (pedida && !autorizada) {
+          setSendNotice({
+            status: 'warning',
+            title: 'Conversa indisponível',
+            message: 'A equipe solicitada não está entre as suas conversas.',
+          });
+        }
+        if (pedida) onRequestHandled?.();
       } catch (err) {
         setErro('Erro ao carregar equipes de chat.');
+        requestedEquipeRef.current = null;
       } finally {
         setLoadingEquipes(false);
       }
@@ -458,5 +480,19 @@ const ChatsPage = () => {
     </div>
   );
 };
+
+function ChatsPageInRouter() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const requested = location.state?.equipeId ?? null;
+  // Consome o pedido: voltar ou recarregar nao repete a selecao.
+  const handled = useCallback(() => {
+    navigate(location.pathname, { replace: true, state: null });
+  }, [navigate, location.pathname]);
+  return <ChatsPageContent requestedEquipeId={requested} onRequestHandled={handled} />;
+}
+
+// Fora de um roteador (testes antigos), a pagina funciona como antes, sem pedido de equipe.
+const ChatsPage = () => (useInRouterContext() ? <ChatsPageInRouter /> : <ChatsPageContent />);
 
 export default ChatsPage;

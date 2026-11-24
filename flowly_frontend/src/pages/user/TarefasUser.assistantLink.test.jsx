@@ -1,5 +1,5 @@
 // "Ver tarefa" do assistente: Minhas tarefas abre o detalhe so de uma tarefa da propria lista (vinda da API).
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { API_ENDPOINTS } from '../../config/config';
 import TarefasUser from './TarefasUser';
@@ -55,4 +55,20 @@ test('sem pedido do assistente a tela continua igual', async () => {
   renderWithState(undefined);
   expect(await screen.findByText('Revisar relatório')).toBeInTheDocument();
   expect(screen.queryByRole('dialog', { name: 'Detalhe da tarefa' })).toBeNull();
+});
+
+test('id fora da lista ou malformado: aviso, nada abre e o pedido e consumido', async () => {
+  for (const id of ['b'.repeat(24), '../admin']) {
+    const { unmount } = renderWithState({ abrirTarefaId: id });
+    expect(await screen.findByText('Atenção: a tarefa solicitada não está disponível na sua lista.')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Detalhe da tarefa' })).toBeNull();
+    await waitFor(() => expect(screen.getByTestId('estado')).toHaveTextContent('null'));
+    unmount();
+  }
+});
+
+test('abertura manual do detalhe continua funcionando', async () => {
+  renderWithState(undefined);
+  fireEvent.click(await screen.findByText('Revisar relatório'));
+  expect(await screen.findByRole('dialog', { name: 'Detalhe da tarefa' })).toHaveTextContent(MINHA._id);
 });

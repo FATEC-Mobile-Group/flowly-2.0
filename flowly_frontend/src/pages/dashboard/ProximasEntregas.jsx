@@ -1,5 +1,6 @@
 import React, { useId } from 'react';
 import { Link } from 'react-router-dom';
+import { validObjectId } from '../../utils/navigationRequests';
 
 function ProximasEntregas({ itens, total, filtrando }) {
   const idTitulo = useId();
@@ -32,6 +33,16 @@ function ProximasEntregas({ itens, total, filtrando }) {
                 <span className="entrega-relativo">{item.prazo}</span>
               </div>
               {item.atrasada && <span className="entrega-selo">Atrasada</span>}
+              {validObjectId(item.id) && (
+                <Link
+                  className="entrega-abrir"
+                  to="/admin/tarefas"
+                  state={{ abrirTarefaId: item.id }}
+                  aria-label={`Ver detalhes de ${item.descricao}`}
+                >
+                  Ver detalhes
+                </Link>
+              )}
             </li>
           ))}
         </ol>

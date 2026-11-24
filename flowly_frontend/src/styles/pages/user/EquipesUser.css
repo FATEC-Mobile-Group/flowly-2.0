@@ -137,3 +137,37 @@
     padding-bottom: 7rem;
   }
 }
+
+/* Atalho para o chat da equipe (navegacao contextual) */
+.equipe-user-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.equipe-user-card-header h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.equipe-user-chat {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--primary-color, #7e57c2);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.equipe-user-chat:hover {
+  background: var(--primary-soft, rgba(126, 87, 194, 0.15));
+}
+
+.equipe-user-chat:focus-visible {
+  outline: 2px solid var(--primary-color, #7e57c2);
+  outline-offset: 2px;
+}

@@ -733,3 +733,9 @@
     flex-direction: column;
   }
 }
+
+/* Tarefa aberta a partir de outra tela (Painel Geral, notificacao) */
+.task-item.is-destacada {
+  outline: 2px solid var(--primary-color, #7e57c2);
+  outline-offset: 2px;
+}

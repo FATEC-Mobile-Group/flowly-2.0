@@ -1,13 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import apiClient from '../../config/apiClient';
 import Sidebar from '../../components/layout/Sidebar';
 import { API_ENDPOINTS } from '../../config/config';
+import { authUtils } from '../../config/authUtils';
+import { NOTIFICATION_TYPE_LABELS, notificationTarget } from '../../utils/navigationRequests';
 import '../../styles/pages/common/NotificationsPage.css';
 
 const NotificationsPage = () => {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const navigate = useNavigate();
+  // Uma marcacao por notificacao por vez (clique duplo em "Abrir" nao repete o PUT).
+  const markingRef = useRef(new Set());
+  const userType = authUtils.getUserType();
 
   const fetchNotifications = async () => {
     try {
@@ -26,12 +33,25 @@ const NotificationsPage = () => {
   }, []);
 
   const markAsRead = async (id) => {
+    if (markingRef.current.has(id)) return false;
+    markingRef.current.add(id);
     try {
       await apiClient.put(API_ENDPOINTS.NOTIFICATIONS_MARK_READ(id), {});
       setNotifications((prev) => prev.map((item) => (item._id === id ? { ...item, lida: true } : item)));
+      return true;
     } catch (_) {
       setError('Erro ao marcar notificação como lida.');
+      return false;
+    } finally {
+      markingRef.current.delete(id);
     }
+  };
+
+  // Abrir: marca como lida pelo fluxo existente (falha nao vira sucesso: a notificacao continua nao lida) e navega.
+  // O destino so atende o pedido se o recurso estiver na lista autorizada que ele carrega.
+  const openNotification = async (notification, target) => {
+    if (!notification.lida) await markAsRead(notification._id);
+    navigate(target.to, { state: target.state });
   };
 
   const markAllAsRead = async () => {
@@ -66,23 +86,39 @@ const NotificationsPage = () => {
           <div className="notifications-empty">Nenhuma notificação no momento.</div>
         ) : (
           <div className="notifications-list">
-            {notifications.map((notification) => (
-              <article key={notification._id} className={`notification-card ${notification.lida ? 'read' : 'unread'}`}>
-                <div className="notification-card-top">
-                  <span className={`notification-type type-${notification.tipo}`}>{notification.tipo}</span>
-                  {!notification.lida && <span className="unread-dot" />}
-                </div>
-                <p className="notification-text">{notification.texto}</p>
-                <div className="notification-footer">
-                  <span>{new Date(notification.createdAt).toLocaleString()}</span>
-                  {!notification.lida && (
-                    <button type="button" className="read-btn" onClick={() => markAsRead(notification._id)}>
-                      Marcar como lida
-                    </button>
-                  )}
-                </div>
-              </article>
-            ))}
+            {notifications.map((notification) => {
+              const target = notificationTarget(notification, userType);
+              return (
+                <article key={notification._id} className={`notification-card ${notification.lida ? 'read' : 'unread'}`}>
+                  <div className="notification-card-top">
+                    <span className={`notification-type type-${notification.tipo}`}>
+                      {NOTIFICATION_TYPE_LABELS[notification.tipo] || 'Sistema'}
+                    </span>
+                    {!notification.lida && <span className="unread-dot" aria-label="Não lida" />}
+                  </div>
+                  <p className="notification-text">{notification.texto}</p>
+                  <div className="notification-footer">
+                    <span>{new Date(notification.createdAt).toLocaleString()}</span>
+                    <div className="notification-actions">
+                      {target && (
+                        <button
+                          type="button"
+                          className="open-btn"
+                          onClick={() => openNotification(notification, target)}
+                        >
+                          {target.label}
+                        </button>
+                      )}
+                      {!notification.lida && (
+                        <button type="button" className="read-btn" onClick={() => markAsRead(notification._id)}>
+                          Marcar como lida
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </main>

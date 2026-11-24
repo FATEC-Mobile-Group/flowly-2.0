@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import apiClient from "../../config/apiClient";
 import { API_ENDPOINTS } from "../../config/config";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { validObjectId } from "../../utils/navigationRequests";
 import { formatarStatus } from "../../config/statusUtils";
 import "../../styles/pages/admin/DashboardAdmin.css";
 import Sidebar from "../../components/layout/Sidebar";
@@ -13,6 +14,12 @@ function DashboardTarefasAdmin() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  // Pedido de outra tela (Painel Geral, notificacao): destaca a tarefa so se ela estiver na lista carregada.
+  const tarefaPedida = location.state?.abrirTarefaId;
+  const [destacada, setDestacada] = useState(null);
+  const [avisoPedido, setAvisoPedido] = useState("");
+  const cartoesRef = useRef({});
 
   useEffect(() => {
     const fetchTarefas = async () => {
@@ -44,6 +51,25 @@ function DashboardTarefasAdmin() {
     }
   };
 
+  useEffect(() => {
+    if (tarefaPedida == null || loading) return;
+    const id = validObjectId(String(tarefaPedida));
+    if (id && tarefas.some((tarefa) => tarefa._id === id)) {
+      setDestacada(id);
+      setAvisoPedido("");
+    } else {
+      setAvisoPedido("A tarefa solicitada não está disponível nesta lista.");
+    }
+    navigate(location.pathname, { replace: true, state: null });
+  }, [tarefaPedida, loading, tarefas, navigate, location.pathname]);
+
+  useEffect(() => {
+    const cartao = destacada ? cartoesRef.current[destacada] : null;
+    if (!cartao) return;
+    cartao.scrollIntoView?.({ block: "center" });
+    cartao.focus?.({ preventScroll: true });
+  }, [destacada]);
+
   const handleEdit = (tarefaId) => {
     navigate(`/admin/editar-tarefa/${tarefaId}`);
   };
@@ -61,6 +87,8 @@ function DashboardTarefasAdmin() {
           </Link>
         </div>
 
+        {avisoPedido && <p className="tasks-feedback" role="status">{avisoPedido}</p>}
+
         <div className="tasks-list">
           {loading ? (
             <p className="tasks-feedback">Carregando tarefas...</p>
@@ -68,7 +96,13 @@ function DashboardTarefasAdmin() {
             <p className="tasks-feedback">Nenhuma tarefa encontrada.</p>
           ) : (
             tarefas.map((tarefa) => (
-              <div key={tarefa._id} className={`task-item task-urgency-${tarefa.urgencia}`}>
+              <div
+                key={tarefa._id}
+                ref={(el) => { cartoesRef.current[tarefa._id] = el; }}
+                className={`task-item task-urgency-${tarefa.urgencia}${destacada === tarefa._id ? " is-destacada" : ""}`}
+                tabIndex={destacada === tarefa._id ? -1 : undefined}
+                aria-current={destacada === tarefa._id ? "true" : undefined}
+              >
                 <div className="task-item-header">
                   <div>
                     <h3>{tarefa.descricao}</h3>

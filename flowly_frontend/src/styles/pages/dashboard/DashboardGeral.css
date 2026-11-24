@@ -844,3 +844,42 @@
     text-align: left;
   }
 }
+
+/* Proximas entregas: atalho para a tarefa na lista de tarefas (4a coluna; o selo continua na 3a) */
+.dashboard-geral .entrega-item:has(.entrega-abrir) {
+  grid-template-columns: minmax(0, 1fr) auto 84px auto;
+}
+
+.dashboard-geral .entrega-abrir {
+  grid-column: 4;
+}
+
+@media (max-width: 480px) {
+  .dashboard-geral .entrega-item:has(.entrega-abrir) {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .dashboard-geral .entrega-abrir {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+
+.dashboard-geral .entrega-abrir {
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--primary-color, #7e57c2);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.dashboard-geral .entrega-abrir:hover {
+  text-decoration: underline;
+}
+
+.dashboard-geral .entrega-abrir:focus-visible {
+  outline: 2px solid var(--primary-color, #7e57c2);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
