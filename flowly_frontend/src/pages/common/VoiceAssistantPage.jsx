@@ -44,6 +44,7 @@ const STATUS_LABELS = {
   speaking: 'Respondendo',
   error: 'Erro',
   awaiting: 'Aguardando resposta',
+  paused: 'Conversa pausada',
   standby: 'Standby',
 };
 // Conversa por voz: comeca no toque da estrela e, depois de cada resposta (quando a voz do assistente termina, ou
@@ -57,7 +58,13 @@ const SPEECH_START_TIMEOUT_MS = 6000;
 const SPEECH_POLL_MS = 500;
 // Fases da confirmacao em que a escuta nao volta sozinha (resultado incerto ou operacao em andamento).
 const RESUME_BLOCKING_PHASES = new Set(['uncertain', 'retry', 'in_progress', 'cancel_unverified']);
-const INACTIVITY_NOTICE = 'Conversa por voz encerrada por falta de fala. Toque na estrela para falar de novo.';
+const INACTIVITY_NOTICE = 'Conversa pausada por falta de fala. Microfone desligado. Toque na estrela para continuar.';
+const PAUSED_HINT = 'Microfone desligado. Toque na estrela para continuar.';
+// Listagem ou resposta mostrada sem pergunta do assistente: com o microfone desligado, a conversa so esta pausada
+// (o contexto continua no assistente). Perguntas de verdade (dados, confirmacao, escolha) seguem "Aguardando resposta".
+const PAUSABLE_CONVERSATION = new Set(['browsing_tasks']);
+// Marcas do diagnostico que valem so para uma sessao de escuta.
+const SESSION_TRACE_MARKS = ['start-chamado', 'onstart', 'retomada-inicio', 'ultimo-resultado', 'fala-encerrada', 'stop-chamado'];
 // Depois de Concluir (stop), o navegador deveria encerrar logo; sem onend, a sessao e fechada assim mesmo.
 const FINISH_TIMEOUT_MS = 4000;
 // Prontidao real: no Chrome o onstart chega antes da captura; o audio so esta disponivel no onaudiostart.
@@ -241,6 +248,8 @@ function VoiceAssistantPage() {
   const [processing, setProcessing] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [awaitingReply, setAwaitingReply] = useState(false);
+  // Estado da conversa devolvido pelo assistente na ultima resposta (so para escolher o rotulo do indicador).
+  const [conversationStatus, setConversationStatus] = useState(null);
   // Texto ouvido sem confirmacao do navegador, posto no campo para a pessoa conferir antes de enviar.
   const [recoveredText, setRecoveredText] = useState('');
   // Microfone demorando para abrir (mais de alguns segundos em "Iniciando").
@@ -302,7 +311,11 @@ function VoiceAssistantPage() {
   else if (speaking) status = 'speaking';
   else if (resuming) status = 'resuming';
   else if (micError) status = 'error';
-  else if (awaitingReply) status = 'awaiting';
+  else if (awaitingReply) {
+    // Confirmacao na tela (pendente, vencida ou incerta) nunca fica escondida atras de "pausada".
+    const pausable = PAUSABLE_CONVERSATION.has(conversationStatus) && !confirmation && !conversationActive;
+    status = pausable ? 'paused' : 'awaiting';
+  }
 
   const addMessage = useCallback((role, text, meta = {}) => {
     const cleanText = String(text || '').trim();
@@ -477,6 +490,7 @@ function VoiceAssistantPage() {
     recognition.onaudiostart = null;
     recognition.onsoundstart = null;
     recognition.onspeechstart = null;
+    recognition.onspeechend = null;
     recognition.onresult = null;
     recognition.onerror = null;
     recognition.onend = null;
@@ -608,6 +622,7 @@ function VoiceAssistantPage() {
         return;
       }
       setAwaitingReply(AWAITING_CONVERSATION.has(payload?.conversation?.status));
+      setConversationStatus(payload?.conversation?.status || null);
       if (request.voiceEpoch !== null) continueConversation(payload);
       else speak(payload);
     } catch (error) {
@@ -637,6 +652,9 @@ function VoiceAssistantPage() {
     // Tudo o que o navegador entregou e final: e o comando, mesmo que um erro chegue depois dele.
     if (finalText && !interimText) {
       failuresRef.current = 0;
+      traceRef.current.measure('ultimo-resultado-ate-final', 'ultimo-resultado');
+      traceRef.current.measure('fala-encerrada-ate-final', 'fala-encerrada');
+      traceRef.current.measure('stop-ate-final', 'stop-chamado');
       traceRef.current.mark('fim-da-fala');
       sendUtterance(finalText, { nextDraft: typedDraft, fromVoice: true });
       return;
@@ -699,6 +717,7 @@ function VoiceAssistantPage() {
     clearTimeout(session.noSpeechTimer);
     clearTimeout(session.maxTimer);
     setMic('finishing');
+    traceRef.current.mark('stop-chamado');
     try {
       session.recognition.stop();
     } catch (error) {
@@ -716,7 +735,13 @@ function VoiceAssistantPage() {
     if (!supported || sessionRef.current || sendingRef.current) return;
     setRetryable(false);
     setMicError(false);
-    if (!auto) traceRef.current.mark('clique');
+    traceRef.current.clear(SESSION_TRACE_MARKS);
+    if (auto) {
+      traceRef.current.measure('espera-da-retomada', 'voz-fim');
+      traceRef.current.mark('retomada-inicio');
+    } else {
+      traceRef.current.mark('clique');
+    }
     // A voz do assistente nao pode ser captada como se fosse a fala da pessoa.
     stopSpeaking();
 
@@ -743,8 +768,13 @@ function VoiceAssistantPage() {
       setSlowStart(false);
       if (!session.finishing) setMic('listening');
       setResuming(false);
-      if (auto) traceRef.current.measure('retomada', 'retomada');
-      else traceRef.current.measure('microfone-pronto', 'clique');
+      traceRef.current.measure('onstart-ate-audio', 'onstart');
+      if (auto) {
+        traceRef.current.measure('retomada-ate-pronto', 'retomada-inicio');
+        traceRef.current.measure('retomada', 'retomada');
+      } else {
+        traceRef.current.measure('microfone-pronto', 'clique');
+      }
       // Microfone aberto, mas sem fala: fecha sem enviar (o navegador nem sempre avisa no modo continuo).
       session.noSpeechTimer = setTimeout(() => {
         if (isCurrent() && !session.finishing && !session.finalText && !session.interimText) {
@@ -778,6 +808,8 @@ function VoiceAssistantPage() {
 
     recognition.onstart = () => {
       if (!isCurrent()) return;
+      traceRef.current.measure('start-ate-onstart', 'start-chamado');
+      traceRef.current.mark('onstart');
       if (!reportsAudioStart) {
         markReady();
         return;
@@ -798,9 +830,15 @@ function VoiceAssistantPage() {
       markReady();
     };
 
+    // So para o diagnostico (nem todo navegador dispara no modo continuo).
+    recognition.onspeechend = () => {
+      if (isCurrent()) traceRef.current.mark('fala-encerrada');
+    };
+
     recognition.onresult = (event) => {
       if (!isCurrent()) return;
       markReady();
+      traceRef.current.mark('ultimo-resultado');
       // A lista de resultados e cumulativa: refazer o texto a cada evento evita repetir ou perder trechos.
       const finals = [];
       const interims = [];
@@ -840,6 +878,8 @@ function VoiceAssistantPage() {
     session.slowTimer = setTimeout(() => {
       if (isCurrent() && !session.ready) setSlowStart(true);
     }, SLOW_START_HINT_MS);
+    if (!auto) traceRef.current.measure('clique-ate-start', 'clique', { keep: true });
+    traceRef.current.mark('start-chamado');
     try {
       recognition.start();
     } catch (error) {
@@ -1020,6 +1060,8 @@ function VoiceAssistantPage() {
     interactionHint = 'Retomando a conversa: espere aparecer "Ouvindo — pode falar". Standby encerra a conversa por voz.';
   } else if (conversationNotice) {
     interactionHint = conversationNotice;
+  } else if (status === 'paused') {
+    interactionHint = PAUSED_HINT;
   } else if (status === 'awaiting') {
     interactionHint = 'O assistente espera a sua resposta. Toque na estrela para falar ou digite.';
   }
