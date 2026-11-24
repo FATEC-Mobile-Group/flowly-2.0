@@ -99,3 +99,37 @@ test('servidor adiantado: o cartao nao fica parado no acumulado e avanca pelo re
   await act(async () => { vi.advanceTimersByTime(60000); }); // tique de 1 min (antes ficava em 8 min)
   expect(screen.getByText('9 min')).toBeInTheDocument();
 });
+
+describe('mesma base do Meu Dia', () => {
+  const ID = 'a'.repeat(24);
+  const salvarAncoraDoMeuDia = (inicioServidor, inicioLocal) => {
+    sessionStorage.setItem('flowly:cronometro-ancoras', JSON.stringify({
+      [ID]: { inicioServidor: Date.parse(inicioServidor), inicioLocal: Date.parse(inicioLocal) },
+    }));
+  };
+
+  test('11 min 59 s mostra 11 min e 12 min 00 s mostra 12 min no segundo seguinte, sem HTTP extra', async () => {
+    // Ancora salva pelo Meu Dia nesta aba: sessao local de 119 s sobre 600 s acumulados = 11 min 59 s.
+    const inicio = '2026-11-25T15:00:20.000Z'; // servidor 20 s adiantado
+    salvarAncoraDoMeuDia(inicio, '2026-11-25T14:58:01.000Z');
+    lista = [{ ...ativa(inicio), tempoGasto: 10, tempoGastoSegundos: 600 }];
+    const { unmount } = await montar();
+    expect(screen.getByText('11 min')).toBeInTheDocument();
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    expect(screen.getByText('12 min')).toBeInTheDocument();
+    expect(apiGet).toHaveBeenCalledTimes(1); // so a consulta inicial (o polling e de 2 min)
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test('depois do F5 (remontado) continua coerente com a mesma ancora', async () => {
+    const inicio = '2026-11-25T15:00:20.000Z';
+    salvarAncoraDoMeuDia(inicio, '2026-11-25T14:57:00.000Z');
+    lista = [{ ...ativa(inicio), tempoGasto: 0, tempoGastoSegundos: 0 }];
+    const primeira = await montar();
+    expect(screen.getByText('3 min')).toBeInTheDocument();
+    primeira.unmount();
+    await montar();
+    expect(screen.getByText('3 min')).toBeInTheDocument();
+  });
+});

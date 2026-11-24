@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import apiClient from '../../config/apiClient';
 import { authUtils } from '../../config/authUtils';
-import { EVENTO_CRONOMETRO, acumuladoEmSegundos } from '../../pages/user/meuDiaUtils';
+import { EVENTO_CRONOMETRO, ancoraDaSessao, segundosDoCronometro } from '../../pages/user/meuDiaUtils';
 import '../../styles/components/FloatingTimer.css';
 
 // Cartoes dos cronometros ATIVOS do usuario (nao e uma notificacao temporaria): vem de /tarefas/minhas, com nova
@@ -27,6 +27,11 @@ const gravarOcultos = (lista) => {
 };
 
 const chaveDaSessao = (tarefa) => `${tarefa._id}:${tarefa.ultimaAtualizacaoCronometro || ''}`;
+
+// Minutos inteiros do mesmo calculo do Meu Dia: acumulado preciso + sessao medida pela mesma ancora (a salva nesta
+// aba ou uma a partir da consulta, corrigida pela diferenca de relogio medida).
+const minutosDaSessao = (tarefa, agora, carregadoEm) =>
+  Math.floor(segundosDoCronometro(tarefa, agora, ancoraDaSessao(tarefa, carregadoEm)) / 60);
 
 const FloatingTimer = () => {
   const [tarefasAtivas, setTarefasAtivas] = useState([]);
@@ -63,11 +68,6 @@ const FloatingTimer = () => {
   useEffect(() => {
     fetchAtivas();
 
-    // Tick de 1 minuto para atualização da tela local
-    const intervalTicker = setInterval(() => {
-      setNow(Date.now());
-    }, 60000);
-
     // Polling do backend para garantir consistencia com o server
     const intervalPoll = setInterval(fetchAtivas, 60000 * 2);
 
@@ -75,7 +75,6 @@ const FloatingTimer = () => {
     window.addEventListener(EVENTO_CRONOMETRO, fetchAtivas);
 
     return () => {
-      clearInterval(intervalTicker);
       clearInterval(intervalPoll);
       window.removeEventListener(EVENTO_CRONOMETRO, fetchAtivas);
     };
@@ -92,18 +91,34 @@ const FloatingTimer = () => {
   };
 
   const visiveis = tarefasAtivas.filter((t) => !ocultos.includes(chaveDaSessao(t)));
+
+  // Atualizacao local (sem API): confere a cada 1 s e so re-renderiza quando algum minuto exibido muda, entao o
+  // cartao acompanha o Meu Dia (11 min ate 11:59, 12 min a partir de 12:00). So existe com cartao visivel.
+  const assinaturaVisiveis = visiveis.map(chaveDaSessao).join(',');
+  useEffect(() => {
+    if (!assinaturaVisiveis) return undefined;
+    const minutos = (agora) => visiveis.map((t) => minutosDaSessao(t, agora, carregadoEm)).join('|');
+    let ultimo = minutos(Date.now());
+    const intervalo = setInterval(() => {
+      const agora = Date.now();
+      const atual = minutos(agora);
+      if (atual !== ultimo) {
+        ultimo = atual;
+        setNow(agora);
+      }
+    }, 1000);
+    return () => clearInterval(intervalo);
+    // visiveis muda junto com a assinatura e carregadoEm; recriar a cada render nao e necessario.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assinaturaVisiveis, carregadoEm]);
+
   if (visiveis.length === 0) return null;
 
   return (
     <div className="floating-timer-container">
       {visiveis.map(t => {
-        // Acumulado preciso (segundos) + sessao em andamento, exibido em minutos inteiros: os segundos que sobraram
-        // de sessoes anteriores entram na conta (antes, minutos legados + minutos da sessao ficavam abaixo do real).
-        const startedAt = new Date(t.ultimaAtualizacaoCronometro).getTime();
-        const segundosSessao = Number.isFinite(startedAt)
-          ? Math.floor((Math.max(0, carregadoEm - startedAt) + Math.max(0, now - carregadoEm)) / 1000)
-          : 0;
-        const totalMins = Math.floor((acumuladoEmSegundos(t) + segundosSessao) / 60);
+        // Acumulado preciso (segundos) + sessao em andamento, exibido em minutos inteiros.
+        const totalMins = minutosDaSessao(t, now, carregadoEm);
         const descricao = String(t.descricao || 'Tarefa');
 
         return (
