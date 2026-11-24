@@ -90,3 +90,12 @@ test('tarefa antiga sem o campo novo continua usando tempoGasto', async () => {
   await montar();
   expect(screen.getByText('9 min')).toBeInTheDocument();
 });
+
+test('servidor adiantado: o cartao nao fica parado no acumulado e avanca pelo relogio local', async () => {
+  // Inicio 90 s "no futuro" para o navegador; acumulado 503 s (8 min).
+  lista = [{ ...ativa('2026-11-25T15:01:30.000Z'), tempoGasto: 8, tempoGastoSegundos: 503 }];
+  await montar();
+  expect(screen.getByText('8 min')).toBeInTheDocument();
+  await act(async () => { vi.advanceTimersByTime(60000); }); // tique de 1 min (antes ficava em 8 min)
+  expect(screen.getByText('9 min')).toBeInTheDocument();
+});
