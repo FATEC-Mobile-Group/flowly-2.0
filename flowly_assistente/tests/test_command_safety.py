@@ -493,20 +493,17 @@ class CancelTaskSelectionTests(AssistantFlowTestCase):
 # Escolhas que nao apontam para uma unica opcao da lista. Antes da correcao, com uma tarefa ja selecionada,
 # "atribuir a 11 para mim" atribuia a tarefa selecionada antes (e "décima primeira" virava a primeira).
 OUT_OF_RANGE_CHOICES = ("11", "12", "0", "99", "117", "atribuir a 11 para mim", "detalhes da 11", "pegar a 15 para mim")
+# "sexta", "sétima", "sete", "7ª" e "última" saíram daqui: com a lista de 10 opções, agora apontam a posição certa
+# (ver test_extended_positions_pick_the_right_task_and_still_require_confirmation).
 INVALID_ORDINAL_CHOICES = (
-    "sexta",
-    "atribuir a sétima para mim",
     "atribuir a décima primeira para mim",
     "detalhes da vigésima",
-    "atribuir a última para mim",
 )
 AMBIGUOUS_CHOICES = (
     "atribuir a 7 ou a 8 para mim",
     "a 7, quer dizer a 8, atribuir para mim",
     "detalhes da 2 e da 3",
     "atribuir a onze para mim",
-    "atribuir a sete para mim",
-    "atribuir a 7ª para mim",
 )
 
 
@@ -555,6 +552,78 @@ class TaskSelectionSafetyTests(AssistantFlowTestCase):
                         payload, _status = self.send("token-user", "atribuir para mim")
                         self.assertEqual(payload["conversation"]["status"], "awaiting_task_selection")
                         self.assert_no_writes()
+
+    def test_extended_positions_pick_the_right_task_and_still_require_confirmation(self):
+        # Antes recusadas (os ordinais iam so ate "quinta"); agora apontam a opcao certa das 10 guardadas. Atribuir
+        # uma tarefa citada agora continua pedindo confirmacao com o nome dela: nenhuma escrita direta.
+        for phrase, expected in (
+            ("sexta", "Organizar arquivos"),
+            ("atribuir a sétima para mim", "Preparar demonstração"),
+            ("atribuir a sete para mim", "Preparar demonstração"),
+            ("atribuir a 7ª para mim", "Preparar demonstração"),
+            ("atribuir a última para mim", "Melhorar acessibilidade"),
+        ):
+            for selected_before in (None, "2"):
+                with self.subTest(phrase=phrase, selected_before=selected_before):
+                    self.browse(select=selected_before)
+                    payload, status = self.send("token-user", phrase)
+                    self.assertEqual(status, 200, payload)
+                    self.assertIn(expected, payload["reply_text"])
+                    self.assertFalse(payload["action_executed"])
+                    self.assert_no_writes()
+                    self.send("token-user", "cancelar")
+                    self.assert_no_writes()
+
+    SAME_TASK_ASSIGNMENTS = (
+        ("7", "atribuir a sétima para mim", 7),
+        ("7", "atribuir a sete para mim", 7),
+        ("7", "atribuir a 7ª para mim", 7),
+        ("7", "atribuir a 7 para mim", 7),
+        ("10", "atribuir a última para mim", 10),
+        ("9", "atribuir a penúltima para mim", 9),
+        ("2", "atribuir a segunda para mim", 2),
+    )
+
+    def test_position_said_again_for_the_selected_task_still_requires_confirmation(self):
+        # A posicao dita agora (sujeita a erro de transcricao) passa pelo resumo com o nome da tarefa, mesmo quando
+        # coincide com a tarefa ja selecionada; so "atribuir para mim" em resposta a selecao executa direto.
+        for select, phrase, position in self.SAME_TASK_ASSIGNMENTS:
+            with self.subTest(phrase=phrase, selected=select):
+                self.ops.ops.clear()
+                self.browse(select=select)
+                task = BACKLOG_TASKS[position - 1]
+                payload, status = self.send("token-user", phrase)
+                self.assertEqual(status, 200, payload)
+                self.assertEqual(payload["conversation"]["status"], "awaiting_confirmation", payload["reply_text"])
+                self.assertFalse(payload["action_executed"])
+                self.assertIn(task["descricao"], payload["reply_text"])
+                self.assert_no_writes()
+                pending = [op for op in self.ops.ops if op["status"] == "pending"]
+                self.assertEqual(len(pending), 1)
+                self.assertEqual(pending[0]["commandKey"], "assign_to_me")
+                self.assertEqual(pending[0]["params"]["task_id"], task["_id"])
+                self.assertIn(task["descricao"], pending[0]["summary"])
+                self.send("token-user", "cancelar")
+                self.assert_no_writes()
+
+    def test_position_said_again_with_writes_disabled_never_writes(self):
+        with patch.dict(os.environ, {"FLOWLY_ASSISTANT_WRITES_ENABLED": "false"}):
+            for select, phrase, _position in self.SAME_TASK_ASSIGNMENTS:
+                with self.subTest(phrase=phrase, selected=select):
+                    self.ops.ops.clear()
+                    self.browse(select=select)
+                    payload, status = self.send("token-user", phrase)
+                    self.assertEqual((status, payload["error"]), (403, "assistant_writes_disabled"), payload)
+                    self.assertFalse(payload["action_executed"])
+                    self.assertIn("Nada foi alterado", payload["reply_text"])
+                    self.assert_no_writes()
+                    self.assertEqual(self.ops.ops, [])  # nem resumo preparado
+
+    def test_plain_assign_answer_to_a_selection_still_executes_directly(self):
+        self.browse(select="sétima")
+        payload, _status = self.send("token-user", "atribuir para mim")
+        self.assertTrue(payload["action_executed"], payload["reply_text"])
+        self.assertEqual(self.api.writes(), [("PUT", f"/tarefas/{BACKLOG_TASKS[6]['_id']}/atribuir-para-mim", None)])
 
     def test_ordinal_or_number_beyond_a_short_list_asks_again(self):
         self.api.backlog = BACKLOG_TASKS[:3]

@@ -388,8 +388,13 @@ def metadata(query: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def urgent_follow_up(tasks: List[Dict[str, Any]], today: Optional[date] = None) -> Tuple[List[Dict[str, Any]], str, str]:
-    """Acompanhamento "e quais sao as mais urgentes?" sobre a lista ja mostrada (sem nova consulta)."""
+def urgent_follow_up(
+    tasks: List[Dict[str, Any]], today: Optional[date] = None, *, limit: Optional[int] = None
+) -> Tuple[List[Dict[str, Any]], str, str]:
+    """Acompanhamento "e quais sao as mais urgentes?" sobre a lista ja mostrada (sem nova consulta).
+
+    limit ("as três mais urgentes"): as N primeiras por urgencia e depois prazo, so entre as que tem urgencia.
+    """
     today = today or today_local()
     if not tasks:
         text = "A lista anterior não tem tarefas."
@@ -398,6 +403,15 @@ def urgent_follow_up(tasks: List[Dict[str, Any]], today: Optional[date] = None) 
     if best == 0:
         text = "As tarefas da lista anterior não têm urgência informada."
         return [], text, text
+    if limit is not None:
+        ranked = sorted((t for t in tasks if _urgency(t) > 0), key=_by_urgency_then_due)
+        top = ranked[:limit]
+        header = (f"As {len(top)} tarefas mais urgentes da lista:" if len(top) > 1
+                  else "A tarefa mais urgente da lista:")
+        if len(top) < limit:
+            header = f"Só {_count(len(top), 'tarefa da lista tem', 'tarefas da lista têm')} urgência informada:"
+        display, said = _listing(top, today)
+        return top, f"{header} {display} {SELECTION_HINT}", f"{header} {said}"
     top = sorted((t for t in tasks if _urgency(t) == best), key=_by_due_then_urgency)
     label = {3: "alta", 2: "média", 1: "baixa"}[best]
     prefix = "" if best == 3 else "Nenhuma tem urgência alta. "

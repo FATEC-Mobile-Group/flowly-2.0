@@ -164,6 +164,40 @@ PERIOD_COMMAND_KEYS = {
     "summary": "tasks_summary",
 }
 
+# Troca de periodo com uma lista de tarefas aberta ("e as de amanhã?", "mostre as próximas", "agora as desta
+# semana"): o assunto (tarefas) vem da lista mostrada. So vale com lista aberta (quem chama garante), com artigo
+# plural ("as"/"os") e so com estas palavras; qualquer outra palavra (verbo de escrita, nome, numero) recusa.
+PERIOD_FOLLOW_UP_WORDS = frozenset({
+    "e", "as", "os", "de", "da", "do", "das", "dos", "agora", "entao", "mostre", "mostra", "mostrar", "ver", "veja",
+    "quero", "me", "pode", "quais", "sao", "so", "tambem", "para", "pra", "por", "favor", "que", "tal", "lista",
+    "hoje", "amanha", "atrasadas", "atrasados", "vencidas", "vencidos", "vence", "vencem", "proxima", "proximas",
+    "proximos", "semana", "desta", "dessa", "nesta", "nessa", "esta", "essa", "vem", "seguinte", "pendentes", "em",
+    "aberto",
+})
+PERIOD_FOLLOW_UP_ARTICLES = frozenset({"as", "os", "das", "dos"})
+# Frase completa equivalente, reconhecida pelo detector de periodo normal (sem resumo: ele nao vira lista).
+PERIOD_FOLLOW_UP_UTTERANCES = {
+    "today": "minhas tarefas de hoje",
+    "tomorrow": "minhas tarefas de amanhã",
+    "overdue": "minhas tarefas atrasadas",
+    "week": "minhas tarefas desta semana",
+    "next_week": "minhas tarefas da próxima semana",
+    "upcoming": "minhas próximas entregas",
+    "pending": "minhas tarefas pendentes",
+}
+
+
+def period_follow_up_utterance(text: str) -> Optional[str]:
+    """Frase completa da consulta por periodo pedida como continuacao de uma lista aberta, ou None."""
+    words = plain_words(text)
+    if not words or not set(words) & PERIOD_FOLLOW_UP_ARTICLES:
+        return None
+    if any(word not in PERIOD_FOLLOW_UP_WORDS for word in words):
+        return None
+    # O assunto implicito e "tarefas"; o resto da decisao (periodo, escrita) e do detector de sempre.
+    period = detect_task_period(" ".join(words) + " tarefas")
+    return PERIOD_FOLLOW_UP_UTTERANCES.get(period) if period else None
+
 
 def is_write_command(command: Command) -> bool:
     return (command.method or "").strip().upper() in WRITE_METHODS

@@ -26,6 +26,7 @@ from flowly_assistant.command_parser import (
     CommandParser,
     extract_status_target,
     is_write_command,
+    period_follow_up_utterance,
     plain_words,
     strict_param_value,
 )
@@ -108,9 +109,108 @@ def task_position_refs(text: str) -> set[str]:
     return {word for word in plain_words(text) if word in TASK_POSITION_WORDS or any(ch.isdigit() for ch in word)}
 
 
+# Posicao (a partir de 0) de cada palavra de posicao na selecao. Separado de TASK_ORDINALS, que tambem e usado
+# por trecho de texto em _select_task_from_text ("dez" esta dentro de "dezembro"); aqui so palavras inteiras.
+_ORDINAL_STEMS = ("primeir", "segund", "terceir", "quart", "quint", "sext", "setim", "oitav", "non", "decim")
+TASK_POSITION_INDEX = {
+    **{stem + ending: index for index, stem in enumerate(_ORDINAL_STEMS) for ending in ("o", "a")},
+    **{word: index for index, words in enumerate((
+        (), ("dois", "duas"), ("tres",), ("quatro",), ("cinco",), ("seis",), ("sete",), ("oito",), ("nove",), ("dez",),
+        ("onze",), ("doze",), ("treze",), ("catorze", "quatorze"), ("quinze",), ("dezesseis",), ("dezessete",),
+        ("dezoito",), ("dezenove",), ("vinte",),
+    )) for word in words},
+    "vigesimo": 19,
+    "vigesima": 19,
+}
+TASK_POSITION_FROM_END = {"ultimo": 1, "ultima": 1, "penultimo": 2, "penultima": 2}
+_NUMERIC_POSITION_RE = re.compile(r"(\d{1,2})[ao]?")  # "7", "7a" (7ª), "7o" (7º)
+
+
+def task_position_index(ref: str, count: int) -> Optional[int]:
+    """Indice da lista de `count` tarefas para uma posicao citada, ou None (posicao desconhecida ou inexistente)."""
+    numeric = _NUMERIC_POSITION_RE.fullmatch(ref)
+    if numeric:
+        index = int(numeric.group(1)) - 1
+    elif ref in TASK_POSITION_FROM_END:
+        index = count - TASK_POSITION_FROM_END[ref]
+    else:
+        index = TASK_POSITION_INDEX.get(ref)
+    return index if index is not None and 0 <= index < count else None
+
+
 # Acao pedida na selecao de tarefa. "para mim" sozinho nao e atribuicao ("mostra os detalhes para mim").
 TASK_ASSIGN_WORDS = ("atribuir", "assumir", "pegar")
-TASK_DETAIL_WORDS = ("detalhe", "detalhes", "informacao", "informacoes", "abrir", "mostrar")
+# Pedido de detalhes: palavras inteiras ("abra", "mostre", "veja"...), nunca trecho de outra palavra.
+TASK_DETAIL_WORDS = frozenset({
+    "detalhe", "detalhes", "informacao", "informacoes", "abrir", "abre", "abra", "mostrar", "mostra", "mostre",
+    "ver", "veja", "ler", "le", "leia", "fala", "fale", "diga", "diz", "conta", "conte",
+})
+TASK_DETAIL_WORDS_WITH_MIM = frozenset({"detalhe", "detalhes", "informacao", "informacoes", "abrir", "mostrar"})
+
+# Pergunta sobre um dado da tarefa escolhida ("qual é o prazo dela?", "em que equipe ela está?"). Resposta com os
+# dados atuais da API (rota de detalhes), so o que foi perguntado; o que faltar e dito como ausente.
+TASK_ATTRIBUTE_WORDS = (
+    ("prazo", frozenset({"prazo", "vence", "vencimento", "entrega", "data"})),
+    ("status", frozenset({"status", "situacao", "andamento"})),
+    ("urgencia", frozenset({"urgencia", "prioridade", "urgente", "prioritaria", "prioritario"})),
+    ("equipe", frozenset({"equipe", "time"})),
+    ("descricao", frozenset({"descricao"})),
+    ("responsavel", frozenset({"responsavel"})),
+)
+# Pedido sobre a lista ou sobre a propria pessoa, nao sobre uma tarefa: fica com os fluxos de antes.
+TASK_ATTRIBUTE_EXCLUDED_WORDS = frozenset({
+    "quais", "mais", "tarefas", "urgentes", "prioritarias", "prioritarios", "importantes",
+    "minha", "minhas", "meu", "meus",
+})
+# Referencia explicita a uma unica tarefa (pronome pessoal); "essa"/"esta" so contam junto de "tarefa".
+SINGLE_TASK_PRONOUNS = frozenset({"ela", "ele", "dela", "dele", "nela", "nele"})
+SINGLE_TASK_DEMONSTRATIVES = frozenset({"essa", "esse", "esta", "este", "dessa", "desse", "desta", "deste"})
+
+
+def refers_to_single_task(text: str) -> bool:
+    words = set(plain_words(text))
+    return bool(words & SINGLE_TASK_PRONOUNS) or ("tarefa" in words and bool(words & SINGLE_TASK_DEMONSTRATIVES))
+
+
+# Quantidade, nao posicao: numero logo depois de artigo plural ("as três mais urgentes", "as 2").
+PLURAL_ARTICLES = frozenset({"as", "os", "das", "dos"})
+TASK_QUANTITY_WORDS = {
+    "dois": 2, "duas": 2, "tres": 3, "quatro": 4, "cinco": 5, "seis": 6, "sete": 7, "oito": 8, "nove": 9, "dez": 10,
+}
+
+
+def requested_quantity(text: str) -> Optional[int]:
+    words = plain_words(text)
+    for previous, word in zip(words, words[1:]):
+        if previous not in PLURAL_ARTICLES:
+            continue
+        if word.isdigit() and len(word) <= 2:
+            return int(word) or None
+        if word in TASK_QUANTITY_WORDS:
+            return TASK_QUANTITY_WORDS[word]
+    return None
+
+
+# Dia da semana, nao posicao: "sexta-feira", "terça", "sábado", "domingo", ou segunda/quarta/quinta/sexta depois
+# de preposicao de data ("de segunda", "na sexta", "até quinta"). "a sexta", "da sexta" e "a sexta tarefa" seguem
+# sendo posicao.
+WEEKDAY_ONLY_WORDS = frozenset({"feira", "terca", "sabado", "domingo"})
+WEEKDAY_ORDINAL_WORDS = frozenset({"segunda", "quarta", "quinta", "sexta"})
+WEEKDAY_PREPOSITIONS = frozenset({
+    "de", "na", "no", "para", "pra", "ate", "desta", "dessa", "nesta", "nessa", "proxima", "toda", "todas",
+})
+WEEKDAY_UNSUPPORTED_REPLY = (
+    "Ainda não consigo consultar tarefas por dia da semana. Nada foi alterado. "
+    "Você pode pedir as de hoje, as de amanhã, as desta semana ou as da próxima semana."
+)
+
+
+def weekday_reference(text: str) -> bool:
+    words = plain_words(text)
+    if set(words) & WEEKDAY_ONLY_WORDS:
+        return True
+    return any(word in WEEKDAY_ORDINAL_WORDS and previous in WEEKDAY_PREPOSITIONS
+               for previous, word in zip(words, words[1:]))
 
 # Palavras que acompanham um pedido sobre a tarefa ja escolhida ("pode atribuir essa pra mim, por favor").
 # Sem numero, ordinal ou nome completo da lista, qualquer outra palavra indica uma tarefa que nao foi reconhecida
@@ -123,8 +223,15 @@ TASK_FOLLOW_UP_WORDS = frozenset({
     "dela", "dele", "nessa", "nesse", "mesma", "mesmo", "selecionada", "escolhida",
     "para", "pra", "pro", "mim", "me", "eu", "voce", "pode", "poderia", "por", "favor", "gentileza", "obrigado",
     "obrigada", "quero", "queria", "gostaria", "agora", "entao", "ok", "sim", "a", "o", "as", "os", "um", "uma",
-    "e", "de", "da", "do", "das", "dos", "sobre", "mais", "com",
+    "e", "de", "da", "do", "das", "dos", "sobre", "mais", "com", "conta", "conte",
 })
+# Palavras aceitas numa pergunta sobre um dado da tarefa, alem das de acompanhamento e dos proprios dados.
+TASK_ATTRIBUTE_FILLER_WORDS = TASK_FOLLOW_UP_WORDS | {
+    w for _attribute, vocabulary in TASK_ATTRIBUTE_WORDS for w in vocabulary
+} | {
+    "qual", "quando", "que", "quem", "em", "na", "no", "nela", "nele", "tem", "ta", "ja", "ainda", "hoje", "amanha",
+    "atual", "atualmente", "dia",
+}
 
 # Resposta a uma pergunta pendente que e so um comando ("minhas tarefas", "quais são minhas tarefas"):
 # todas as palavras de uma frase do comando e, alem delas, no maximo estas.
@@ -159,6 +266,7 @@ URGENCY_FOLLOW_UP_WORDS = frozenset({
 # Listagens de leitura que substituem uma lista aberta ("ver minhas atividades" depois de "listar tarefas").
 # list_tasks de um colaborador vira my_tasks no RestAssistant (perfil lido de /users/me), nunca aqui.
 LISTING_COMMAND_KEYS = frozenset(TASK_QUERY_KEYS) | {"my_tasks", "list_tasks", "backlog"}
+PLAIN_LISTING_KEYS = frozenset({"my_tasks", "list_tasks", "backlog"})  # listagens sem filtro de data
 AMBIGUOUS_LISTING_REPLY = (
     "Não entendi se você quer uma nova lista de tarefas ou uma tarefa da lista atual. Nada foi alterado. "
     "Diga, por exemplo, \"listar minhas tarefas\" ou \"detalhes da tarefa 1\"."
@@ -356,6 +464,8 @@ class MessageAgent:
         self.context_available = True
         self.user_id: Optional[str] = None
         self._operations_client: Optional[OperationsClient] = None
+        # Consulta completa equivalente a uma troca de periodo sobre a lista aberta (so nesta mensagem).
+        self._command_content: Optional[str] = None
 
     def _operations(self) -> OperationsClient:
         """Cliente das confirmacoes compartilhadas (JWT do usuario + segredo interno do ambiente)."""
@@ -535,6 +645,18 @@ class MessageAgent:
 
         pending = self.conversations.get(conversation_id)
         if pending and pending.get("mode") == "task_selection":
+            if weekday_reference(content) and not is_confirmation(content):
+                # "tarefas de sexta-feira", "e as de quarta?": nunca vira a 6ª/4ª tarefa; a lista aberta continua.
+                return self._task_conversation_response(
+                    event_id=event["id"],
+                    moderation_score=moderation.score,
+                    queue_result=queue_result,
+                    conversation_id=conversation_id,
+                    status="browsing_tasks",
+                    text=WEEKDAY_UNSUPPORTED_REPLY,
+                    ok=True,
+                    action_executed=False,
+                )
             listing = self._listing_request(content, pending)
             if listing == "new":
                 pending = None  # a resposta da nova consulta grava (ou limpa) a selecao
@@ -568,7 +690,25 @@ class MessageAgent:
         if memory_response is not None:
             return memory_response
 
-        match = None if is_confirmation(content) else self.parser.match(content)
+        # Troca de periodo com lista aberta: o comando e a consulta completa equivalente (so leitura).
+        command_content = self._command_content or content
+        match = None if is_confirmation(content) else self.parser.match(command_content)
+        if (
+            not is_confirmation(content)
+            and (match is None or match.command.key in PLAIN_LISTING_KEYS)
+            and weekday_reference(content)
+        ):
+            # Sem consulta por dia da semana: resposta clara, em vez de listar tudo ignorando o dia.
+            return {
+                "ok": True,
+                "messageId": event["id"],
+                "moderation": {"allowed": True, "score": moderation.score},
+                "queue": queue_result,
+                "command": None,
+                "action_executed": False,
+                "reply_text": WEEKDAY_UNSUPPORTED_REPLY,
+                "tts": tts_payload(WEEKDAY_UNSUPPORTED_REPLY, language=str(self.body.get("language") or "pt-BR")),
+            }, 201
         if match is None or match.command.key == "exit":
             text = FALLBACK_REPLY
             reason = None if match is not None else self.parser.non_directive_reason(content)
@@ -665,7 +805,7 @@ class MessageAgent:
                 response["conversation"] = {"id": conversation_id, "status": "awaiting_params"}
             return response, response_status
 
-        command_payload, command_status = self.assistant.handle(content, supplied_params)
+        command_payload, command_status = self.assistant.handle(command_content, supplied_params)
         status = 200 if command_payload.get("ok") else command_status
         if (
             not command_payload.get("ok")
@@ -936,9 +1076,18 @@ class MessageAgent:
         if is_confirmation(content):
             return None
         match = self.parser.match(content)
-        if match is None or match.command.key not in LISTING_COMMAND_KEYS:
+        if match is None:
+            # Troca de periodo sobre a lista aberta ("e as de amanhã?"): vira a consulta completa equivalente.
+            follow_up = period_follow_up_utterance(content)
+            if follow_up:
+                self._command_content = follow_up
+                return "new"
+            return None
+        if match.command.key not in LISTING_COMMAND_KEYS:
             return None
         if match.command.key in TASK_QUERY_KEYS:
+            if refers_to_single_task(content):
+                return None  # "ela vence amanhã?": pergunta sobre a tarefa escolhida, nao uma nova lista
             return "new"  # periodo explicito; numeros ("proximos 7 dias") fazem parte da data
         tasks = [task for task in pending.get("tasks", []) if isinstance(task, dict)]
         if task_position_refs(content) or self._tasks_named_in(content, tasks):
@@ -1805,7 +1954,52 @@ class MessageAgent:
             self.conversations.clear(conversation_id)
             return self._error("invalid_conversation", "Perdi a lista de tarefas. Pode pedir para listar novamente?", 400)
 
+        attribute_response = self._task_attribute_response(
+            conversation_id=conversation_id,
+            pending=pending,
+            content=content,
+            tasks=tasks,
+            event_id=event_id,
+            moderation_score=moderation_score,
+            queue_result=queue_result,
+        )
+        if attribute_response is not None:
+            return attribute_response
+
         words = set(plain_words(content))
+        quantity = requested_quantity(content)
+        if quantity is not None:
+            # "as três mais urgentes": quantidade, nao a 3ª tarefa. Sem pedido de urgencia ("mostre as duas"),
+            # pergunta em vez de escolher uma tarefa (e nunca escreve).
+            if words & URGENCY_FOLLOW_UP_WORDS and not self._tasks_named_in(content, tasks):
+                top, display, spoken = urgent_follow_up(tasks, limit=quantity)
+                if top:
+                    self.conversations.save(conversation_id, {"mode": "task_selection", "tasks": top})
+                return self._task_conversation_response(
+                    event_id=event_id,
+                    moderation_score=moderation_score,
+                    queue_result=queue_result,
+                    conversation_id=conversation_id,
+                    status="browsing_tasks" if top else "awaiting_task_selection",
+                    text=display,
+                    spoken=spoken,
+                    ok=True,
+                    action_executed=False,
+                )
+            text = (
+                f"Você quer uma tarefa da lista ou as {quantity} mais urgentes? Nada foi alterado. "
+                "Diga, por exemplo, \"detalhes da terceira\" ou \"as três mais urgentes\"."
+            )
+            return self._task_conversation_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                status="awaiting_task_selection",
+                text=text,
+                ok=True,
+                action_executed=False,
+            )
         if words & URGENCY_FOLLOW_UP_WORDS and not task_position_refs(content) and not self._tasks_named_in(content, tasks):
             top, display, spoken = urgent_follow_up(tasks)
             if top:
@@ -1940,7 +2134,11 @@ class MessageAgent:
         # Atribuir sem confirmacao so quando a tarefa ja tinha sido selecionada e mostrada ("Selecionei X" ou os
         # detalhes) e esta mensagem e a resposta a essa escolha. Numero ou nome dito agora (sujeito a erro de
         # transcricao, "3" x "13") passa pelo resumo com o nome da tarefa e pela confirmacao explicita.
-        if action == "assign" and str(selected_task.get("_id")) != str(selected_id or ""):
+        # A referencia dita nesta frase vale mesmo quando coincide com a selecao anterior ("atribuir a 7 para mim" com
+        # a 7 ja escolhida): a fala pode ter sido mal transcrita, entao o resumo com o nome e a confirmacao continuam.
+        if action == "assign" and (
+            position_refs or named_tasks or str(selected_task.get("_id")) != str(selected_id or "")
+        ):
             return self._request_selection_assign_confirmation(
                 conversation_id=conversation_id,
                 task=selected_task,
@@ -2096,6 +2294,135 @@ class MessageAgent:
             "reply_text": WRITES_DISABLED_REPLY,
             "tts": tts_payload(WRITES_DISABLED_REPLY, language=str(self.body.get("language") or "pt-BR")),
         }, 403
+
+    def _task_attributes_asked(self, content: str, named_tasks: list[Dict[str, Any]]) -> list[str]:
+        """Dados perguntados sobre uma tarefa ("prazo", "status"...), na ordem fixa; [] se a frase nao e so isso.
+
+        Qualquer palavra fora do vocabulario (outra tarefa, verbo de escrita), pedido sobre a lista ("quais as mais
+        urgentes?") ou sobre a pessoa ("qual é minha prioridade?") devolve [] e segue os fluxos de antes.
+        """
+        outside = self._words_outside_names(content, named_tasks)
+        if self._task_follow_up_action(outside) in ("assign", "conflict"):
+            return []
+        refs = task_position_refs(content)
+        words = [word for word in outside.split() if word not in refs]
+        if not words or set(words) & TASK_ATTRIBUTE_EXCLUDED_WORDS:
+            return []
+        if any(word not in TASK_ATTRIBUTE_FILLER_WORDS for word in words):
+            return []
+        return [attribute for attribute, vocabulary in TASK_ATTRIBUTE_WORDS if vocabulary & set(words)]
+
+    def _task_attribute_response(
+        self,
+        *,
+        conversation_id: str,
+        pending: Dict[str, Any],
+        content: str,
+        tasks: list[Dict[str, Any]],
+        event_id: str,
+        moderation_score: float,
+        queue_result: Dict[str, Any],
+    ) -> Optional[Tuple[Dict[str, Any], int]]:
+        """Responde uma pergunta sobre um dado da tarefa (so leitura). None: nao e uma pergunta dessas, ou a
+        referencia nao vale (os fluxos de antes tratam: posicao invalida descarta a selecao, sem chamar a API)."""
+        named_tasks = self._tasks_named_in(content, tasks)
+        attributes = self._task_attributes_asked(content, named_tasks)
+        if not attributes:
+            return None
+        refs = task_position_refs(content)
+        selected_id = pending.get("selected_task_id")
+        selected_task = next((task for task in tasks if task.get("_id") == selected_id), None)
+        if refs:
+            target = self._task_for_position_refs(refs, named_tasks, tasks)
+        elif named_tasks:
+            target = named_tasks[0] if len(named_tasks) == 1 else None
+        else:
+            target = selected_task
+            if target is None:
+                if attributes == ["urgencia"]:
+                    return None  # "qual é a prioridade?" sem tarefa escolhida: as mais urgentes da lista, como antes
+                text = "De qual tarefa da lista? Diga o número dela, por exemplo \"o prazo da tarefa 2\", ou cancelar."
+                return self._task_conversation_response(
+                    event_id=event_id,
+                    moderation_score=moderation_score,
+                    queue_result=queue_result,
+                    conversation_id=conversation_id,
+                    status="awaiting_task_selection",
+                    text=text,
+                    ok=True,
+                    action_executed=False,
+                )
+        if target is None:
+            return None
+
+        # Dados atuais da tarefa (status e prazo mudam): nunca os da lista guardada.
+        try:
+            result = self.assistant.api.task_details(str(target["_id"]))
+        except Exception:
+            text = "Não consegui consultar essa tarefa agora. Nada foi alterado. Tente de novo em instantes."
+            return self._task_conversation_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                status="browsing_tasks",
+                text=text,
+                ok=False,
+                action_executed=False,
+                error="api_error",
+            )
+        tarefa = (result or {}).get("tarefa") if isinstance(result, dict) else None
+        if not isinstance(tarefa, dict):
+            text = "Não consegui ler os dados dessa tarefa. Nada foi alterado."
+            return self._task_conversation_response(
+                event_id=event_id,
+                moderation_score=moderation_score,
+                queue_result=queue_result,
+                conversation_id=conversation_id,
+                status="browsing_tasks",
+                text=text,
+                ok=False,
+                action_executed=False,
+                error="api_error",
+            )
+
+        text = f"Tarefa {self._task_title(tarefa)}: " + "; ".join(
+            self._task_attribute_text(tarefa, attribute) for attribute in attributes
+        ) + "."
+        self.conversations.save(conversation_id, {**pending, "selected_task_id": target.get("_id")})
+        return self._task_conversation_response(
+            event_id=event_id,
+            moderation_score=moderation_score,
+            queue_result=queue_result,
+            conversation_id=conversation_id,
+            status="browsing_tasks",
+            text=text,
+            ok=True,
+            action_executed=True,
+            command={"key": "task_details"},
+        )
+
+    def _task_attribute_text(self, tarefa: Dict[str, Any], attribute: str) -> str:
+        """Um dado da tarefa, como veio da API; ausente e dito como ausente (nunca inventado)."""
+        if attribute == "prazo":
+            entrega = _short_date(tarefa.get("dataEntrega"))
+            return f"prazo {entrega}" if entrega else "sem prazo definido"
+        if attribute == "status":
+            status = str(tarefa.get("status") or "").strip()
+            return f"status {self._status_label(status)}" if status else "status não informado"
+        if attribute == "urgencia":
+            urgencia = URGENCY_LABELS.get(str(tarefa.get("urgencia") or "").strip().lower())
+            return f"urgência {urgencia}" if urgencia else "sem urgência definida"
+        if attribute == "equipe":
+            equipe = tarefa.get("equipe")
+            nome = str(equipe.get("nome") or "").strip() if isinstance(equipe, dict) else ""
+            return f"equipe {nome}" if nome else "sem equipe informada"
+        if attribute == "responsavel":
+            user = tarefa.get("user")
+            nome = str(user.get("nome") or "").strip() if isinstance(user, dict) else ""
+            return f"responsável {nome}" if nome else "sem responsável"
+        detalhes = str(tarefa.get("detalhes") or "").strip()
+        return f"descrição: {detalhes[:180]}" if detalhes else "sem descrição cadastrada"
 
     def _compact_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
         equipe = task.get("equipe")
@@ -2277,8 +2604,11 @@ class MessageAgent:
 
     def _task_follow_up_action(self, text: str) -> Optional[str]:
         """assign, details, conflict (os dois na mesma frase: pergunta antes de escrever) ou None."""
-        assign = any(word in text for word in TASK_ASSIGN_WORDS)
-        details = any(word in text for word in TASK_DETAIL_WORDS)
+        assign = any(word in text for word in TASK_ASSIGN_WORDS)  # inalterado: nenhuma forma nova vira escrita
+        words = set(plain_words(text))
+        # Com "para mim" ("mostra a 3 para mim"), so as palavras de antes contam como detalhes: a frase pode ser um
+        # pedido de atribuicao mal dito, entao a tarefa so e selecionada e o assistente pergunta.
+        details = bool(words & (TASK_DETAIL_WORDS_WITH_MIM if "mim" in words else TASK_DETAIL_WORDS))
         if assign and details:
             return "conflict"
         return "assign" if assign else "details" if details else None
@@ -2331,8 +2661,8 @@ class MessageAgent:
         candidates = {str(task.get("_id")): task for task in named}
         explained = set().union(*(task_position_refs(str(task.get("descricao") or "")) for task in named))
         for ref in refs:
-            idx = int(ref) - 1 if ref.isdigit() else TASK_ORDINALS.get(ref)
-            if idx is not None and 0 <= idx < len(tasks):
+            idx = task_position_index(ref, len(tasks))
+            if idx is not None:
                 candidates[str(tasks[idx].get("_id"))] = tasks[idx]
             elif ref not in explained:
                 return None
