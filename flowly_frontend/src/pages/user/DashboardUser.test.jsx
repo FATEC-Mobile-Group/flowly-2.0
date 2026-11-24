@@ -239,3 +239,105 @@ describe('alterar status no Meu Dia', () => {
     expect(within(item).getByRole('button', { name: 'Alterar status de Revisão de amanhã' })).toBeInTheDocument();
   });
 });
+
+describe('cronometro no Meu Dia', () => {
+  // Navegador as 12:00:00 em Brasilia; servidor 21 s adiantado (o cenario do "-1h -1m -21s").
+  const INICIO_SERVIDOR = '2026-11-25T15:00:21.000Z';
+  const tempoNaTela = (descricao) => screen.getByText(descricao).closest('li').textContent.match(/Tempo gasto: ([^E]*?s)/)?.[1];
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(new Date('2026-11-25T15:00:00.000Z'));
+  });
+
+  const iniciarEsperando = async (resposta) => {
+    apiPut.mockResolvedValueOnce(resposta);
+    renderPage();
+    await act(async () => {});
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Iniciar cronômetro' }));
+    });
+  };
+
+  test('tarefa antiga iniciada agora: comeca em zero, conta pelo relogio local, preserva a equipe e avisa o FloatingTimer', async () => {
+    const eventos = [];
+    const ouvir = () => eventos.push('cronometro');
+    window.addEventListener('flowly:cronometro-atualizado', ouvir);
+    // Resposta da API sem equipe populada (so os campos do cronometro sao usados).
+    await iniciarEsperando({ data: { tarefa: { _id: id('c'), cronometroAtivo: true, tempoGasto: 0, ultimaAtualizacaoCronometro: INICIO_SERVIDOR } } });
+    window.removeEventListener('flowly:cronometro-atualizado', ouvir);
+
+    expect(apiPut).toHaveBeenCalledWith(`/tarefas/${id('c')}/cronometro`, { acao: 'iniciar' });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 0m 0s');
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 0m 5s');
+    expect(screen.getByText('Revisão de amanhã').closest('li')).toHaveTextContent('Alfa');
+    expect(screen.getByRole('button', { name: 'Pausar cronômetro' })).toBeInTheDocument();
+    expect(eventos).toEqual(['cronometro']);
+  });
+
+  test('pausar: para de contar com o acumulado confirmado e retomar continua do acumulado', async () => {
+    await iniciarEsperando({ data: { tarefa: { _id: id('c'), cronometroAtivo: true, tempoGasto: 0, ultimaAtualizacaoCronometro: INICIO_SERVIDOR } } });
+    await act(async () => { vi.advanceTimersByTime(125000); });
+    apiPut.mockResolvedValueOnce({ data: { tarefa: { _id: id('c'), cronometroAtivo: false, tempoGasto: 2, ultimaAtualizacaoCronometro: INICIO_SERVIDOR } } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Pausar cronômetro' }));
+    });
+    expect(screen.getByText('Revisão de amanhã').closest('li')).not.toHaveTextContent('Tempo gasto');
+    await act(async () => { vi.advanceTimersByTime(60000); });
+    expect(screen.getByRole('button', { name: 'Iniciar cronômetro' })).toBeInTheDocument();
+
+    apiPut.mockResolvedValueOnce({ data: { tarefa: { _id: id('c'), cronometroAtivo: true, tempoGasto: 2, ultimaAtualizacaoCronometro: '2026-11-25T15:03:30.000Z' } } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Iniciar cronômetro' }));
+    });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 2m 0s');
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 2m 3s');
+  });
+
+  test('pagina recarregada com cronometro ativo mostra o tempo da sessao em andamento', async () => {
+    respostaTarefas = () => Promise.resolve({ data: [{ ...tarefas[2], cronometroAtivo: true, tempoGasto: 10, ultimaAtualizacaoCronometro: '2026-11-25T14:58:00.000Z' }] });
+    renderPage();
+    await act(async () => {});
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 12m 0s');
+  });
+
+  test('servidor adiantado apos recarregar: nunca negativo', async () => {
+    respostaTarefas = () => Promise.resolve({ data: [{ ...tarefas[2], cronometroAtivo: true, tempoGasto: 0, ultimaAtualizacaoCronometro: INICIO_SERVIDOR }] });
+    renderPage();
+    await act(async () => {});
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 0m 0s');
+  });
+
+  test('falha da API: aviso, nada muda e sem clique duplo', async () => {
+    let falhar;
+    apiPut.mockImplementationOnce(() => new Promise((_resolve, reject) => { falhar = reject; }));
+    renderPage();
+    await act(async () => {});
+    const botao = screen.getByRole('button', { name: 'Iniciar cronômetro' });
+    await act(async () => {
+      fireEvent.click(botao);
+      fireEvent.click(botao);
+    });
+    expect(apiPut).toHaveBeenCalledTimes(1);
+    expect(botao).toBeDisabled();
+    await act(async () => falhar(new Error('500')));
+    expect(screen.getByRole('alert')).toHaveTextContent('Não foi possível iniciar o cronômetro agora. Nada foi alterado.');
+    expect(screen.getByRole('button', { name: 'Iniciar cronômetro' })).toBeEnabled();
+    expect(screen.getByText('Revisão de amanhã').closest('li')).not.toHaveTextContent('Tempo gasto');
+  });
+});
+
+describe('etiqueta de urgencia', () => {
+  test('Alta, Media e Baixa como etiquetas proprias (sem a barra global do Kanban)', async () => {
+    renderPage();
+    await screen.findByText('Relatório atrasado');
+    const etiqueta = (descricao) => screen.getByText(descricao).closest('li').querySelector('.meu-dia-urgencia');
+    expect(etiqueta('Relatório atrasado')).toHaveClass('meu-dia-urgencia-alta');
+    expect(etiqueta('Relatório atrasado')).toHaveTextContent('Urgência Alta');
+    expect(etiqueta('Entrega de hoje')).toHaveClass('meu-dia-urgencia-media');
+    expect(etiqueta('Revisão de amanhã')).toHaveClass('meu-dia-urgencia-baixa');
+    expect(document.querySelector('.meu-dia .urgencia-media, .meu-dia .urgencia-alta, .meu-dia .urgencia-baixa')).toBeNull();
+  });
+});
