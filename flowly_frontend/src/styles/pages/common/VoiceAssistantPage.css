@@ -92,6 +92,13 @@
   box-shadow: none;
 }
 
+/* Conversa pausada: microfone desligado e nada pendente; anel tracejado, diferente da pergunta real. */
+.voice-status.paused span {
+  background: transparent;
+  border: 2px dashed #8aa0b6;
+  box-shadow: none;
+}
+
 .voice-status.resuming span {
   background: #7dd3c0;
   animation: voice-status-pulse 1.2s ease-in-out infinite;

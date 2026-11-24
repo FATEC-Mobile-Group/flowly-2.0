@@ -273,7 +273,7 @@ describe('Conversa por voz continua', () => {
     await say('minhas tarefas');
     ready(await finishSpeechAndResume());
     await advance(8000);
-    expect(hintText()).toContain('Conversa por voz encerrada por falta de fala');
+    expect(hintText()).toContain('Conversa pausada por falta de fala');
     expect(screen.queryByText(/Não ouvi nenhuma fala/)).not.toBeInTheDocument();
     expect(statusText()).not.toBe('Ouvindo — pode falar');
     await advance(60000);
@@ -439,5 +439,130 @@ describe('Voz da resposta em portugues do Brasil', () => {
     expect(lastUtterance().voice).toBeUndefined();
     expect(lastUtterance().lang).toBe('pt-BR');
     expect(screen.getByText(/não tem voz em português instalada/)).toBeInTheDocument();
+  });
+});
+
+describe('Conversa pausada x Aguardando resposta', () => {
+  const pauseByInactivity = async () => {
+    ready(await finishSpeechAndResume());
+    await advance(8000);
+  };
+
+  test('consulta respondida e silencio: "Conversa pausada", microfone desligado e contexto preservado', async () => {
+    render(<VoiceAssistantPage />);
+    startConversation();
+    await say('qual o prazo da primeira');
+    await pauseByInactivity();
+    expect(statusText()).toBe('Conversa pausada');
+    expect(document.querySelector('.voice-status.paused')).not.toBeNull();
+    expect(hintText()).toContain('Microfone desligado. Toque na estrela para continuar.');
+    await advance(60000);
+    expect(sessions()).toHaveLength(2); // nenhuma captura durante a pausa
+
+    clickStar();
+    ready();
+    await say('qual é o status dela');
+    const [first, last] = [commandRequests()[0], commandRequests().at(-1)];
+    expect(last.conversationId).toBe(first.conversationId); // mesma conversa: o contexto do assistente continua
+    expect(sentCommands()).toEqual(['qual o prazo da primeira', 'qual é o status dela']);
+  });
+
+  test('listagem respondida a um comando digitado tambem fica como pausada (nada pendente)', async () => {
+    render(<VoiceAssistantPage />);
+    sendTyped('minhas tarefas');
+    await settle();
+    expect(statusText()).toBe('Conversa pausada');
+    expect(sessions()).toHaveLength(0);
+  });
+
+  test.each(['awaiting_params', 'awaiting_task_selection', 'awaiting_task_action'])(
+    'pergunta real do assistente (%s) continua "Aguardando resposta" depois da pausa',
+    async (conversationStatus) => {
+      replyFor = () => ({ ok: true, reply_text: 'Qual?', tts: { enabled: true, text: 'Qual?' },
+        conversation: { status: conversationStatus } });
+      render(<VoiceAssistantPage />);
+      startConversation();
+      await say('criar equipe');
+      await pauseByInactivity();
+      expect(statusText()).toBe('Aguardando resposta');
+      expect(hintText()).toContain('Conversa pausada por falta de fala'); // o aviso explica o microfone desligado
+    },
+  );
+
+  test('confirmacao pendente, vencida ou incerta nunca aparece como "Conversa pausada"', async () => {
+    const summary = 'criar a equipe "Vendas"';
+    const awaitingReply = (expires = 120) => ({ ok: true, reply_text: `Confirme: ${summary}.`, tts: { enabled: false },
+      conversation: { status: 'awaiting_confirmation', operation_id: 'op-9', summary, expires_in: expires } });
+    replyFor = (content) => (content === 'criar equipe vendas' ? awaitingReply()
+      // Consulta respondida com a confirmacao ainda na tela: continua visivel e nao vira "pausada".
+      : { ok: true, reply_text: 'Lista.', tts: { enabled: false }, conversation: { status: 'browsing_tasks' } });
+    render(<VoiceAssistantPage />);
+    sendTyped('criar equipe vendas');
+    await settle();
+    expect(statusText()).toBe('Aguardando resposta');
+    sendTyped('minhas tarefas');
+    await settle();
+    expect(screen.getByText('Confirme a operação')).toBeInTheDocument();
+    expect(statusText()).not.toBe('Conversa pausada');
+
+    await advance(121000); // prazo vencido: cartao "Prazo encerrado" continua visivel, sem "pausada"
+    expect(screen.getByText('Prazo encerrado')).toBeInTheDocument();
+    expect(statusText()).not.toBe('Conversa pausada');
+  });
+
+  test('confirmacao com resultado incerto: cartao visivel e indicador sem "pausada"', async () => {
+    const summary = 'mudar o status da tarefa "Relatório final" para concluída';
+    replyFor = (content) => (content.startsWith('mudar') ? { ok: true, reply_text: 'Confirme.', tts: { enabled: false },
+      conversation: { status: 'awaiting_confirmation', operation_id: 'op-1', summary, expires_in: 120 } }
+      : new Error('rede caiu'));
+    render(<VoiceAssistantPage />);
+    sendTyped('mudar status do relatório para concluída');
+    await settle();
+    sendTyped('confirmar');
+    await settle();
+    expect(screen.getByText('Resultado não confirmado')).toBeInTheDocument();
+    expect(statusText()).not.toBe('Conversa pausada');
+  });
+});
+
+describe('Diagnostico de latencia (flowly:voice-debug)', () => {
+  afterEach(() => localStorage.removeItem('flowly:voice-debug'));
+
+  test('separa as etapas do microfone, da fala, da resposta e da retomada, sem conteudo', async () => {
+    localStorage.setItem('flowly:voice-debug', '1');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    render(<VoiceAssistantPage />);
+    clickStar();
+    fire(lastSession().onstart);
+    fire(lastSession().onaudiostart);
+    fire(lastSession().onspeechend);
+    await say('minhas tarefas');
+    const resumed = await finishSpeechAndResume();
+    fire(resumed.onstart);
+    fire(resumed.onaudiostart);
+
+    const steps = info.mock.calls.map((call) => call[1]);
+    expect(steps).toEqual([
+      'clique-ate-start', 'start-ate-onstart', 'onstart-ate-audio', 'microfone-pronto',
+      'ultimo-resultado-ate-final', 'fala-encerrada-ate-final', 'envio', 'resposta', 'inicio-da-voz',
+      'espera-da-retomada', 'start-ate-onstart', 'onstart-ate-audio', 'retomada-ate-pronto', 'retomada',
+    ]);
+    info.mock.calls.forEach((call) => {
+      expect(call).toHaveLength(3);
+      expect(call[0]).toBe('[flowly:voz]');
+      expect(call[2]).toMatch(/^\d+ ms$/);
+      expect(call.join(' ')).not.toMatch(/minhas tarefas|Resposta|Bearer|voice-/);
+    });
+    info.mockRestore();
+  });
+
+  test('desligado por padrao: nada no console', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    render(<VoiceAssistantPage />);
+    startConversation();
+    await say('minhas tarefas');
+    await finishSpeechAndResume();
+    expect(info).not.toHaveBeenCalled();
+    info.mockRestore();
   });
 });

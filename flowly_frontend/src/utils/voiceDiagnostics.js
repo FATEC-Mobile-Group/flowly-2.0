@@ -14,28 +14,43 @@ const debugEnabled = () => {
 
 const now = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
 
-// Etapas medidas (inicio -> fim):
-//   microfone-pronto: toque na estrela (ou retomada) -> audio chegando
-//   envio: fala concluida -> pedido enviado
-//   resposta: pedido enviado -> resposta recebida
+// Etapas medidas (inicio -> fim). As do PR #54 continuam com o mesmo nome, para comparar:
+//   microfone-pronto: toque na estrela -> captura pronta (soma das tres seguintes)
+//     clique-ate-start: toque -> chamada de recognition.start() (trabalho da pagina)
+//     start-ate-onstart: recognition.start() -> evento onstart (navegador)
+//     onstart-ate-audio: onstart -> onaudiostart (navegador abrindo o microfone e o servico de fala). Aproximacao:
+//       sem onaudiostart (outros navegadores), a captura conta como pronta no onstart, no onsoundstart ou no
+//       primeiro resultado
+//   ultimo-resultado-ate-final: ultimo resultado do navegador -> frase final pronta para envio (inclui a pausa de
+//     2 s que conclui a fala e o tempo do navegador para encerrar)
+//   fala-encerrada-ate-final: onspeechend -> frase final (so quando o navegador dispara onspeechend, o que nem
+//     sempre acontece no modo continuo)
+//   stop-ate-final: pedido de conclusao (stop) -> fim da sessao com a frase final
+//   envio: frase final -> pedido enviado (trabalho da pagina; perto de zero, nao e o tempo desde a ultima palavra)
+//   resposta: pedido enviado -> resposta recebida (rede + assistente)
 //   inicio-da-voz: resposta recebida -> voz do assistente comecou
-//   retomada: voz terminou (ou resposta sem voz) -> microfone pronto de novo
+//   retomada: voz terminou (ou resposta sem voz) -> captura pronta de novo (soma das duas seguintes)
+//     espera-da-retomada: voz terminou -> nova escuta pedida (intervalo de seguranca de 400 ms)
+//     retomada-ate-pronto: nova escuta pedida -> captura pronta (navegador, como start/onstart/onaudiostart)
+//   O "fim da voz" e o evento onend; sem ele (Chrome), e detectado por consulta a cada 0,5 s (ate 0,5 s depois).
 export function createVoiceTrace(log = (...args) => console.info(...args)) {
   const marks = {};
   return {
     mark(name) {
       marks[name] = now();
     },
-    measure(step, fromMark) {
+    // keep: a marca continua valendo para outra etapa que parte do mesmo ponto.
+    measure(step, fromMark, { keep = false } = {}) {
       const start = marks[fromMark];
       if (start === undefined) return null;
       const ms = Math.round(now() - start);
-      delete marks[fromMark];
+      if (!keep) delete marks[fromMark];
       if (debugEnabled()) log('[flowly:voz]', step, `${ms} ms`);
       return ms;
     },
-    clear() {
-      Object.keys(marks).forEach((key) => delete marks[key]);
+    // Sem nomes: apaga todas as marcas.
+    clear(names) {
+      (names || Object.keys(marks)).forEach((key) => delete marks[key]);
     },
   };
 }
