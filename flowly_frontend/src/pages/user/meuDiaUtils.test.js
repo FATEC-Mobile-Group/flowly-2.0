@@ -1,5 +1,5 @@
 // Meu Dia: grupos exclusivos, ordem, contadores e datas (dia civil gravado x "hoje" local), sem depender do relogio.
-import { organizarMeuDia, JANELA_PROXIMAS_DIAS } from './meuDiaUtils';
+import { organizarMeuDia, JANELA_PROXIMAS_DIAS, formatarDuracao, segundosDoCronometro } from './meuDiaUtils';
 import { chaveDiaLocal, formatarDataEntrega } from '../dashboard/painelGeralUtils';
 
 const meiaNoiteUTC = (dia) => `${dia}T00:00:00.000Z`;
@@ -105,5 +105,42 @@ describe('datas de entrega no fuso brasileiro', () => {
     const r = organizarMeuDia([tarefa(meiaNoiteUTC('2026-11-25'), { descricao: 'Entrega de hoje' })], hoje);
     expect(nomes(r.hoje)).toEqual(['Entrega de hoje']);
     expect(r.atrasadas).toHaveLength(0);
+  });
+});
+
+describe('cronometro: sessao nunca negativa e independente da idade da tarefa', () => {
+  const INICIO_SERVIDOR = '2026-11-23T15:00:21.000Z'; // relogio do servidor 21 s adiantado
+  const AGORA_NAVEGADOR = Date.parse('2026-11-23T15:00:00.000Z');
+
+  test('reproduz o defeito: -21 s formatado com Math.floor virava "-1h -1m -21s"', () => {
+    const antigo = (s) => `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m ${s % 60}s`;
+    expect(antigo(0 + (AGORA_NAVEGADOR - Date.parse(INICIO_SERVIDOR)) / 1000)).toBe('-1h -1m -21s');
+  });
+
+  test('tarefa antiga (criada ha meses) iniciada agora: a sessao comeca em zero', () => {
+    const tarefa = { createdAt: '2026-06-01T12:00:00.000Z', dataEntrega: '2026-06-20T00:00:00.000Z',
+      cronometroAtivo: true, tempoGasto: 0, ultimaAtualizacaoCronometro: INICIO_SERVIDOR };
+    // Sem ancora (diferenca de relogios nao mensuravel): piso zero, nunca negativo.
+    expect(segundosDoCronometro(tarefa, AGORA_NAVEGADOR)).toBe(0);
+    // Com ancora local (inicio confirmado por este painel): mede so no relogio do navegador.
+    const ancora = { inicioServidor: Date.parse(INICIO_SERVIDOR), inicioLocal: AGORA_NAVEGADOR };
+    expect(segundosDoCronometro(tarefa, AGORA_NAVEGADOR + 5000, ancora)).toBe(5);
+    expect(segundosDoCronometro(tarefa, AGORA_NAVEGADOR + 3725000, ancora)).toBe(3725);
+  });
+
+  test('acumulado preservado, pausada nao conta, horario UTC valido e invalido', () => {
+    const ativa = { cronometroAtivo: true, tempoGasto: 61, ultimaAtualizacaoCronometro: '2026-11-23T15:00:00.000Z' };
+    expect(segundosDoCronometro(ativa, Date.parse('2026-11-23T15:02:30.000Z'))).toBe(61 * 60 + 150);
+    expect(segundosDoCronometro({ ...ativa, cronometroAtivo: false }, Date.parse('2026-11-23T18:00:00.000Z'))).toBe(61 * 60);
+    expect(segundosDoCronometro({ ...ativa, ultimaAtualizacaoCronometro: 'x' }, AGORA_NAVEGADOR)).toBe(61 * 60);
+    // Ancora de uma sessao anterior nao vale para a sessao nova.
+    const velha = { inicioServidor: Date.parse('2026-11-22T10:00:00.000Z'), inicioLocal: 0 };
+    expect(segundosDoCronometro(ativa, Date.parse('2026-11-23T15:00:10.000Z'), velha)).toBe(61 * 60 + 10);
+  });
+
+  test('formatarDuracao nunca mostra negativo', () => {
+    expect(formatarDuracao(3725)).toBe('1h 2m 5s');
+    expect(formatarDuracao(-21)).toBe('0h 0m 0s');
+    expect(formatarDuracao(undefined)).toBe('0h 0m 0s');
   });
 });

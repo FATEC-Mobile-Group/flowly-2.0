@@ -13,6 +13,39 @@ import { descreverPrazo, diaDaEntrega, diferencaEmDias, estaConcluida, formatarD
 
 export const JANELA_PROXIMAS_DIAS = 7;
 
+// ---------- Cronometro ----------
+// tempoGasto (minutos) e o acumulado confirmado pela API; ultimaAtualizacaoCronometro e o inicio da sessao no relogio
+// do SERVIDOR. Comparar esse instante com o relogio do navegador mistura dois relogios: com o navegador alguns
+// segundos atrasado, a sessao comecava negativa ("-1h -1m -21s" era -21 s formatado com Math.floor).
+// ancora: inicio da sessao no relogio do NAVEGADOR, gravado quando o proprio painel confirma o inicio; com ela a
+// sessao e medida num relogio so. Sem ancora (pagina recarregada), so resta o horario do servidor: a diferenca de
+// relogios nao e mensuravel daqui, entao a sessao nunca fica abaixo de zero (o tempo oficial e o que a API soma na
+// pausa).
+export const segundosDoCronometro = (tarefa, agora, ancora) => {
+  const base = Math.max(0, Number(tarefa?.tempoGasto) || 0) * 60;
+  if (!tarefa?.cronometroAtivo) return Math.floor(base);
+  const inicioServidor = new Date(tarefa.ultimaAtualizacaoCronometro).getTime();
+  if (!Number.isFinite(inicioServidor)) return Math.floor(base);
+  const decorrido = ancora && ancora.inicioServidor === inicioServidor
+    ? agora - ancora.inicioLocal
+    : agora - inicioServidor;
+  return Math.floor(base + Math.max(0, Math.floor(decorrido / 1000)));
+};
+
+// 3725 -> "1h 2m 5s". Valores invalidos ou negativos contam como zero.
+export const formatarDuracao = (segundos) => {
+  const total = Number.isFinite(Number(segundos)) ? Math.max(0, Math.floor(Number(segundos))) : 0;
+  const horas = Math.floor(total / 3600);
+  const mins = Math.floor((total % 3600) / 60);
+  return `${horas}h ${mins}m ${total % 60}s`;
+};
+
+// Avisa outras partes da tela (ex.: FloatingTimer) que o cronometro de uma tarefa mudou na API.
+export const EVENTO_CRONOMETRO = 'flowly:cronometro-atualizado';
+export const avisarCronometroAtualizado = () => {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(EVENTO_CRONOMETRO));
+};
+
 const PESO_URGENCIA = { alta: 3, media: 2, baixa: 1 };
 const nomes = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true });
 

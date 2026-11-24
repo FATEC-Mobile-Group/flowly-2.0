@@ -440,11 +440,6 @@
   font-size: 0.8rem;
 }
 
-.meu-dia .meu-dia-urgencia.urgencia-alta {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
 .meu-dia .meu-dia-item-prazo {
   display: grid;
   justify-items: end;
@@ -649,4 +644,71 @@
     align-items: center;
     gap: 8px;
   }
+}
+
+/* Urgencia: etiqueta compacta (ponto + texto) com classes proprias; a global .urgencia-* do Kanban nao se aplica */
+.meu-dia .meu-dia-urgencia {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--surface-hover, rgba(127, 127, 127, 0.1));
+  color: var(--text-primary);
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.meu-dia .meu-dia-urgencia-ponto {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+
+.meu-dia .meu-dia-urgencia-alta {
+  border-color: rgba(229, 57, 53, 0.35);
+  background: rgba(229, 57, 53, 0.08);
+}
+
+.meu-dia .meu-dia-urgencia-alta .meu-dia-urgencia-ponto {
+  background: #e53935;
+}
+
+.meu-dia .meu-dia-urgencia-media {
+  border-color: rgba(245, 166, 35, 0.4);
+  background: rgba(245, 166, 35, 0.1);
+}
+
+.meu-dia .meu-dia-urgencia-media .meu-dia-urgencia-ponto {
+  background: #f5a623;
+}
+
+.meu-dia .meu-dia-urgencia-baixa {
+  border-color: rgba(46, 160, 67, 0.35);
+  background: rgba(46, 160, 67, 0.08);
+}
+
+.meu-dia .meu-dia-urgencia-baixa .meu-dia-urgencia-ponto {
+  background: #2ea043;
+}
+
+.meu-dia .meu-dia-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.meu-dia .meu-dia-aviso-erro {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(229, 57, 53, 0.45);
+  background: rgba(229, 57, 53, 0.08);
+  color: var(--text-primary);
 }

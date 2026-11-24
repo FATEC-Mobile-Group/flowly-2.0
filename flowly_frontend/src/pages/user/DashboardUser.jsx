@@ -9,7 +9,13 @@ import "../../styles/pages/admin/DashboardAdmin.css";
 import Sidebar from "../../components/layout/Sidebar";
 import TarefaModal from "../../components/tarefas/TarefaModal";
 import { chaveDiaLocal, formatarDataEntrega, formatarDia } from "../dashboard/painelGeralUtils";
-import { JANELA_PROXIMAS_DIAS, organizarMeuDia } from "./meuDiaUtils";
+import {
+  JANELA_PROXIMAS_DIAS,
+  avisarCronometroAtualizado,
+  formatarDuracao,
+  organizarMeuDia,
+  segundosDoCronometro,
+} from "./meuDiaUtils";
 import jsPDF from 'jspdf';
 
 const URGENCIA = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
@@ -23,12 +29,16 @@ const SECOES = [
   { chave: 'semPrazo', titulo: 'Sem prazo definido', selo: null, variante: '' },
 ];
 
-const formatarTempo = (segundos) => {
-  if (segundos == null) return '0h 0m 0s';
-  const horas = Math.floor(segundos / 3600);
-  const mins = Math.floor((segundos % 3600) / 60);
-  const secs = segundos % 60;
-  return `${horas}h ${mins}m ${secs}s`;
+const formatarTempo = formatarDuracao;
+
+// Campos do cronometro confirmados pela resposta da API; o resto da tarefa (equipe populada etc.) fica como estava.
+const CAMPOS_CRONOMETRO = ['cronometroAtivo', 'tempoGasto', 'ultimaAtualizacaoCronometro', 'tempoExcedido'];
+const mesclarCronometro = (tarefa, confirmada) => {
+  const proxima = { ...tarefa };
+  CAMPOS_CRONOMETRO.forEach((campo) => {
+    if (confirmada && Object.prototype.hasOwnProperty.call(confirmada, campo)) proxima[campo] = confirmada[campo];
+  });
+  return proxima;
 };
 
 const gerarPDF = (tarefa) => {
@@ -121,7 +131,10 @@ function AlterarStatus({ tarefa, onAlterarStatus }) {
   );
 }
 
-function ItemTarefa({ entrada, selo, variante, segundosAtivos, onAbrir, onCronometro, onAlterarStatus, mostrarRelativo = true }) {
+function ItemTarefa({
+  entrada, selo, variante, segundosAtivos, onAbrir, onCronometro, onAlterarStatus, cronometroPendente = false,
+  mostrarRelativo = true,
+}) {
   const { tarefa } = entrada;
   const urgencia = URGENCIA[String(tarefa.urgencia || '').toLowerCase()];
   return (
@@ -131,7 +144,12 @@ function ItemTarefa({ entrada, selo, variante, segundosAtivos, onAbrir, onCronom
         <span className="meu-dia-item-meta">
           <span>{tarefa.equipe?.nome || 'Equipe não informada'}</span>
           <span>{formatarStatus(tarefa.status) || 'Pendente'}</span>
-          {urgencia && <span className={`meu-dia-urgencia urgencia-${String(tarefa.urgencia).toLowerCase()}`}>Urgência {urgencia}</span>}
+          {urgencia && (
+            <span className={`meu-dia-urgencia meu-dia-urgencia-${String(tarefa.urgencia).toLowerCase()}`}>
+              <span className="meu-dia-urgencia-ponto" aria-hidden="true" />
+              <span className="meu-dia-sr">Urgência </span>{urgencia}
+            </span>
+          )}
           {tarefa.cronometroAtivo && <span>Tempo gasto: {formatarTempo(segundosAtivos ?? (tarefa.tempoGasto || 0) * 60)}</span>}
         </span>
       </div>
@@ -149,6 +167,7 @@ function ItemTarefa({ entrada, selo, variante, segundosAtivos, onAbrir, onCronom
             type="button"
             className={tarefa.cronometroAtivo ? 'pause-btn' : 'start-btn'}
             onClick={() => onCronometro(tarefa._id, tarefa.cronometroAtivo ? 'pausar' : 'iniciar')}
+            disabled={cronometroPendente}
           >
             {tarefa.cronometroAtivo ? 'Pausar' : 'Iniciar'} cronômetro
           </button>
@@ -168,21 +187,15 @@ function DashboardUser() {
   const [erro, setErro] = useState('');
   const [tarefaAberta, setTarefaAberta] = useState(null);
   const [userName, setUserName] = useState("");
-  const [cronometrosAtivos, setCronometrosAtivos] = useState({});
+  // Relogio da tela (1 s, so com cronometro ativo) e inicio de cada sessao no relogio do navegador.
+  const [relogio, setRelogio] = useState(() => Date.now());
+  const ancorasCronometro = useRef({});
+  const cronometroEmAndamento = useRef(new Set());
+  const [cronometrosPendentes, setCronometrosPendentes] = useState({});
+  const [avisoErro, setAvisoErro] = useState('');
   const [notificationCount, setNotificationCount] = useState(0);
   // "Hoje" no calendario local de quem olha o painel (mesma regra do Painel Geral).
   const hoje = chaveDiaLocal();
-
-  const calcularCronometros = (lista) => {
-    const cronometros = {};
-    lista.forEach((tarefa) => {
-      if (tarefa?.cronometroAtivo) {
-        const tempoDecorridoSegundos = Math.floor((new Date() - new Date(tarefa.ultimaAtualizacaoCronometro)) / 1000);
-        cronometros[tarefa._id] = (tarefa.tempoGasto ? tarefa.tempoGasto * 60 : 0) + tempoDecorridoSegundos;
-      }
-    });
-    return cronometros;
-  };
 
   // silencioso: recarrega depois de fechar o detalhe sem voltar ao estado de carregamento.
   const buscarTarefas = useCallback(async ({ silencioso = false } = {}) => {
@@ -194,7 +207,7 @@ function DashboardUser() {
       const response = await apiClient.get(API_ENDPOINTS.TAREFAS_MINHAS);
       const lista = Array.isArray(response.data) ? response.data : [];
       setTarefas(lista);
-      setCronometrosAtivos(calcularCronometros(lista));
+      setRelogio(Date.now());
       setErro('');
     } catch (err) {
       if (!silencioso) setErro('Não foi possível carregar suas tarefas agora.');
@@ -218,41 +231,46 @@ function DashboardUser() {
     setUserName(localStorage.getItem('nome') || '');
   }, [buscarTarefas]);
 
+  // Um unico intervalo, so enquanto houver cronometro ativo; para sozinho quando a API confirma a pausa.
+  const temCronometroAtivo = tarefas.some((tarefa) => tarefa?.cronometroAtivo);
   useEffect(() => {
-    const interval = setInterval(() => {
-      const agora = new Date();
-      const novosCronometros = { ...cronometrosAtivos };
-      let atualizou = false;
-      tarefas.forEach((tarefa) => {
-        if (tarefa.cronometroAtivo) {
-          const tempoDecorridoSegundos = Math.floor((agora - new Date(tarefa.ultimaAtualizacaoCronometro)) / 1000);
-          novosCronometros[tarefa._id] = (tarefa.tempoGasto ? tarefa.tempoGasto * 60 : 0) + tempoDecorridoSegundos;
-          atualizou = true;
-        }
-      });
-      if (atualizou) setCronometrosAtivos(novosCronometros);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [tarefas, cronometrosAtivos]);
+    if (!temCronometroAtivo) return undefined;
+    setRelogio(Date.now());
+    const intervalo = setInterval(() => setRelogio(Date.now()), 1000);
+    return () => clearInterval(intervalo);
+  }, [temCronometroAtivo]);
 
   const controlarCronometro = async (tarefaId, acao) => {
+    const chave = String(tarefaId);
+    if (cronometroEmAndamento.current.has(chave)) return;
+    cronometroEmAndamento.current.add(chave);
+    setCronometrosPendentes((atuais) => ({ ...atuais, [chave]: true }));
+    setAvisoErro('');
     try {
       const res = await apiClient.put(`/tarefas/${tarefaId}/cronometro`, { acao });
-      setTarefas((atuais) => atuais.map((t) => (t._id === tarefaId ? res.data.tarefa : t)));
-      if (acao === 'iniciar') {
-        setCronometrosAtivos((prev) => ({
-          ...prev,
-          [tarefaId]: res.data.tarefa.tempoGasto ? res.data.tarefa.tempoGasto * 60 : 0,
-        }));
+      const confirmada = res?.data?.tarefa;
+      if (!confirmada || typeof confirmada !== 'object') throw new Error('resposta sem tarefa');
+      const agoraLocal = Date.now();
+      if (confirmada.cronometroAtivo) {
+        const inicioServidor = new Date(confirmada.ultimaAtualizacaoCronometro).getTime();
+        if (Number.isFinite(inicioServidor)) ancorasCronometro.current[chave] = { inicioServidor, inicioLocal: agoraLocal };
       } else {
-        setCronometrosAtivos((prev) => {
-          const novos = { ...prev };
-          delete novos[tarefaId];
-          return novos;
-        });
+        delete ancorasCronometro.current[chave];
       }
+      setTarefas((atuais) => atuais.map((t) => (String(t._id) === chave ? mesclarCronometro(t, confirmada) : t)));
+      setRelogio(agoraLocal);
+      avisarCronometroAtualizado();
     } catch (err) {
-      console.error("Erro ao controlar cronômetro:", err);
+      setAvisoErro(acao === 'iniciar'
+        ? 'Não foi possível iniciar o cronômetro agora. Nada foi alterado.'
+        : 'Não foi possível pausar o cronômetro agora. Confira o tempo antes de tentar de novo.');
+    } finally {
+      cronometroEmAndamento.current.delete(chave);
+      setCronometrosPendentes((atuais) => {
+        const proximos = { ...atuais };
+        delete proximos[chave];
+        return proximos;
+      });
     }
   };
 
@@ -280,6 +298,8 @@ function DashboardUser() {
               ? { ultimaAtualizacaoCronometro: confirmada.ultimaAtualizacaoCronometro } : {}),
           }
         : t)));
+      if (confirmada.cronometroAtivo === false) delete ancorasCronometro.current[tarefaId];
+      avisarCronometroAtualizado();
       const rotulo = STATUS_OPCOES.find((opcao) => opcao.valor === statusConfirmado)?.rotulo || formatarStatus(statusConfirmado);
       setAvisoStatus(`Status de "${tarefa.descricao}" atualizado para ${rotulo}.`);
       buscarTarefas({ silencioso: true });
@@ -338,6 +358,7 @@ function DashboardUser() {
         </section>
 
         {avisoStatus && <p className="meu-dia-aviso" role="status">{avisoStatus}</p>}
+        {avisoErro && <p className="meu-dia-aviso-erro" role="alert">{avisoErro}</p>}
 
         {carregando && <p className="meu-dia-estado" role="status">Carregando suas tarefas...</p>}
 
@@ -373,7 +394,10 @@ function DashboardUser() {
                       entrada={entrada}
                       selo={selo}
                       variante={variante}
-                      segundosAtivos={cronometrosAtivos[entrada.tarefa._id]}
+                      segundosAtivos={segundosDoCronometro(
+                        entrada.tarefa, relogio, ancorasCronometro.current[String(entrada.tarefa._id)],
+                      )}
+                      cronometroPendente={Boolean(cronometrosPendentes[String(entrada.tarefa._id)])}
                       onAbrir={abrirDetalhes}
                       onCronometro={controlarCronometro}
                       onAlterarStatus={alterarStatus}
