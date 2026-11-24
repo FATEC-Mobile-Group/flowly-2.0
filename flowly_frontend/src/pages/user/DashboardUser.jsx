@@ -12,8 +12,12 @@ import { chaveDiaLocal, formatarDataEntrega, formatarDia } from "../dashboard/pa
 import {
   JANELA_PROXIMAS_DIAS,
   acumuladoEmSegundos,
-  ancoraNaCarga,
+  ancoraDaSessao,
   avisarCronometroAtualizado,
+  manterAncoras,
+  medirInicio,
+  removerAncora,
+  salvarAncora,
   formatarDuracao,
   organizarMeuDia,
   segundosDoCronometro,
@@ -208,19 +212,26 @@ function DashboardUser() {
     try {
       const response = await apiClient.get(API_ENDPOINTS.TAREFAS_MINHAS);
       const lista = Array.isArray(response.data) ? response.data : [];
-      // Sessoes que ja chegam ativas (F5, voltar a pagina) ganham ancora local agora; a de uma sessao que ja
-      // tinha ancora (mesmo inicio) fica como esta, para recarregar a lista nao pular nem zerar o contador.
+      // Sessoes ativas: a ancora em memoria (mesmo inicio) fica como esta; senao a salva nesta aba (F5, troca de
+      // pagina) ou uma nova a partir da carga, corrigida pela diferenca de relogio medida. Assim recarregar a lista
+      // nao pula nem zera o contador, e o F5 nao perde os segundos de uma sessao iniciada nesta aba.
       const agoraLocal = Date.now();
       const ancoras = ancorasCronometro.current;
       const ativas = new Set();
       lista.forEach((tarefa) => {
-        const ancora = ancoraNaCarga(tarefa, agoraLocal);
-        if (!ancora) return;
+        if (!tarefa?.cronometroAtivo) return;
         const chave = String(tarefa._id);
+        const inicioServidor = new Date(tarefa.ultimaAtualizacaoCronometro).getTime();
+        if (!Number.isFinite(inicioServidor)) return;
         ativas.add(chave);
-        if (ancoras[chave]?.inicioServidor !== ancora.inicioServidor) ancoras[chave] = ancora;
+        if (ancoras[chave]?.inicioServidor !== inicioServidor) {
+          const ancora = ancoraDaSessao(tarefa, agoraLocal);
+          if (ancora) ancoras[chave] = ancora;
+        }
+        salvarAncora(chave, ancoras[chave]);
       });
       Object.keys(ancoras).forEach((chave) => { if (!ativas.has(chave)) delete ancoras[chave]; });
+      manterAncoras(ativas);
       setTarefas(lista);
       setRelogio(agoraLocal);
       setErro('');
@@ -247,11 +258,24 @@ function DashboardUser() {
   }, [buscarTarefas]);
 
   // Um unico intervalo, so enquanto houver cronometro ativo; para sozinho quando a API confirma a pausa.
+  // A duracao vem sempre do tempo decorrido (nunca de +1 por callback). Verifica a cada 250 ms e so atualiza a tela
+  // quando algum segundo exibido muda: um intervalo de 1 s fora de fase com o segundo da sessao repetia um valor
+  // e pulava dois no tique seguinte.
   const temCronometroAtivo = tarefas.some((tarefa) => tarefa?.cronometroAtivo);
   useEffect(() => {
     if (!temCronometroAtivo) return undefined;
+    const segundosExibidos = (agora) => Object.values(ancorasCronometro.current)
+      .map((ancora) => Math.floor((agora - ancora.inicioLocal) / 1000)).join('|') || String(Math.floor(agora / 1000));
+    let ultimo = segundosExibidos(Date.now());
     setRelogio(Date.now());
-    const intervalo = setInterval(() => setRelogio(Date.now()), 1000);
+    const intervalo = setInterval(() => {
+      const agora = Date.now();
+      const atual = segundosExibidos(agora);
+      if (atual !== ultimo) {
+        ultimo = atual;
+        setRelogio(agora);
+      }
+    }, 250);
     return () => clearInterval(intervalo);
   }, [temCronometroAtivo]);
 
@@ -262,15 +286,23 @@ function DashboardUser() {
     setCronometrosPendentes((atuais) => ({ ...atuais, [chave]: true }));
     setAvisoErro('');
     try {
+      const envioLocal = Date.now();
       const res = await apiClient.put(`/tarefas/${tarefaId}/cronometro`, { acao });
       const confirmada = res?.data?.tarefa;
       if (!confirmada || typeof confirmada !== 'object') throw new Error('resposta sem tarefa');
       const agoraLocal = Date.now();
       if (confirmada.cronometroAtivo) {
         const inicioServidor = new Date(confirmada.ultimaAtualizacaoCronometro).getTime();
-        if (Number.isFinite(inicioServidor)) ancorasCronometro.current[chave] = { inicioServidor, inicioLocal: agoraLocal };
+        if (Number.isFinite(inicioServidor)) {
+          // O servidor gravou o inicio entre o envio e a resposta: meio do caminho no relogio local (e mede a
+          // diferenca entre os relogios para sessoes que chegarem ativas sem ancora).
+          const ancora = medirInicio(inicioServidor, envioLocal, agoraLocal);
+          ancorasCronometro.current[chave] = ancora;
+          salvarAncora(chave, ancora);
+        }
       } else {
         delete ancorasCronometro.current[chave];
+        removerAncora(chave);
       }
       setTarefas((atuais) => atuais.map((t) => (String(t._id) === chave ? mesclarCronometro(t, confirmada) : t)));
       setRelogio(agoraLocal);
@@ -314,7 +346,10 @@ function DashboardUser() {
               ? { ultimaAtualizacaoCronometro: confirmada.ultimaAtualizacaoCronometro } : {}),
           }
         : t)));
-      if (confirmada.cronometroAtivo === false) delete ancorasCronometro.current[tarefaId];
+      if (confirmada.cronometroAtivo === false) {
+        delete ancorasCronometro.current[tarefaId];
+        removerAncora(tarefaId);
+      }
       avisarCronometroAtualizado();
       const rotulo = STATUS_OPCOES.find((opcao) => opcao.valor === statusConfirmado)?.rotulo || formatarStatus(statusConfirmado);
       setAvisoStatus(`Status de "${tarefa.descricao}" atualizado para ${rotulo}.`);

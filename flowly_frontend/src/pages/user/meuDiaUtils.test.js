@@ -1,5 +1,8 @@
 // Meu Dia: grupos exclusivos, ordem, contadores e datas (dia civil gravado x "hoje" local), sem depender do relogio.
-import { organizarMeuDia, JANELA_PROXIMAS_DIAS, acumuladoEmSegundos, ancoraNaCarga, formatarDuracao, segundosDoCronometro } from './meuDiaUtils';
+import {
+  organizarMeuDia, JANELA_PROXIMAS_DIAS, acumuladoEmSegundos, ancoraDaSessao, ancoraNaCarga, formatarDuracao,
+  lerAncoraSalva, lerOffsetRelogio, manterAncoras, medirInicio, removerAncora, salvarAncora, segundosDoCronometro,
+} from './meuDiaUtils';
 import { chaveDiaLocal, formatarDataEntrega } from '../dashboard/painelGeralUtils';
 
 const meiaNoiteUTC = (dia) => `${dia}T00:00:00.000Z`;
@@ -178,5 +181,41 @@ describe('ancoraNaCarga (sessao que ja chega ativa da API)', () => {
   test('pausada ou inicio invalido: sem ancora', () => {
     expect(ancoraNaCarga({ cronometroAtivo: false, ultimaAtualizacaoCronometro: '2026-11-25T14:59:00.000Z' }, agora)).toBeNull();
     expect(ancoraNaCarga({ cronometroAtivo: true, ultimaAtualizacaoCronometro: 'x' }, agora)).toBeNull();
+  });
+});
+
+describe('sincronizacao: ancoras salvas na aba e diferenca de relogio medida no inicio', () => {
+  beforeEach(() => sessionStorage.clear());
+  const T = Date.parse('2026-11-25T15:00:00.000Z');
+
+  test('medirInicio: meio do caminho como inicio local e diferenca de relogio com latencia', () => {
+    // PUT enviado em T, resposta em T + 400 ms; o servidor (20 s adiantado) gravou o inicio no meio: T + 200 + 20 s.
+    const ancora = medirInicio(T + 20200, T, T + 400);
+    expect(ancora).toEqual({ inicioServidor: T + 20200, inicioLocal: T + 200 });
+    expect(lerOffsetRelogio()).toBe(20000);
+  });
+
+  test('medicao com incerteza grande (resposta muito lenta) nao vira diferenca de relogio', () => {
+    medirInicio(T + 20000, T, T + 20000);
+    expect(lerOffsetRelogio()).toBeNull();
+  });
+
+  test('ancoraDaSessao: prefere a salva da mesma sessao; outra sessao usa a carga corrigida pela diferenca', () => {
+    const tarefa = { _id: 't1', cronometroAtivo: true, ultimaAtualizacaoCronometro: new Date(T + 20000).toISOString() };
+    salvarAncora('t1', { inicioServidor: T + 20000, inicioLocal: T });
+    expect(ancoraDaSessao(tarefa, T + 30000)).toEqual({ inicioServidor: T + 20000, inicioLocal: T });
+    const outra = { ...tarefa, ultimaAtualizacaoCronometro: new Date(T + 80000).toISOString() };
+    medirInicio(T + 20000, T, T); // diferenca medida: servidor 20 s adiantado
+    // Carga em T + 90 s (servidor T + 110 s): a sessao comecou ha 30 s no relogio do servidor.
+    expect(segundosDoCronometro({ ...outra, tempoGastoSegundos: 0 }, T + 90000, ancoraDaSessao(outra, T + 90000))).toBe(30);
+  });
+
+  test('manterAncoras e removerAncora limpam sessoes encerradas', () => {
+    salvarAncora('a', { inicioServidor: 1, inicioLocal: 1 });
+    salvarAncora('b', { inicioServidor: 2, inicioLocal: 2 });
+    manterAncoras(new Set(['b']));
+    expect(lerAncoraSalva({ _id: 'a', ultimaAtualizacaoCronometro: new Date(1).toISOString() })).toBeNull();
+    removerAncora('b');
+    expect(lerAncoraSalva({ _id: 'b', ultimaAtualizacaoCronometro: new Date(2).toISOString() })).toBeNull();
   });
 });

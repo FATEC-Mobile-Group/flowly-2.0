@@ -33,13 +33,98 @@ export const acumuladoEmSegundos = (tarefa) => {
 // instante (nunca negativa) e dali em diante segue o relogio do navegador. Sem ela, com o relogio do servidor
 // adiantado, "agora - inicio" ficava negativo, o piso segurava em zero e o contador parecia parado ate o navegador
 // alcancar o horario do servidor. null quando a tarefa nao esta ativa ou o inicio e invalido.
-export const ancoraNaCarga = (tarefa, agoraLocal) => {
+// offsetMs (opcional): estimativa de (relogio do servidor - relogio do navegador) medida neste navegador; corrige a
+// parte da sessao anterior ao carregamento. Sem medicao, a estimativa e 0 (o piso em zero continua valendo).
+export const ancoraNaCarga = (tarefa, agoraLocal, offsetMs = null) => {
   if (!tarefa?.cronometroAtivo) return null;
   const inicioServidor = new Date(tarefa.ultimaAtualizacaoCronometro).getTime();
   if (!Number.isFinite(inicioServidor)) return null;
-  const decorrido = Math.max(0, agoraLocal - inicioServidor);
+  const correcao = Number.isFinite(offsetMs) ? offsetMs : 0;
+  const decorrido = Math.max(0, agoraLocal + correcao - inicioServidor);
   return { inicioServidor, inicioLocal: agoraLocal - decorrido };
 };
+
+// ---------- Ancoras e diferenca de relogio desta aba (sessionStorage) ----------
+// A API nao informa o horario dela (o cabecalho Date nao e exposto pelo CORS e tem precisao de 1 s); o unico
+// horario do servidor e o inicio da sessao. Por isso:
+// - a ancora de uma sessao fica salva na aba: depois do F5 ou ao trocar de pagina, a mesma sessao continua medida
+//   pelo mesmo relogio (sem perder os segundos que o "agora - inicio" com relogios diferentes omitiria);
+// - ao iniciar, o servidor grava o inicio entre o envio e a resposta do PUT: inicio - (envio + resposta) / 2 estima
+//   a diferenca entre os relogios, com erro de ate metade do tempo de ida e volta. Ela so corrige sessoes que chegam
+//   ativas sem ancora salva (iniciadas em outra aba ou aparelho).
+// Nada disso e fonte de verdade: o tempo gravado e sempre o que a API calcula na pausa.
+const CHAVE_ANCORAS = 'flowly:cronometro-ancoras';
+const CHAVE_OFFSET = 'flowly:relogio-offset';
+export const INCERTEZA_MAXIMA_OFFSET_MS = 5000;
+
+const lerJson = (chave, padrao) => {
+  try {
+    const valor = JSON.parse(sessionStorage.getItem(chave) || 'null');
+    return valor ?? padrao;
+  } catch {
+    return padrao;
+  }
+};
+const gravarJson = (chave, valor) => {
+  try {
+    sessionStorage.setItem(chave, JSON.stringify(valor));
+  } catch {
+    // Sem sessionStorage (modo privado): vale so a ancora em memoria desta pagina.
+  }
+};
+
+const ancoraValida = (ancora) => ancora && Number.isFinite(ancora.inicioServidor) && Number.isFinite(ancora.inicioLocal);
+
+export const lerAncoraSalva = (tarefa) => {
+  const inicioServidor = new Date(tarefa?.ultimaAtualizacaoCronometro).getTime();
+  const salvas = lerJson(CHAVE_ANCORAS, {});
+  const ancora = salvas && typeof salvas === 'object' ? salvas[String(tarefa?._id)] : null;
+  return ancoraValida(ancora) && ancora.inicioServidor === inicioServidor ? ancora : null;
+};
+
+export const salvarAncora = (tarefaId, ancora) => {
+  if (!ancoraValida(ancora)) return;
+  const salvas = lerJson(CHAVE_ANCORAS, {});
+  gravarJson(CHAVE_ANCORAS, { ...(salvas && typeof salvas === 'object' ? salvas : {}), [String(tarefaId)]: ancora });
+};
+
+export const removerAncora = (tarefaId) => {
+  const salvas = lerJson(CHAVE_ANCORAS, {});
+  if (!salvas || typeof salvas !== 'object' || !(String(tarefaId) in salvas)) return;
+  const { [String(tarefaId)]: _removida, ...resto } = salvas;
+  gravarJson(CHAVE_ANCORAS, resto);
+};
+
+// Mantem salvas so as ancoras das sessoes ainda ativas (ids informados).
+export const manterAncoras = (idsAtivos) => {
+  const salvas = lerJson(CHAVE_ANCORAS, {});
+  if (!salvas || typeof salvas !== 'object') return;
+  const ativos = new Set([...idsAtivos].map(String));
+  const filtradas = Object.fromEntries(Object.entries(salvas).filter(([id]) => ativos.has(id)));
+  if (Object.keys(filtradas).length !== Object.keys(salvas).length) gravarJson(CHAVE_ANCORAS, filtradas);
+};
+
+// Medicao no inicio confirmado: devolve a ancora local da sessao ((envio + resposta) / 2) e guarda a diferenca
+// estimada entre os relogios quando a incerteza e pequena.
+export const medirInicio = (inicioServidor, envioLocal, respostaLocal) => {
+  const meio = (envioLocal + respostaLocal) / 2;
+  const incerteza = Math.max(0, (respostaLocal - envioLocal) / 2);
+  if (incerteza <= INCERTEZA_MAXIMA_OFFSET_MS) {
+    gravarJson(CHAVE_OFFSET, { offsetMs: inicioServidor - meio, incertezaMs: incerteza });
+  }
+  return { inicioServidor, inicioLocal: Math.min(meio, respostaLocal) };
+};
+
+export const lerOffsetRelogio = () => {
+  const medicao = lerJson(CHAVE_OFFSET, null);
+  return medicao && Number.isFinite(medicao.offsetMs) && Number.isFinite(medicao.incertezaMs)
+    && medicao.incertezaMs <= INCERTEZA_MAXIMA_OFFSET_MS ? medicao.offsetMs : null;
+};
+
+// Ancora a usar para uma sessao ativa: a salva desta aba (mesmo inicio) ou uma nova a partir da carga, corrigida
+// pela diferenca de relogio medida (quando houver).
+export const ancoraDaSessao = (tarefa, agoraLocal) => lerAncoraSalva(tarefa)
+  || ancoraNaCarga(tarefa, agoraLocal, lerOffsetRelogio());
 
 export const segundosDoCronometro = (tarefa, agora, ancora) => {
   const base = acumuladoEmSegundos(tarefa);

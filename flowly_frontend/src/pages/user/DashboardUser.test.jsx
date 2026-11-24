@@ -33,6 +33,7 @@ let tzOriginal;
 let respostaTarefas;
 
 beforeEach(() => {
+  sessionStorage.clear(); // ancoras e diferenca de relogio medidas ficam por aba: cada teste comeca sem elas
   tzOriginal = process.env.TZ;
   process.env.TZ = 'America/Sao_Paulo';
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -498,5 +499,87 @@ describe('StrictMode', () => {
     expect(tempo()).toBe('0h 8m 27s');
     expect(vi.getTimerCount()).toBe(1);
     expect(apiPut).not.toHaveBeenCalled();
+  });
+});
+
+describe('sincronizacao do relogio depois do F5', () => {
+  const tempoNaTela = (descricao) => screen.getByText(descricao).closest('li').textContent.match(/Tempo gasto: ([^E]*?s)/)?.[1];
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(new Date('2026-11-25T15:00:00.000Z'));
+  });
+
+  const iniciarComServidor = async (deslocamentoMs) => {
+    respostaTarefas = () => Promise.resolve({ data: [{ ...tarefas[2], tempoGasto: 8, tempoGastoSegundos: 503 }] });
+    const view = renderPage();
+    await act(async () => {});
+    const inicioServidor = new Date(Date.now() + deslocamentoMs).toISOString();
+    apiPut.mockResolvedValueOnce({ data: { tarefa: { _id: id('c'), cronometroAtivo: true, tempoGasto: 8, tempoGastoSegundos: 503, ultimaAtualizacaoCronometro: inicioServidor } } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Iniciar cronômetro' }));
+    });
+    return { view, inicioServidor };
+  };
+
+  test.each([
+    ['navegador 20 s atrasado (servidor adiantado)', 20000],
+    ['navegador 20 s adiantado (servidor atrasado)', -20000],
+    ['relogios iguais', 0],
+  ])('%s: o F5 nao perde nem ganha segundos da sessao iniciada nesta aba', async (_caso, deslocamento) => {
+    const { view, inicioServidor } = await iniciarComServidor(deslocamento);
+    await act(async () => { vi.advanceTimersByTime(30000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 53s');
+    view.unmount(); // F5
+    respostaTarefas = () => Promise.resolve({ data: [{ ...tarefas[2], cronometroAtivo: true, tempoGasto: 8, tempoGastoSegundos: 503, ultimaAtualizacaoCronometro: inicioServidor }] });
+    renderPage();
+    await act(async () => {});
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 53s');
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 58s');
+  });
+
+  test('sessao iniciada em outra aba: corrigida pela diferenca de relogio ja medida neste navegador', async () => {
+    sessionStorage.setItem('flowly:relogio-offset', JSON.stringify({ offsetMs: 20000, incertezaMs: 150 }));
+    // Servidor 20 s adiantado; a sessao comecou ha 60 s no relogio dele.
+    respostaTarefas = () => Promise.resolve({ data: [{ ...tarefas[2], cronometroAtivo: true, tempoGasto: 8, tempoGastoSegundos: 503, ultimaAtualizacaoCronometro: '2026-11-25T14:59:20.000Z' }] });
+    renderPage();
+    await act(async () => {});
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 9m 23s'); // 503 + 60
+  });
+
+  test('sem referencia de horario (nem ancora nem diferenca medida): parte do que e mensuravel, nunca negativo', async () => {
+    respostaTarefas = () => Promise.resolve({ data: [{ ...tarefas[2], cronometroAtivo: true, tempoGasto: 8, tempoGastoSegundos: 503, ultimaAtualizacaoCronometro: '2026-11-25T15:00:20.000Z' }] });
+    renderPage();
+    await act(async () => {});
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 23s');
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 25s');
+  });
+
+  test('callbacks atrasados: mostra o tempo decorrido (sem +1 por callback, sem deriva) e um so intervalo', async () => {
+    respostaTarefas = () => Promise.resolve({ data: [{ ...tarefas[2], cronometroAtivo: true, tempoGasto: 8, tempoGastoSegundos: 503, ultimaAtualizacaoCronometro: '2026-11-25T15:00:00.000Z' }] });
+    renderPage();
+    await act(async () => {});
+    vi.setSystemTime(new Date('2026-11-25T15:00:07.300Z')); // o navegador "dormiu" 7,3 s sem disparar callbacks
+    await act(async () => { vi.advanceTimersByTime(250); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 30s'); // 503 + 7 (o atraso aparece de uma vez, correto)
+    expect(vi.getTimerCount()).toBe(1);
+    expect(apiPut).not.toHaveBeenCalled();
+  });
+
+  test('pausa pendente na API: o acumulado exibido nao muda antes da confirmacao', async () => {
+    respostaTarefas = () => Promise.resolve({ data: [{ ...tarefas[2], cronometroAtivo: true, tempoGasto: 8, tempoGastoSegundos: 503, ultimaAtualizacaoCronometro: '2026-11-25T15:00:00.000Z' }] });
+    renderPage();
+    await act(async () => {});
+    let confirmar;
+    apiPut.mockImplementationOnce(() => new Promise((resolve) => { confirmar = resolve; }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Pausar cronômetro' }));
+    });
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 26s'); // continua contando ate a API confirmar
+    await act(async () => confirmar({ data: { tarefa: { _id: id('c'), cronometroAtivo: false, tempoGasto: 8, tempoGastoSegundos: 506 } } }));
+    expect(screen.getByRole('button', { name: 'Iniciar cronômetro' })).toBeInTheDocument();
   });
 });
