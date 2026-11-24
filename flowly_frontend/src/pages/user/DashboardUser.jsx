@@ -1,76 +1,207 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import apiClient from "../../config/apiClient";
 import { Link } from "react-router-dom";
-//import { useNavigate } from "react-router-dom";
-import { FaFileDownload, FaBell } from 'react-icons/fa'; //FaTasks
+import { FaFileDownload, FaBell } from 'react-icons/fa';
 import { API_ENDPOINTS } from "../../config/config";
 import { formatarStatus } from "../../config/statusUtils";
 import "../../styles/pages/user/DashboardUser.css";
 import "../../styles/pages/admin/DashboardAdmin.css";
 import Sidebar from "../../components/layout/Sidebar";
+import TarefaModal from "../../components/tarefas/TarefaModal";
+import { chaveDiaLocal, formatarDataEntrega, formatarDia } from "../dashboard/painelGeralUtils";
+import { JANELA_PROXIMAS_DIAS, organizarMeuDia } from "./meuDiaUtils";
 import jsPDF from 'jspdf';
+
+const URGENCIA = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
+
+// Secoes de pendencias, na ordem de prioridade (concluidas ficam a parte).
+const SECOES = [
+  { chave: 'atrasadas', titulo: 'Atrasadas', selo: 'Atrasada', variante: 'is-atrasada' },
+  { chave: 'hoje', titulo: 'Para hoje', selo: 'Hoje', variante: 'is-hoje' },
+  { chave: 'proximas', titulo: `Próximos ${JANELA_PROXIMAS_DIAS} dias`, selo: null, variante: '' },
+  { chave: 'maisAdiante', titulo: 'Mais adiante', selo: null, variante: '' },
+  { chave: 'semPrazo', titulo: 'Sem prazo definido', selo: null, variante: '' },
+];
+
+const formatarTempo = (segundos) => {
+  if (segundos == null) return '0h 0m 0s';
+  const horas = Math.floor(segundos / 3600);
+  const mins = Math.floor((segundos % 3600) / 60);
+  const secs = segundos % 60;
+  return `${horas}h ${mins}m ${secs}s`;
+};
+
+const gerarPDF = (tarefa) => {
+  const doc = new jsPDF();
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(20);
+  doc.text("Detalhes da Tarefa", 105, 20, { align: "center" });
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "normal");
+  const yInicial = 40;
+  const espacoEntreLinhas = 10;
+  doc.text(`Nome da tarefa: ${tarefa.descricao}`, 20, yInicial);
+  if (tarefa.detalhes) {
+    doc.text(`Descrição: ${tarefa.detalhes}`, 20, yInicial + espacoEntreLinhas);
+  }
+  const linhaAtual = yInicial + espacoEntreLinhas * (tarefa.detalhes ? 2 : 1);
+  doc.text(`Data de Entrega: ${formatarDataEntrega(tarefa.dataEntrega, 'Não definida')}`, 20, linhaAtual);
+  doc.text(`Equipe: ${tarefa.equipe?.nome || 'Não informada'}`, 20, linhaAtual + espacoEntreLinhas);
+  doc.text(`Status: ${formatarStatus(tarefa.status)}`, 20, linhaAtual + (espacoEntreLinhas * 2));
+  if (tarefa.tempoEstimado) {
+    doc.text(`Tempo Estimado: ${formatarTempo(tarefa.tempoEstimado * 60)}`, 20, linhaAtual + (espacoEntreLinhas * 3));
+  }
+  if (tarefa.tempoGasto > 0) {
+    doc.text(`Tempo Gasto: ${formatarTempo(tarefa.tempoGasto * 60)}`, 20, linhaAtual + (espacoEntreLinhas * 4));
+  }
+  doc.setFontSize(10);
+  doc.text(`PDF gerado em: ${new Date().toLocaleString()}`, 20, 280);
+  doc.save(`tarefa_${tarefa._id}.pdf`);
+};
+
+// Mesmos status do dashboard anterior (PUT /tarefas/:id/status com { status }); a API decide a permissao.
+const STATUS_OPCOES = [
+  { valor: 'pendente', rotulo: 'Pendente' },
+  { valor: 'em_andamento', rotulo: 'Em andamento' },
+  { valor: 'concluido', rotulo: 'Concluído' },
+];
+
+// Alterar status no proprio item: escolher e confirmar; abrir o seletor nao envia nada.
+function AlterarStatus({ tarefa, onAlterarStatus }) {
+  const [aberto, setAberto] = useState(false);
+  const [novoStatus, setNovoStatus] = useState(tarefa.status || 'pendente');
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState('');
+  // Trava sincrona: um segundo clique antes do re-render nao envia de novo nem mostra erro falso.
+  const salvandoRef = useRef(false);
+  const seletorId = `status-${tarefa._id}`;
+
+  const abrir = () => {
+    setNovoStatus(tarefa.status || 'pendente');
+    setErro('');
+    setAberto(true);
+  };
+
+  const salvar = async (event) => {
+    event.preventDefault();
+    if (salvandoRef.current || novoStatus === tarefa.status) return;
+    salvandoRef.current = true;
+    setSalvando(true);
+    setErro('');
+    const resultado = await onAlterarStatus(tarefa, novoStatus);
+    salvandoRef.current = false;
+    setSalvando(false);
+    if (resultado?.emAndamento) return; // outro envio desta tarefa ja esta em curso: sem erro falso
+    if (resultado?.ok) setAberto(false);
+    else setErro(resultado?.mensagem || 'Não foi possível alterar o status.');
+  };
+
+  if (!aberto) {
+    return (
+      <button type="button" className="meu-dia-status-btn" onClick={abrir} aria-label={`Alterar status de ${tarefa.descricao}`}>
+        Alterar status
+      </button>
+    );
+  }
+
+  return (
+    <form className="meu-dia-status-form" onSubmit={salvar}>
+      <label htmlFor={seletorId} className="meu-dia-status-rotulo">Novo status</label>
+      <select id={seletorId} value={novoStatus} onChange={(event) => setNovoStatus(event.target.value)} disabled={salvando}>
+        {STATUS_OPCOES.map(({ valor, rotulo }) => <option key={valor} value={valor}>{rotulo}</option>)}
+      </select>
+      <button type="submit" disabled={salvando || novoStatus === tarefa.status}>
+        {salvando ? 'Salvando...' : 'Salvar'}
+      </button>
+      <button type="button" className="meu-dia-status-cancelar" onClick={() => setAberto(false)} disabled={salvando}>
+        Cancelar
+      </button>
+      {erro && <span className="meu-dia-status-erro" role="alert">{erro}</span>}
+    </form>
+  );
+}
+
+function ItemTarefa({ entrada, selo, variante, segundosAtivos, onAbrir, onCronometro, onAlterarStatus, mostrarRelativo = true }) {
+  const { tarefa } = entrada;
+  const urgencia = URGENCIA[String(tarefa.urgencia || '').toLowerCase()];
+  return (
+    <li className={`meu-dia-item ${variante}`}>
+      <div className="meu-dia-item-info">
+        <span className="meu-dia-item-titulo">{tarefa.descricao || 'Tarefa sem descrição'}</span>
+        <span className="meu-dia-item-meta">
+          <span>{tarefa.equipe?.nome || 'Equipe não informada'}</span>
+          <span>{formatarStatus(tarefa.status) || 'Pendente'}</span>
+          {urgencia && <span className={`meu-dia-urgencia urgencia-${String(tarefa.urgencia).toLowerCase()}`}>Urgência {urgencia}</span>}
+          {tarefa.cronometroAtivo && <span>Tempo gasto: {formatarTempo(segundosAtivos ?? (tarefa.tempoGasto || 0) * 60)}</span>}
+        </span>
+      </div>
+      <div className="meu-dia-item-prazo">
+        {selo && <span className="meu-dia-selo">{selo}</span>}
+        {entrada.data && <time dateTime={entrada.dia}>{entrada.data}</time>}
+        {(mostrarRelativo || !entrada.data) && <span className="meu-dia-relativo">{entrada.prazo}</span>}
+      </div>
+      <div className="meu-dia-item-acoes">
+        <button type="button" className="meu-dia-abrir" onClick={() => onAbrir(entrada)} aria-label={`Ver detalhes de ${tarefa.descricao}`}>
+          Ver detalhes
+        </button>
+        {tarefa.tempoEstimado && onCronometro && (
+          <button
+            type="button"
+            className={tarefa.cronometroAtivo ? 'pause-btn' : 'start-btn'}
+            onClick={() => onCronometro(tarefa._id, tarefa.cronometroAtivo ? 'pausar' : 'iniciar')}
+          >
+            {tarefa.cronometroAtivo ? 'Pausar' : 'Iniciar'} cronômetro
+          </button>
+        )}
+        <button type="button" className="meu-dia-pdf" onClick={() => gerarPDF(tarefa)} aria-label={`Baixar PDF de ${tarefa.descricao}`}>
+          <FaFileDownload aria-hidden="true" /> PDF
+        </button>
+        {onAlterarStatus && entrada.id && <AlterarStatus tarefa={tarefa} onAlterarStatus={onAlterarStatus} />}
+      </div>
+    </li>
+  );
+}
 
 function DashboardUser() {
   const [tarefas, setTarefas] = useState([]);
-  const [tarefaSelecionada, setTarefaSelecionada] = useState(null);
-  const [statusAtualizado, setStatusAtualizado] = useState("");
+  const [carregando, setCarregando] = useState(true);
+  const [erro, setErro] = useState('');
+  const [tarefaAberta, setTarefaAberta] = useState(null);
   const [userName, setUserName] = useState("");
   const [cronometrosAtivos, setCronometrosAtivos] = useState({});
   const [notificationCount, setNotificationCount] = useState(0);
+  // "Hoje" no calendario local de quem olha o painel (mesma regra do Painel Geral).
+  const hoje = chaveDiaLocal();
 
-  useEffect(() => {
-    buscarTarefas();
-    buscarNotificationCount();
-    setUserName(localStorage.getItem('nome') || '');
-  }, []);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const agora = new Date();
-      const novosCronometros = { ...cronometrosAtivos };
-      let atualizou = false;
-
-      tarefas.forEach(tarefa => {
-        if (tarefa.cronometroAtivo) {
-          const tempoDecorridoSegundos = Math.floor((agora - new Date(tarefa.ultimaAtualizacaoCronometro)) / 1000);
-          novosCronometros[tarefa._id] = (tarefa.tempoGasto ? tarefa.tempoGasto * 60 : 0) + tempoDecorridoSegundos;
-          atualizou = true;
-        }
-      });
-
-      if (atualizou) {
-        setCronometrosAtivos(novosCronometros);
+  const calcularCronometros = (lista) => {
+    const cronometros = {};
+    lista.forEach((tarefa) => {
+      if (tarefa?.cronometroAtivo) {
+        const tempoDecorridoSegundos = Math.floor((new Date() - new Date(tarefa.ultimaAtualizacaoCronometro)) / 1000);
+        cronometros[tarefa._id] = (tarefa.tempoGasto ? tarefa.tempoGasto * 60 : 0) + tempoDecorridoSegundos;
       }
-    }, 1000);
+    });
+    return cronometros;
+  };
 
-    return () => clearInterval(interval);
-  }, [tarefas, cronometrosAtivos]);
-
-  /*const navigate = useNavigate();
-
-  const logout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("nome");
-    navigate("/");
-  };*/
-
-  const buscarTarefas = async () => {
+  // silencioso: recarrega depois de fechar o detalhe sem voltar ao estado de carregamento.
+  const buscarTarefas = useCallback(async ({ silencioso = false } = {}) => {
+    if (!silencioso) {
+      setCarregando(true);
+      setErro('');
+    }
     try {
       const response = await apiClient.get(API_ENDPOINTS.TAREFAS_MINHAS);
-      setTarefas(response.data);
-      
-      const cronometros = {};
-      response.data.forEach(tarefa => {
-        if (tarefa.cronometroAtivo) {
-          const tempoDecorridoSegundos = Math.floor((new Date() - new Date(tarefa.ultimaAtualizacaoCronometro)) / 1000);
-          cronometros[tarefa._id] = (tarefa.tempoGasto ? tarefa.tempoGasto * 60 : 0) + tempoDecorridoSegundos;
-        }
-      });
-      setCronometrosAtivos(cronometros);
+      const lista = Array.isArray(response.data) ? response.data : [];
+      setTarefas(lista);
+      setCronometrosAtivos(calcularCronometros(lista));
+      setErro('');
     } catch (err) {
-      console.error("Erro ao buscar tarefas:", err);
+      if (!silencioso) setErro('Não foi possível carregar suas tarefas agora.');
+    } finally {
+      if (!silencioso) setCarregando(false);
     }
-  };
+  }, []);
 
   const buscarNotificationCount = async () => {
     try {
@@ -81,28 +212,40 @@ function DashboardUser() {
     }
   };
 
+  useEffect(() => {
+    buscarTarefas();
+    buscarNotificationCount();
+    setUserName(localStorage.getItem('nome') || '');
+  }, [buscarTarefas]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const agora = new Date();
+      const novosCronometros = { ...cronometrosAtivos };
+      let atualizou = false;
+      tarefas.forEach((tarefa) => {
+        if (tarefa.cronometroAtivo) {
+          const tempoDecorridoSegundos = Math.floor((agora - new Date(tarefa.ultimaAtualizacaoCronometro)) / 1000);
+          novosCronometros[tarefa._id] = (tarefa.tempoGasto ? tarefa.tempoGasto * 60 : 0) + tempoDecorridoSegundos;
+          atualizou = true;
+        }
+      });
+      if (atualizou) setCronometrosAtivos(novosCronometros);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [tarefas, cronometrosAtivos]);
+
   const controlarCronometro = async (tarefaId, acao) => {
     try {
-      const res = await apiClient.put(
-        `/tarefas/${tarefaId}/cronometro`,
-        { acao }
-      );
-
-      const tarefasAtualizadas = tarefas.map(t => {
-        if (t._id === tarefaId) {
-          return res.data.tarefa;
-        }
-        return t;
-      });
-      setTarefas(tarefasAtualizadas);
-
+      const res = await apiClient.put(`/tarefas/${tarefaId}/cronometro`, { acao });
+      setTarefas((atuais) => atuais.map((t) => (t._id === tarefaId ? res.data.tarefa : t)));
       if (acao === 'iniciar') {
-        setCronometrosAtivos(prev => ({
+        setCronometrosAtivos((prev) => ({
           ...prev,
-          [tarefaId]: res.data.tarefa.tempoGasto ? res.data.tarefa.tempoGasto * 60 : 0
+          [tarefaId]: res.data.tarefa.tempoGasto ? res.data.tarefa.tempoGasto * 60 : 0,
         }));
       } else {
-        setCronometrosAtivos(prev => {
+        setCronometrosAtivos((prev) => {
           const novos = { ...prev };
           delete novos[tarefaId];
           return novos;
@@ -113,167 +256,156 @@ function DashboardUser() {
     }
   };
 
-  const formatarTempo = (segundos) => {
-    if (segundos == null) return '0h 0m 0s';
-    const horas = Math.floor(segundos / 3600);
-    const mins = Math.floor((segundos % 3600) / 60);
-    const secs = segundos % 60;
-    return `${horas}h ${mins}m ${secs}s`;
-  };
+  // Uma alteracao de status por tarefa por vez (clique duplo nao repete o PUT).
+  const statusEmAndamento = useRef(new Set());
+  const [avisoStatus, setAvisoStatus] = useState('');
 
-  const abrirTarefa = (tarefa) => {
-    setTarefaSelecionada(tarefa);
-    setStatusAtualizado(tarefa.status);
-  };
-
-  const atualizarStatus = async () => {
-  try {
-    console.log("Atualizando status da tarefa:", tarefaSelecionada._id, "->", statusAtualizado);
-
-    await apiClient.put(
-      `/tarefas/${tarefaSelecionada._id}/status`,
-      { status: statusAtualizado }
-    );
-    buscarTarefas();
-    setTarefaSelecionada(null);
-  } catch (err) {
-    console.error("Erro ao atualizar status:", err);
-  }
-};
-
-
-  const fecharTarefa = () => {
-    setTarefaSelecionada(null);
-  };
-
-  const gerarPDF = (tarefa) => {
-    const doc = new jsPDF();
-    
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(20);
-    doc.text("Detalhes da Tarefa", 105, 20, { align: "center" });
-    
-    doc.setFontSize(12);
-    doc.setFont("helvetica", "normal");
-    
-    const yInicial = 40;
-    const espacoEntreLinhas = 10;
-    
-    doc.text(`Nome da tarefa: ${tarefa.descricao}`, 20, yInicial);
-    if (tarefa.detalhes) {
-      doc.text(`Descrição: ${tarefa.detalhes}`, 20, yInicial + espacoEntreLinhas);
+  const alterarStatus = async (tarefa, status) => {
+    const tarefaId = String(tarefa._id);
+    if (statusEmAndamento.current.has(tarefaId)) return { ok: false, emAndamento: true };
+    statusEmAndamento.current.add(tarefaId);
+    setAvisoStatus('');
+    try {
+      const res = await apiClient.put(`/tarefas/${tarefaId}/status`, { status });
+      // Status (e cronometro, que a API pausa ao concluir) confirmados pela resposta; o resto da tarefa fica igual.
+      const confirmada = res?.data?.tarefa || {};
+      const statusConfirmado = confirmada.status || status;
+      setTarefas((atuais) => atuais.map((t) => (String(t._id) === tarefaId
+        ? {
+            ...t,
+            status: statusConfirmado,
+            ...(confirmada.cronometroAtivo !== undefined ? { cronometroAtivo: confirmada.cronometroAtivo } : {}),
+            ...(confirmada.tempoGasto !== undefined ? { tempoGasto: confirmada.tempoGasto } : {}),
+            ...(confirmada.ultimaAtualizacaoCronometro !== undefined
+              ? { ultimaAtualizacaoCronometro: confirmada.ultimaAtualizacaoCronometro } : {}),
+          }
+        : t)));
+      const rotulo = STATUS_OPCOES.find((opcao) => opcao.valor === statusConfirmado)?.rotulo || formatarStatus(statusConfirmado);
+      setAvisoStatus(`Status de "${tarefa.descricao}" atualizado para ${rotulo}.`);
+      buscarTarefas({ silencioso: true });
+      return { ok: true };
+    } catch (err) {
+      const mensagem = err?.response?.data?.erro;
+      return { ok: false, mensagem: typeof mensagem === 'string' && mensagem ? mensagem : 'Não foi possível alterar o status agora.' };
+    } finally {
+      statusEmAndamento.current.delete(tarefaId);
     }
-    let linhaAtual = yInicial + espacoEntreLinhas * (tarefa.detalhes ? 2 : 1);
-    doc.text(`Data de Entrega: ${new Date(tarefa.dataEntrega).toLocaleDateString()}`, 20, linhaAtual);
-    doc.text(`Equipe: ${tarefa.equipe?.nome}`, 20, linhaAtual + espacoEntreLinhas);
-    doc.text(`Status: ${formatarStatus(tarefa.status)}`, 20, linhaAtual + (espacoEntreLinhas * 2));
-    
-    if (tarefa.tempoEstimado) {
-      doc.text(`Tempo Estimado: ${formatarTempo(tarefa.tempoEstimado * 60)}`, 20, linhaAtual + (espacoEntreLinhas * 3));
-    }
-    
-    if (tarefa.tempoGasto > 0) {
-      doc.text(`Tempo Gasto: ${formatarTempo(tarefa.tempoGasto * 60)}`, 20, linhaAtual + (espacoEntreLinhas * 4));
-    }
-    
-    const dataAtual = new Date().toLocaleString();
-    doc.setFontSize(10);
-    doc.text(`PDF gerado em: ${dataAtual}`, 20, 280);
-    
-    doc.save(`tarefa_${tarefa._id}.pdf`);
   };
+
+  const meuDia = useMemo(() => organizarMeuDia(tarefas, hoje), [tarefas, hoje]);
+  const prontos = !carregando && !erro;
+
+  // Detalhe: o mesmo TarefaModal do Kanban; so abre tarefas da lista vinda da API.
+  const abrirDetalhes = (entrada) => {
+    if (entrada?.id && tarefas.some((tarefa) => String(tarefa?._id) === entrada.id)) setTarefaAberta(entrada.id);
+  };
+  const fecharDetalhes = () => {
+    setTarefaAberta(null);
+    buscarTarefas({ silencioso: true });
+  };
+
+  const indicadores = [
+    { chave: 'atrasadas', rotulo: 'Atrasadas', ajuda: 'prazo vencido', classe: 'is-atrasada' },
+    { chave: 'hoje', rotulo: 'Hoje', ajuda: 'vencem hoje', classe: 'is-hoje' },
+    { chave: 'proximas', rotulo: 'Próximas', ajuda: `de amanhã até ${JANELA_PROXIMAS_DIAS} dias`, classe: '' },
+  ];
 
   return (
     <div className="admin-page">
       <Sidebar />
-
-      <div className="dashboard-user">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', paddingBottom: '20px', borderBottom: '1px solid #eee' }}>
+      <div className="dashboard-user meu-dia">
+        <header className="meu-dia-header">
           <div>
             {userName && <h3 className="boas-vindas">Bem-vindo(a), {userName}!</h3>}
-            <h2 style={{ margin: '0' }}>Minhas Tarefas</h2>
+            <h2>Meu dia</h2>
+            <p className="meu-dia-data">{formatarDia(hoje)}</p>
           </div>
-          <Link to="/notificacoes" className="notification-bell" aria-label="Ver notificações" style={{ position: 'relative', fontSize: '1.8em', color: '#333', textDecoration: 'none' }}>
-            <FaBell />
-            {notificationCount > 0 && <span style={{ position: 'absolute', top: '-8px', right: '-8px', backgroundColor: '#ff4444', color: 'white', borderRadius: '50%', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75em', fontWeight: 'bold' }}>{notificationCount}</span>}
+          <Link to="/notificacoes" className="meu-dia-sino" aria-label={notificationCount > 0 ? `Ver notificações (${notificationCount} não lidas)` : 'Ver notificações'}>
+            <FaBell aria-hidden="true" />
+            {notificationCount > 0 && <span className="meu-dia-sino-contador">{notificationCount}</span>}
           </Link>
-        </div>
+        </header>
 
-        {tarefas.length === 0 ? (
-          <p>Nenhuma tarefa atribuída.</p>
-        ) : (
-          tarefas.map((tarefa) => (
-            <div key={tarefa._id} className="tarefa-card">
-              <p><strong>Nome da tarefa:</strong> {tarefa.descricao}</p>
-              {tarefa.detalhes && <p><strong>Descrição:</strong> {tarefa.detalhes}</p>}
-              <p><strong>Data de Entrega:</strong> {new Date(tarefa.dataEntrega).toLocaleDateString()}</p>
-              <p><strong>Status:</strong> {formatarStatus(tarefa.status)}</p>
-              {tarefa.tempoEstimado && (
-                <p><strong>Tempo Estimado:</strong> {formatarTempo(tarefa.tempoEstimado * 60)}</p>
-              )}
-              {tarefa.cronometroAtivo ? (
-                <p><strong>Tempo Gasto:</strong> {formatarTempo(cronometrosAtivos[tarefa._id] || (tarefa.tempoGasto ? tarefa.tempoGasto * 60 : 0))}</p>
-              ) : tarefa.tempoGasto > 0 && (
-                <p><strong>Tempo Gasto:</strong> {formatarTempo(tarefa.tempoGasto * 60)}</p>
-              )}
-              <div className="tarefa-actions">
-                <button onClick={() => abrirTarefa(tarefa)}>Ver Detalhes</button>
-                {tarefa.tempoEstimado && (
-                  <button 
-                    onClick={() => controlarCronometro(tarefa._id, tarefa.cronometroAtivo ? 'pausar' : 'iniciar')}
-                    className={tarefa.cronometroAtivo ? 'pause-btn' : 'start-btn'}
-                  >
-                    {tarefa.cronometroAtivo ? 'Pausar' : 'Iniciar'} Cronômetro
-                  </button>
-                )}
-              </div>
-            </div>
-          ))
+        <section className="meu-dia-indicadores" aria-label="Resumo do dia">
+          {indicadores.map(({ chave, rotulo, ajuda, classe }) => (
+            <article key={chave} className={`meu-dia-indicador ${prontos && meuDia.indicadores[chave] > 0 ? classe : ''}`}>
+              <span className="meu-dia-indicador-rotulo">{rotulo}</span>
+              {/* Carregando ou com erro: nunca um zero que pareca resultado. */}
+              <strong aria-label={prontos ? undefined : `${rotulo}: indisponível`}>{prontos ? meuDia.indicadores[chave] : '—'}</strong>
+              <span className="meu-dia-indicador-ajuda">{ajuda}</span>
+            </article>
+          ))}
+        </section>
+
+        {avisoStatus && <p className="meu-dia-aviso" role="status">{avisoStatus}</p>}
+
+        {carregando && <p className="meu-dia-estado" role="status">Carregando suas tarefas...</p>}
+
+        {!carregando && erro && (
+          <div className="meu-dia-erro" role="alert">
+            <span>{erro}</span>
+            <button type="button" onClick={() => buscarTarefas()}>Tentar novamente</button>
+          </div>
         )}
 
-        {tarefaSelecionada && (
-          <div className="modal-tarefa">
-            <div className="modal-content">
-              <h3>Detalhes da Tarefa</h3>
-              <p><strong>Nome da tarefa:</strong> {tarefaSelecionada.descricao}</p>
-              {tarefaSelecionada.detalhes && <p><strong>Descrição:</strong> {tarefaSelecionada.detalhes}</p>}
-              <p><strong>Entrega:</strong> {new Date(tarefaSelecionada.dataEntrega).toLocaleDateString()}</p>
-              <p><strong>Equipe:</strong> {tarefaSelecionada.equipe?.nome}</p>
-              <p><strong>Status Atual:</strong> {formatarStatus(tarefaSelecionada.status)}</p>
-              <div className="status-select">
-                <label><strong>Alterar Status:</strong></label>{' '}
-                <select
-                  value={statusAtualizado}
-                  onChange={(e) => setStatusAtualizado(e.target.value)}
-                >
-                  <option value="pendente">Pendente</option>
-                  <option value="em_andamento">Em Andamento</option>
-                  <option value="concluido">Concluído</option>
-                </select>
-              </div>
+        {prontos && meuDia.total === 0 && (
+          <p className="meu-dia-estado">Você ainda não tem tarefas atribuídas.</p>
+        )}
 
-              <button onClick={atualizarStatus} className="atualizar-status-btn">
-                Atualizar Status
-              </button>
+        {prontos && meuDia.total > 0 && meuDia.pendentes === 0 && (
+          <p className="meu-dia-estado is-ok">Tudo em dia: todas as suas tarefas estão concluídas.</p>
+        )}
 
-              {tarefaSelecionada.tempoEstimado && (
-                <p><strong>Tempo Estimado:</strong> {formatarTempo(tarefaSelecionada.tempoEstimado * 60)}</p>
-              )}
-              {tarefaSelecionada.cronometroAtivo ? (
-                <p><strong>Tempo Gasto:</strong> {formatarTempo(cronometrosAtivos[tarefaSelecionada._id] || (tarefaSelecionada.tempoGasto ? tarefaSelecionada.tempoGasto * 60 : 0))}</p>
-              ) : tarefaSelecionada.tempoGasto > 0 && (
-                <p><strong>Tempo Gasto:</strong> {formatarTempo(tarefaSelecionada.tempoGasto * 60)}</p>
-              )}
-              <div className="modal-buttons">
-                <button onClick={() => gerarPDF(tarefaSelecionada)} className="download-btn">
-                  <FaFileDownload /> Baixar PDF
-                </button>
-                <button onClick={fecharTarefa}>Fechar</button>
-              </div>
-            </div>
-          </div>
+        {prontos && meuDia.pendentes > 0 && (
+          <>
+            <p className="meu-dia-resumo">
+              {meuDia.indicadores.atrasadas === 0 && 'Nenhuma tarefa atrasada. '}
+              {meuDia.indicadores.hoje === 0 && 'Nada vence hoje. '}
+              {meuDia.indicadores.proximas === 0 && `Nenhuma entrega nos próximos ${JANELA_PROXIMAS_DIAS} dias.`}
+            </p>
+            {SECOES.filter(({ chave }) => meuDia[chave].length > 0).map(({ chave, titulo, selo, variante }) => (
+              <section key={chave} className="meu-dia-secao" aria-label={`${titulo} (${meuDia[chave].length})`}>
+                <h3>{titulo} <span className="meu-dia-contagem">{meuDia[chave].length}</span></h3>
+                <ul className="meu-dia-lista">
+                  {meuDia[chave].map((entrada) => (
+                    <ItemTarefa
+                      key={entrada.id || `sem-id-${entrada.indice}`}
+                      entrada={entrada}
+                      selo={selo}
+                      variante={variante}
+                      segundosAtivos={cronometrosAtivos[entrada.tarefa._id]}
+                      onAbrir={abrirDetalhes}
+                      onCronometro={controlarCronometro}
+                      onAlterarStatus={alterarStatus}
+                    />
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </>
+        )}
+
+        {prontos && meuDia.concluidas.length > 0 && (
+          <details className="meu-dia-concluidas">
+            <summary>Concluídas ({meuDia.concluidas.length})</summary>
+            <ul className="meu-dia-lista">
+              {meuDia.concluidas.map((entrada) => (
+                <ItemTarefa
+                  key={entrada.id || `sem-id-${entrada.indice}`}
+                  entrada={entrada}
+                  selo="Concluída"
+                  variante="is-concluida"
+                  mostrarRelativo={false}
+                  onAbrir={abrirDetalhes}
+                  onAlterarStatus={alterarStatus}
+                />
+              ))}
+            </ul>
+          </details>
         )}
       </div>
+
+      {tarefaAberta && <TarefaModal tarefaId={tarefaAberta} onClose={fecharDetalhes} />}
     </div>
   );
 }

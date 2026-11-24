@@ -44,6 +44,13 @@ export const formatarDia = (chave) => {
   return `${dia}/${mes}/${ano}`;
 };
 
+// Data de entrega para exibicao (dd/mm/aaaa), pelo dia gravado - nunca por toLocaleDateString, que no Brasil
+// mostraria o dia anterior para a meia-noite UTC. Sem data valida: o texto informado.
+export const formatarDataEntrega = (valor, semData = 'Sem prazo') => {
+  const dia = diaDaEntrega(valor);
+  return dia ? formatarDia(dia) : semData;
+};
+
 export const estaConcluida = (tarefa) => tarefa?.status === 'concluido';
 
 export const estaAtrasada = (tarefa, hoje) => {

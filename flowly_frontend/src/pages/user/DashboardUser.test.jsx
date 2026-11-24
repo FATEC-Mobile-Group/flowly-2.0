@@ -1,0 +1,241 @@
+// Meu Painel / Meu Dia: indicadores so com dados da API, grupos, estados, erro com nova tentativa e detalhe pelo
+// TarefaModal. API simulada; data controlada (25/11/2026 ao meio-dia em Brasilia).
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { API_ENDPOINTS } from '../../config/config';
+import DashboardUser from './DashboardUser';
+
+const { apiGet, apiPut } = vi.hoisted(() => ({ apiGet: vi.fn(), apiPut: vi.fn() }));
+vi.mock('../../config/apiClient', () => ({ __esModule: true, default: { get: apiGet, put: apiPut } }));
+vi.mock('../../components/layout/Sidebar', () => ({ __esModule: true, default: () => null }));
+vi.mock('../../components/tarefas/TarefaModal', () => ({
+  __esModule: true,
+  default: ({ tarefaId, onClose }) => (
+    <div role="dialog" aria-label="Detalhe da tarefa">
+      {tarefaId}
+      <button type="button" onClick={onClose}>Fechar detalhe</button>
+    </div>
+  ),
+}));
+vi.mock('jspdf', () => ({ __esModule: true, default: vi.fn() }));
+
+const id = (c) => c.repeat(24);
+const dia = (d) => `2026-11-${d}T00:00:00.000Z`;
+const tarefas = [
+  { _id: id('a'), descricao: 'Relatório atrasado', status: 'pendente', urgencia: 'alta', dataEntrega: dia('20'), equipe: { nome: 'Alfa' } },
+  { _id: id('b'), descricao: 'Entrega de hoje', status: 'em_andamento', urgencia: 'media', dataEntrega: dia('25'), equipe: { nome: 'Beta' } },
+  { _id: id('c'), descricao: 'Revisão de amanhã', status: 'pendente', urgencia: 'baixa', dataEntrega: dia('26'), equipe: { nome: 'Alfa' }, tempoEstimado: 60 },
+  { _id: id('d'), descricao: 'Sem data', status: 'pendente', urgencia: 'baixa', equipe: { nome: 'Alfa' } },
+  { _id: id('e'), descricao: 'Já concluída', status: 'concluido', urgencia: 'alta', dataEntrega: dia('19'), equipe: { nome: 'Alfa' } },
+];
+
+let tzOriginal;
+let respostaTarefas;
+
+beforeEach(() => {
+  tzOriginal = process.env.TZ;
+  process.env.TZ = 'America/Sao_Paulo';
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-25T15:00:00.000Z'));
+  apiGet.mockReset();
+  apiPut.mockReset();
+  respostaTarefas = () => Promise.resolve({ data: tarefas });
+  apiGet.mockImplementation((url) => {
+    if (url === API_ENDPOINTS.TAREFAS_MINHAS) return respostaTarefas();
+    if (url === API_ENDPOINTS.NOTIFICATIONS_COUNT) return Promise.resolve({ data: { count: 2 } });
+    return Promise.reject(new Error(`rota inesperada ${url}`));
+  });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  process.env.TZ = tzOriginal;
+});
+
+const renderPage = () => render(<MemoryRouter><DashboardUser /></MemoryRouter>);
+const indicador = (rotulo) => within(screen.getByRole('region', { name: 'Resumo do dia' }))
+  .getByText(rotulo).closest('article').querySelector('strong');
+const secao = (nome) => screen.getByRole('region', { name: nome });
+
+test('indicadores e grupos com os dados da API; concluida fora das pendencias', async () => {
+  renderPage();
+  expect(await screen.findByText('Relatório atrasado')).toBeInTheDocument();
+  expect(indicador('Atrasadas')).toHaveTextContent('1');
+  expect(indicador('Hoje')).toHaveTextContent('1');
+  expect(indicador('Próximas')).toHaveTextContent('1');
+
+  expect(within(secao('Atrasadas (1)')).getByText('Relatório atrasado')).toBeInTheDocument();
+  expect(within(secao('Atrasadas (1)')).getByText('Atrasada')).toBeInTheDocument();
+  expect(within(secao('Para hoje (1)')).getByText('Entrega de hoje')).toBeInTheDocument();
+  expect(within(secao('Próximos 7 dias (1)')).getByText('Revisão de amanhã')).toBeInTheDocument();
+  expect(within(secao('Sem prazo definido (1)')).getByText('Sem data')).toBeInTheDocument();
+  // Datas no dia gravado (nao no anterior) e prazo relativo.
+  expect(within(secao('Atrasadas (1)')).getByText('20/11/2026')).toBeInTheDocument();
+  expect(within(secao('Atrasadas (1)')).getByText('Venceu há 5 dias')).toBeInTheDocument();
+  expect(within(secao('Para hoje (1)')).getByText('25/11/2026')).toBeInTheDocument();
+  // Concluida so na secao recolhida.
+  expect(screen.getByText('Concluídas (1)')).toBeInTheDocument();
+  expect(screen.getByText('Já concluída').closest('details')).not.toBeNull();
+  // Cronometro so quando ha tempo estimado (como antes); nenhuma escrita ao abrir o painel.
+  expect(within(secao('Próximos 7 dias (1)')).getByRole('button', { name: 'Iniciar cronômetro' })).toBeInTheDocument();
+  expect(apiPut).not.toHaveBeenCalled();
+});
+
+test('carregando: nenhum zero aparece como resultado', async () => {
+  let liberar;
+  respostaTarefas = () => new Promise((resolve) => { liberar = resolve; });
+  renderPage();
+  expect(screen.getByRole('status')).toHaveTextContent('Carregando suas tarefas');
+  ['Atrasadas', 'Hoje', 'Próximas'].forEach((rotulo) => expect(indicador(rotulo)).toHaveTextContent('—'));
+  await act(async () => liberar({ data: [] }));
+  expect(screen.getByText('Você ainda não tem tarefas atribuídas.')).toBeInTheDocument();
+  expect(indicador('Atrasadas')).toHaveTextContent('0');
+});
+
+test('falha da API: aviso, indicadores indisponiveis e nova tentativa sob demanda', async () => {
+  respostaTarefas = () => Promise.reject(new Error('503'));
+  renderPage();
+  expect(await screen.findByRole('alert')).toHaveTextContent('Não foi possível carregar suas tarefas agora.');
+  expect(indicador('Atrasadas')).toHaveTextContent('—');
+  expect(screen.queryByText('Você ainda não tem tarefas atribuídas.')).toBeNull();
+  const chamadas = apiGet.mock.calls.filter(([url]) => url === API_ENDPOINTS.TAREFAS_MINHAS).length;
+  expect(chamadas).toBe(1); // sem repeticao automatica
+
+  respostaTarefas = () => Promise.resolve({ data: tarefas });
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Tentar novamente' }));
+  });
+  expect(await screen.findByText('Relatório atrasado')).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+test('tudo concluido: mensagem tranquila, sem secoes de pendencias', async () => {
+  respostaTarefas = () => Promise.resolve({ data: [tarefas[4]] });
+  renderPage();
+  expect(await screen.findByText('Tudo em dia: todas as suas tarefas estão concluídas.')).toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: /Atrasadas \(/ })).toBeNull();
+});
+
+test('sem atrasadas: aviso positivo e nenhuma secao de atrasadas', async () => {
+  respostaTarefas = () => Promise.resolve({ data: [tarefas[1]] });
+  renderPage();
+  expect(await screen.findByText(/Nenhuma tarefa atrasada\./)).toBeInTheDocument();
+  expect(screen.getByText(/Nenhuma entrega nos próximos 7 dias\./)).toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: /^Atrasadas/ })).toBeNull();
+});
+
+test('detalhes pelo TarefaModal: abre a tarefa da lista e fecha recarregando sem estado de carregamento', async () => {
+  renderPage();
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver detalhes de Entrega de hoje' }));
+  expect(screen.getByRole('dialog', { name: 'Detalhe da tarefa' })).toHaveTextContent(id('b'));
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Fechar detalhe' }));
+  });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.queryByRole('status')).toBeNull();
+  expect(apiGet.mock.calls.filter(([url]) => url === API_ENDPOINTS.TAREFAS_MINHAS)).toHaveLength(2);
+});
+
+test('tarefa sem id confiavel nao abre detalhe', async () => {
+  respostaTarefas = () => Promise.resolve({ data: [{ descricao: 'Sem id', status: 'pendente', dataEntrega: dia('25') }] });
+  renderPage();
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver detalhes de Sem id' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+describe('alterar status no Meu Dia', () => {
+  // API simulada consistente: o PUT aceito muda o que o GET seguinte devolve (como o servidor real).
+  let estado;
+  beforeEach(() => {
+    estado = tarefas.map((t) => ({ ...t }));
+    respostaTarefas = () => Promise.resolve({ data: estado.map((t) => ({ ...t })) });
+  });
+  const aceitar = (resposta) => (url, body) => {
+    const tarefaId = url.split('/')[2];
+    estado = estado.map((t) => (t._id === tarefaId ? { ...t, status: body.status } : t));
+    return Promise.resolve(resposta(tarefaId, body));
+  };
+
+  const abrirEditor = async (descricao) => {
+    fireEvent.click(await screen.findByRole('button', { name: `Alterar status de ${descricao}` }));
+    return screen.getByLabelText('Novo status');
+  };
+
+  test('abrir o seletor nao envia nada; confirmar envia { status } e atualiza grupos e indicadores', async () => {
+    apiPut.mockImplementation(aceitar((tarefaId, body) => ({ data: { msg: 'ok', tarefa: { _id: tarefaId, status: body.status, cronometroAtivo: false } } })));
+    renderPage();
+    const seletor = await abrirEditor('Relatório atrasado');
+    expect(apiPut).not.toHaveBeenCalled();
+    fireEvent.change(seletor, { target: { value: 'concluido' } });
+    expect(apiPut).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Salvar' }));
+    });
+
+    expect(apiPut).toHaveBeenCalledWith(`/tarefas/${id('a')}/status`, { status: 'concluido' });
+    expect(screen.getByRole('status')).toHaveTextContent('Status de "Relatório atrasado" atualizado para Concluído.');
+    expect(indicador('Atrasadas')).toHaveTextContent('0');
+    expect(screen.queryByRole('region', { name: /^Atrasadas/ })).toBeNull();
+    expect(screen.getByText('Concluídas (2)')).toBeInTheDocument();
+    expect(screen.getByText('Relatório atrasado').closest('details')).not.toBeNull();
+  });
+
+  test('falha da API: erro no item, nada muda e nenhum sucesso aparece', async () => {
+    apiPut.mockRejectedValue({ response: { status: 403, data: { erro: 'Você não pode alterar esta tarefa.' } } });
+    renderPage();
+    const seletor = await abrirEditor('Entrega de hoje');
+    fireEvent.change(seletor, { target: { value: 'concluido' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Salvar' }));
+    });
+    expect(screen.getByRole('alert')).toHaveTextContent('Você não pode alterar esta tarefa.');
+    expect(screen.queryByText(/atualizado para/)).toBeNull();
+    expect(indicador('Hoje')).toHaveTextContent('1');
+    expect(within(secao('Para hoje (1)')).getByText('Entrega de hoje')).toBeInTheDocument();
+  });
+
+  test('reabrir tarefa concluida a devolve ao grupo correspondente', async () => {
+    apiPut.mockImplementation(aceitar((tarefaId, body) => ({ data: { tarefa: { _id: tarefaId, status: body.status } } })));
+    renderPage();
+    await screen.findByText('Concluídas (1)');
+    const seletor = await abrirEditor('Já concluída');
+    fireEvent.change(seletor, { target: { value: 'pendente' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Salvar' }));
+    });
+    expect(indicador('Atrasadas')).toHaveTextContent('2');
+    expect(within(secao('Atrasadas (2)')).getByText('Já concluída')).toBeInTheDocument();
+    expect(screen.queryByText(/Concluídas \(/)).toBeNull();
+  });
+
+  test('envio duplicado bloqueado enquanto salva; cancelar fecha sem enviar', async () => {
+    let concluir;
+    apiPut.mockImplementation(() => new Promise((resolve) => { concluir = resolve; }));
+    renderPage();
+    const seletor = await abrirEditor('Revisão de amanhã');
+    fireEvent.change(seletor, { target: { value: 'em_andamento' } });
+    const salvar = screen.getByRole('button', { name: 'Salvar' });
+    await act(async () => {
+      fireEvent.click(salvar);
+      fireEvent.click(salvar);
+      fireEvent.submit(salvar.closest('form'));
+    });
+    expect(apiPut).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Salvando...' })).toBeDisabled();
+    await act(async () => concluir({ data: { tarefa: { _id: id('c'), status: 'em_andamento' } } }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Alterar status de Sem data' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
+    expect(screen.queryByLabelText('Novo status')).toBeNull();
+    expect(apiPut).toHaveBeenCalledTimes(1);
+  });
+
+  test('detalhes, PDF e cronometro continuam no item', async () => {
+    renderPage();
+    const item = (await screen.findByText('Revisão de amanhã')).closest('li');
+    expect(within(item).getByRole('button', { name: 'Ver detalhes de Revisão de amanhã' })).toBeInTheDocument();
+    expect(within(item).getByRole('button', { name: 'Baixar PDF de Revisão de amanhã' })).toBeInTheDocument();
+    expect(within(item).getByRole('button', { name: 'Iniciar cronômetro' })).toBeInTheDocument();
+    expect(within(item).getByRole('button', { name: 'Alterar status de Revisão de amanhã' })).toBeInTheDocument();
+  });
+});
