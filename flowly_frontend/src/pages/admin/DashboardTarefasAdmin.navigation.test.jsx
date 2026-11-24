@@ -44,7 +44,10 @@ test('tarefa da lista e destacada, recebe foco e o pedido e consumido', async ()
   const cartao = (await screen.findByText('Planilha')).closest('.task-item');
   await waitFor(() => expect(cartao).toHaveClass('is-destacada'));
   expect(cartao).toHaveAttribute('aria-current', 'true');
-  expect(cartao).toHaveFocus();
+  // O foco vem de um efeito que roda depois do commit que aplica o destaque: pode chegar um tique depois.
+  await waitFor(() => {
+    expect(cartao).toHaveFocus();
+  });
   expect(screen.getByText('Revisar relatório').closest('.task-item')).not.toHaveClass('is-destacada');
   await waitFor(() => expect(screen.getByTestId('estado')).toHaveTextContent('/admin/tarefas|null'));
 });
