@@ -29,6 +29,18 @@ export const acumuladoEmSegundos = (tarefa) => {
   return Math.max(0, Math.floor((Number(tarefa?.tempoGasto) || 0) * 60));
 };
 
+// Ancora para uma sessao que ja chega ativa da API (F5, voltar a pagina): parte da sessao que da para medir neste
+// instante (nunca negativa) e dali em diante segue o relogio do navegador. Sem ela, com o relogio do servidor
+// adiantado, "agora - inicio" ficava negativo, o piso segurava em zero e o contador parecia parado ate o navegador
+// alcancar o horario do servidor. null quando a tarefa nao esta ativa ou o inicio e invalido.
+export const ancoraNaCarga = (tarefa, agoraLocal) => {
+  if (!tarefa?.cronometroAtivo) return null;
+  const inicioServidor = new Date(tarefa.ultimaAtualizacaoCronometro).getTime();
+  if (!Number.isFinite(inicioServidor)) return null;
+  const decorrido = Math.max(0, agoraLocal - inicioServidor);
+  return { inicioServidor, inicioLocal: agoraLocal - decorrido };
+};
+
 export const segundosDoCronometro = (tarefa, agora, ancora) => {
   const base = acumuladoEmSegundos(tarefa);
   if (!tarefa?.cronometroAtivo) return Math.floor(base);

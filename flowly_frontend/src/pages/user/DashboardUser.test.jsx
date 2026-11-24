@@ -392,3 +392,111 @@ describe('cronometro com segundos persistidos', () => {
     expect(screen.getByText('Revisão de amanhã').closest('li')).toHaveTextContent('Alfa');
   });
 });
+
+describe('F5 com cronometro ativo: o contador continua avancando', () => {
+  const tempoNaTela = (descricao) => screen.getByText(descricao).closest('li').textContent.match(/Tempo gasto: ([^E]*?s)/)?.[1];
+  const putsCronometro = () => apiPut.mock.calls.filter(([url]) => url.endsWith('/cronometro'));
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(new Date('2026-11-25T15:00:00.000Z'));
+  });
+
+  const carregarAtiva = async (extra) => {
+    respostaTarefas = () => Promise.resolve({ data: [{ ...tarefas[2], cronometroAtivo: true, tempoGasto: 8, tempoGastoSegundos: 503, ...extra }] });
+    const view = renderPage();
+    await act(async () => {});
+    return view;
+  };
+
+  test('relogios iguais: mostra o total e avanca 5 s e depois mais 10 s, sem nenhum PUT', async () => {
+    await carregarAtiva({ ultimaAtualizacaoCronometro: '2026-11-25T14:59:00.000Z' }); // sessao de 60 s
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 9m 23s');
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 9m 28s');
+    await act(async () => { vi.advanceTimersByTime(10000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 9m 38s');
+    expect(putsCronometro()).toHaveLength(0);
+  });
+
+  test('servidor adiantado (inicio "no futuro" para o navegador): nunca negativo e avanca desde o carregamento', async () => {
+    // A sessao comecou ha pouco no relogio do servidor, que esta 90 s a frente do navegador.
+    await carregarAtiva({ ultimaAtualizacaoCronometro: '2026-11-25T15:01:00.000Z' });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 23s');
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 28s');
+    await act(async () => { vi.advanceTimersByTime(10000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 38s');
+    expect(putsCronometro()).toHaveLength(0);
+  });
+
+  test('tarefa antiga so com tempoGasto, ativa ao carregar: avanca', async () => {
+    await carregarAtiva({ tempoGastoSegundos: undefined, ultimaAtualizacaoCronometro: '2026-11-25T15:00:00.000Z' });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 0s');
+    await act(async () => { vi.advanceTimersByTime(7000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 7s');
+  });
+
+  test('pausar depois do F5 para de contar com o acumulado confirmado; retomar continua dele', async () => {
+    await carregarAtiva({ ultimaAtualizacaoCronometro: '2026-11-25T15:01:00.000Z' });
+    await act(async () => { vi.advanceTimersByTime(17000); });
+    apiPut.mockResolvedValueOnce({ data: { tarefa: { _id: id('c'), cronometroAtivo: false, tempoGasto: 8, tempoGastoSegundos: 520 } } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Pausar cronômetro' }));
+    });
+    expect(screen.getByRole('button', { name: 'Iniciar cronômetro' })).toBeInTheDocument();
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(screen.getByText('Revisão de amanhã').closest('li')).not.toHaveTextContent('Tempo gasto');
+    apiPut.mockResolvedValueOnce({ data: { tarefa: { _id: id('c'), cronometroAtivo: true, tempoGasto: 8, tempoGastoSegundos: 520, ultimaAtualizacaoCronometro: '2026-11-25T15:02:30.000Z' } } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Iniciar cronômetro' }));
+    });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 40s');
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 43s');
+  });
+
+  test('sair e voltar ao Meu Dia: volta a mostrar a duracao atual e avancar; desmontar limpa o intervalo', async () => {
+    const limpar = vi.spyOn(globalThis, 'clearInterval');
+    const primeira = await carregarAtiva({ ultimaAtualizacaoCronometro: '2026-11-25T14:59:00.000Z' });
+    await act(async () => { vi.advanceTimersByTime(4000); });
+    primeira.unmount();
+    expect(limpar).toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0); // nenhum intervalo sobrando
+    await act(async () => { vi.advanceTimersByTime(30000); });
+    await carregarAtiva({ ultimaAtualizacaoCronometro: '2026-11-25T14:59:00.000Z' });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 9m 57s'); // 503 + 60 + 34
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 10m 0s');
+    expect(vi.getTimerCount()).toBe(1); // um unico intervalo
+  });
+
+  test('recarregar a lista (fechar detalhe) nao zera nem pula o contador da sessao', async () => {
+    await carregarAtiva({ ultimaAtualizacaoCronometro: '2026-11-25T15:01:00.000Z' });
+    await act(async () => { vi.advanceTimersByTime(10000); });
+    fireEvent.click(screen.getByRole('button', { name: 'Ver detalhes de Revisão de amanhã' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Fechar detalhe' }));
+    });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 33s');
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    expect(tempoNaTela('Revisão de amanhã')).toBe('0h 8m 35s');
+  });
+});
+
+describe('StrictMode', () => {
+  test('com efeitos montados duas vezes: um unico intervalo e o contador avanca', async () => {
+    const { StrictMode } = await import('react');
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(new Date('2026-11-25T15:00:00.000Z'));
+    respostaTarefas = () => Promise.resolve({ data: [{ ...tarefas[2], cronometroAtivo: true, tempoGasto: 8, tempoGastoSegundos: 503, ultimaAtualizacaoCronometro: '2026-11-25T15:01:00.000Z' }] });
+    render(<StrictMode><MemoryRouter><DashboardUser /></MemoryRouter></StrictMode>);
+    await act(async () => {});
+    const tempo = () => screen.getByText('Revisão de amanhã').closest('li').textContent.match(/Tempo gasto: ([^E]*?s)/)?.[1];
+    expect(tempo()).toBe('0h 8m 23s');
+    await act(async () => { vi.advanceTimersByTime(4000); });
+    expect(tempo()).toBe('0h 8m 27s');
+    expect(vi.getTimerCount()).toBe(1);
+    expect(apiPut).not.toHaveBeenCalled();
+  });
+});

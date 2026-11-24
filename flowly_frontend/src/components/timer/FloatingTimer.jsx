@@ -31,6 +31,9 @@ const chaveDaSessao = (tarefa) => `${tarefa._id}:${tarefa.ultimaAtualizacaoCrono
 const FloatingTimer = () => {
   const [tarefasAtivas, setTarefasAtivas] = useState([]);
   const [now, setNow] = useState(Date.now());
+  // Instante (navegador) da ultima consulta: a sessao parte do que dava para medir nele e avanca pelo relogio
+  // local, entao um relogio de servidor adiantado nao deixa o cartao parado.
+  const [carregadoEm, setCarregadoEm] = useState(Date.now());
   const [ocultos, setOcultos] = useState(lerOcultos);
 
   const fetchAtivas = useCallback(async () => {
@@ -41,8 +44,10 @@ const FloatingTimer = () => {
         const responsavelId = typeof t.user === 'object' ? t.user?._id : t.user;
         return t.cronometroAtivo && String(responsavelId) === String(userId);
       });
+      const agora = Date.now();
       setTarefasAtivas(ativas);
-      setNow(Date.now());
+      setCarregadoEm(agora);
+      setNow(agora);
       // Sessoes que ja terminaram nao precisam continuar na lista de ocultas.
       const vivas = new Set(ativas.map(chaveDaSessao));
       setOcultos((atuais) => {
@@ -95,7 +100,9 @@ const FloatingTimer = () => {
         // Acumulado preciso (segundos) + sessao em andamento, exibido em minutos inteiros: os segundos que sobraram
         // de sessoes anteriores entram na conta (antes, minutos legados + minutos da sessao ficavam abaixo do real).
         const startedAt = new Date(t.ultimaAtualizacaoCronometro).getTime();
-        const segundosSessao = Number.isFinite(startedAt) ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
+        const segundosSessao = Number.isFinite(startedAt)
+          ? Math.floor((Math.max(0, carregadoEm - startedAt) + Math.max(0, now - carregadoEm)) / 1000)
+          : 0;
         const totalMins = Math.floor((acumuladoEmSegundos(t) + segundosSessao) / 60);
         const descricao = String(t.descricao || 'Tarefa');
 

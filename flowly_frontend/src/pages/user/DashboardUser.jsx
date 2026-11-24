@@ -12,6 +12,7 @@ import { chaveDiaLocal, formatarDataEntrega, formatarDia } from "../dashboard/pa
 import {
   JANELA_PROXIMAS_DIAS,
   acumuladoEmSegundos,
+  ancoraNaCarga,
   avisarCronometroAtualizado,
   formatarDuracao,
   organizarMeuDia,
@@ -207,8 +208,21 @@ function DashboardUser() {
     try {
       const response = await apiClient.get(API_ENDPOINTS.TAREFAS_MINHAS);
       const lista = Array.isArray(response.data) ? response.data : [];
+      // Sessoes que ja chegam ativas (F5, voltar a pagina) ganham ancora local agora; a de uma sessao que ja
+      // tinha ancora (mesmo inicio) fica como esta, para recarregar a lista nao pular nem zerar o contador.
+      const agoraLocal = Date.now();
+      const ancoras = ancorasCronometro.current;
+      const ativas = new Set();
+      lista.forEach((tarefa) => {
+        const ancora = ancoraNaCarga(tarefa, agoraLocal);
+        if (!ancora) return;
+        const chave = String(tarefa._id);
+        ativas.add(chave);
+        if (ancoras[chave]?.inicioServidor !== ancora.inicioServidor) ancoras[chave] = ancora;
+      });
+      Object.keys(ancoras).forEach((chave) => { if (!ativas.has(chave)) delete ancoras[chave]; });
       setTarefas(lista);
-      setRelogio(Date.now());
+      setRelogio(agoraLocal);
       setErro('');
     } catch (err) {
       if (!silencioso) setErro('Não foi possível carregar suas tarefas agora.');

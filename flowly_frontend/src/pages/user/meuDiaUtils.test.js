@@ -1,5 +1,5 @@
 // Meu Dia: grupos exclusivos, ordem, contadores e datas (dia civil gravado x "hoje" local), sem depender do relogio.
-import { organizarMeuDia, JANELA_PROXIMAS_DIAS, acumuladoEmSegundos, formatarDuracao, segundosDoCronometro } from './meuDiaUtils';
+import { organizarMeuDia, JANELA_PROXIMAS_DIAS, acumuladoEmSegundos, ancoraNaCarga, formatarDuracao, segundosDoCronometro } from './meuDiaUtils';
 import { chaveDiaLocal, formatarDataEntrega } from '../dashboard/painelGeralUtils';
 
 const meiaNoiteUTC = (dia) => `${dia}T00:00:00.000Z`;
@@ -158,5 +158,25 @@ describe('acumulado preciso (tempoGastoSegundos) com recuo para o legado', () =>
     const tarefa = { cronometroAtivo: true, tempoGasto: 8, tempoGastoSegundos: 503, ultimaAtualizacaoCronometro: '2026-11-23T15:00:00.000Z' };
     expect(formatarDuracao(segundosDoCronometro(tarefa, Date.parse('2026-11-23T15:00:17.000Z')))).toBe('0h 8m 40s');
     expect(formatarDuracao(segundosDoCronometro({ ...tarefa, cronometroAtivo: false, tempoGastoSegundos: 520 }, Date.now()))).toBe('0h 8m 40s');
+  });
+});
+
+describe('ancoraNaCarga (sessao que ja chega ativa da API)', () => {
+  const agora = Date.parse('2026-11-25T15:00:00.000Z');
+  test('parte da sessao medivel e nunca negativa; segue o relogio local depois', () => {
+    const ativa = { cronometroAtivo: true, tempoGastoSegundos: 503, ultimaAtualizacaoCronometro: '2026-11-25T14:59:00.000Z' };
+    const ancora = ancoraNaCarga(ativa, agora);
+    expect(segundosDoCronometro(ativa, agora, ancora)).toBe(563);
+    expect(segundosDoCronometro(ativa, agora + 5000, ancora)).toBe(568);
+    const adiantada = { ...ativa, ultimaAtualizacaoCronometro: '2026-11-25T15:01:30.000Z' };
+    const ancoraAdiantada = ancoraNaCarga(adiantada, agora);
+    expect(segundosDoCronometro(adiantada, agora, ancoraAdiantada)).toBe(503);
+    expect(segundosDoCronometro(adiantada, agora + 5000, ancoraAdiantada)).toBe(508); // antes: 503 parado
+    expect(segundosDoCronometro(adiantada, agora + 5000)).toBe(503); // sem ancora: o defeito reproduzido
+  });
+
+  test('pausada ou inicio invalido: sem ancora', () => {
+    expect(ancoraNaCarga({ cronometroAtivo: false, ultimaAtualizacaoCronometro: '2026-11-25T14:59:00.000Z' }, agora)).toBeNull();
+    expect(ancoraNaCarga({ cronometroAtivo: true, ultimaAtualizacaoCronometro: 'x' }, agora)).toBeNull();
   });
 });
