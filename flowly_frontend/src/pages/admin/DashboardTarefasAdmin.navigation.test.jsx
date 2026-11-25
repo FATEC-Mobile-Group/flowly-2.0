@@ -2,7 +2,8 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { fireEvent } from '@testing-library/react';
-import DashboardTarefasAdmin from './DashboardTarefasAdmin';
+import DashboardTarefasAdmin, { CHAVE_VISUALIZACAO_TAREFAS } from './DashboardTarefasAdmin';
+import { API_ENDPOINTS } from '../../config/config';
 
 const { apiGet, apiDelete } = vi.hoisted(() => ({ apiGet: vi.fn(), apiDelete: vi.fn() }));
 vi.mock('../../config/apiClient', () => ({ __esModule: true, default: { get: apiGet, delete: apiDelete } }));
@@ -36,7 +37,9 @@ beforeAll(() => {
 beforeEach(() => {
   apiGet.mockReset();
   apiDelete.mockReset();
-  apiGet.mockResolvedValue({ data: tarefas });
+  // Estes testes conferem o destaque no cartao: abrem na visualizacao em cards (a lista compacta e o padrao).
+  localStorage.setItem(CHAVE_VISUALIZACAO_TAREFAS, 'cards');
+  apiGet.mockImplementation(async (url) => ({ data: url === API_ENDPOINTS.TAREFAS ? tarefas : [] }));
 });
 
 test('tarefa da lista e destacada, recebe foco e o pedido e consumido', async () => {
@@ -65,7 +68,7 @@ test('sem pedido a lista continua igual e Editar segue para a rota de edicao', a
   expect(screen.getByText('Revisar relatório').closest('.task-item')).toHaveTextContent('25/11/2026');
   expect(screen.getByText('Planilha').closest('.task-item')).toHaveTextContent('26/11/2026');
   expect(screen.queryByRole('status')).toBeNull();
-  fireEvent.click(screen.getAllByRole('button', { name: 'Editar' })[0]);
+  fireEvent.click(screen.getByRole('button', { name: 'Editar tarefa Revisar relatório' }));
   expect(screen.getByTestId('estado')).toHaveTextContent(`/admin/editar-tarefa/${T1}|null`);
   expect(apiDelete).not.toHaveBeenCalled();
 });

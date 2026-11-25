@@ -51,7 +51,6 @@ export default function Equipes() {
 
   useEffect(() => {
     carregarEquipes();
-    carregarUsers();
   }, []);
 
   useEffect(() => {
@@ -79,14 +78,6 @@ export default function Equipes() {
       setEquipes(res.data);
     } catch (err) {
       console.error("Erro ao buscar equipes", err);
-    }
-  };
-
-  const carregarUsers = async () => {
-    try {
-      await apiClient.get(API_ENDPOINTS.USERS);
-    } catch (err) {
-      console.error("Erro ao buscar usuários", err);
     }
   };
 

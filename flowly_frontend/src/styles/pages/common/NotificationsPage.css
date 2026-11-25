@@ -5,6 +5,12 @@
   position: relative;
   z-index: 10;
   color: var(--text-primary);
+  transition: margin-left 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Sidebar recolhida (78px): a central ocupa o espaco liberado (mesmo padrao das demais paginas). */
+.sidebar.collapsed ~ .notifications-page {
+  margin-left: 78px;
 }
 
 .notifications-header {
@@ -119,6 +125,10 @@
   .notifications-page {
     margin-left: 0;
     padding: 88px 16px 24px;
+  }
+
+  .sidebar.collapsed ~ .notifications-page {
+    margin-left: 0;
   }
 
   .notifications-header {
