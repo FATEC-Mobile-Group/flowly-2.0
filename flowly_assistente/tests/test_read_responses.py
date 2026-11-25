@@ -277,7 +277,9 @@ class TaskListReplyTests(ReadResponseTestCase):
                 options = min(count, 10)
                 header = f"Encontrei {count} tarefa{'s' if count != 1 else ''}."
                 self.assertTrue(display.startswith(f"{header} Opções para seleção: 1. Atividade 01, status pendente"))
-                self.assertTrue(spoken.startswith(f"{header} 1. Atividade 01, status pendente, equipe Equipe 01."))
+                # Fala com concordancia ("uma tarefa"; o navegador leria "1 tarefa" sem problema, mas "2" como "dois").
+                spoken_header = "Encontrei uma tarefa." if count == 1 else header
+                self.assertTrue(spoken.startswith(f"{spoken_header} 1. Atividade 01, status pendente, equipe Equipe 01."))
                 self.assertTrue(display.endswith(follow_up) and spoken.endswith(follow_up))
                 # Tela: as mesmas opcoes guardadas no estado, numeradas, com resumo; nada alem delas como opcao.
                 self.assertEqual([task["_id"] for task in state["tasks"]], [make_task(i)["_id"] for i in range(1, options + 1)])

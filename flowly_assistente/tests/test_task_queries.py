@@ -181,7 +181,9 @@ class QueryTests(unittest.TestCase):
         # Maior urgencia entre atrasadas e de hoje; empate de urgencia, a entrega mais antiga.
         self.assertEqual(query["mostImportant"]["descricao"], "Revisar relatório")
         text, spoken = task_queries.build_reply(query)
-        self.assertEqual(text, spoken)
+        # Tela com numerais; fala igual, so com a concordancia das contagens geradas ("duas tarefas").
+        self.assertEqual(spoken, text.replace("2 tarefas", "duas tarefas").replace("1 tarefa de hoje", "uma tarefa de hoje"))
+        self.assertIn("Hoje você tem duas tarefas: Revisar relatório, Preparar apresentação.", spoken)
         self.assertIn("Hoje você tem 2 tarefas: Revisar relatório, Preparar apresentação.", text)
         self.assertIn("1 tarefa de hoje já foi concluída.", text)
         self.assertIn("2 tarefas atrasadas.", text)
