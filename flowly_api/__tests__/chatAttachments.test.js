@@ -436,6 +436,19 @@ describe('anexos no chat da equipe', () => {
       nadaPublicado();
     });
 
+    test('legenda segue a mesma politica do texto: palavrao e odio dao 422, sem repetir o texto', async () => {
+      const palavrao = await enviar(ana, { legenda: 'Que merda, o print saiu cortado' });
+      expect(palavrao.status).toBe(422);
+      expect(palavrao.body).toEqual({ erro: expect.stringContaining('palavrões'), codigo: 'caption_blocked' });
+
+      const odio = await enviar(ana, { legenda: 'Morte aos judeus' });
+      expect(odio.status).toBe(422);
+      expect(odio.body).toEqual({ erro: expect.stringContaining('ódio'), codigo: 'caption_blocked' });
+      expect(JSON.stringify([palavrao.body, odio.body])).not.toMatch(/merda|judeus/i);
+      expect(chamadasVision()).toBe(0);
+      nadaPublicado();
+    });
+
     test('legenda longa demais: 400', async () => {
       expect((await enviar(ana, { legenda: 'a'.repeat(4001) })).status).toBe(400);
       nadaPublicado();

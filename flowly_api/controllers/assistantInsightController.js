@@ -16,6 +16,10 @@ const ALERT_REASON_LABELS = {
   offensive_language: 'Linguagem ofensiva detectada',
   offensive_language_excess: 'Linguagem ofensiva recorrente',
   blocked_message: 'Mensagem bloqueada por segurança',
+  moderation_profanity: 'Bloqueio por palavrão',
+  moderation_insult: 'Bloqueio por insulto',
+  moderation_threat: 'Bloqueio por ameaça',
+  moderation_hate: 'Bloqueio por discurso de ódio ou discriminação',
   possible_conflict: 'Possível conflito na conversa',
   conflict_language: 'Linguagem de conflito detectada',
   help_request: 'Pedido de ajuda ou dúvida recorrente',
@@ -123,7 +127,9 @@ const buildAggregation = async (adminId) => {
     createdAt: { $gte: chatSince },
   };
   const scopedAnd = (extraMatch) => ({ $and: [scopedTeamMatch, extraMatch] });
-  const behaviorSignals = ['offensive_language', 'offensive_language_excess', 'blocked_message', 'possible_conflict'];
+  // Ranking por usuario: so indicadores da propria pessoa (bloqueios dela, spam ou linguagem ofensiva na mensagem
+  // dela). Nivel, risco e sinais coletivos gravados na mensagem de quem falou por ultimo nao contam como conduta.
+  const isUserBlock = { $eq: ['$source', 'team_chat_blocked'] };
 
   const [totalMessages, sentimentRows, topicRows, spamAlerts, criticalAlerts, recent, teamRows, behaviorRows] = await Promise.all([
     AssistantInsight.countDocuments(scopedTeamMatch),
@@ -150,7 +156,7 @@ const buildAggregation = async (adminId) => {
     }))
       .sort({ createdAt: -1 })
       .limit(12)
-      .select('userId channelId teamId teamName content sentiment topics spamAlert alertLevel conflictRisk helpNeeded signals recommendation createdAt')
+      .select('userId channelId teamId teamName content source sentiment topics spamAlert alertLevel conflictRisk helpNeeded signals recommendation createdAt')
       .lean(),
     AssistantInsight.aggregate([
       { $match: chatMatch },
@@ -202,9 +208,9 @@ const buildAggregation = async (adminId) => {
           source: { $in: ['team_chat', 'team_chat_blocked'] },
           createdAt: { $gte: behaviorSince },
           $or: [
+            { source: 'team_chat_blocked' },
             { spamAlert: true },
-            { alertLevel: { $in: ['medium', 'high'] } },
-            { signals: { $in: behaviorSignals } },
+            { signals: 'offensive_language' },
           ],
         }),
       },
@@ -215,10 +221,19 @@ const buildAggregation = async (adminId) => {
             userId: '$userId',
           },
           count: { $sum: 1 },
-          highAlerts: { $sum: { $cond: [{ $eq: ['$alertLevel', 'high'] }, 1, 0] } },
+          highAlerts: { $sum: { $cond: [{ $and: [isUserBlock, { $eq: ['$alertLevel', 'high'] }] }, 1, 0] } },
           spamAlerts: { $sum: { $cond: ['$spamAlert', 1, 0] } },
-          avgConflictRisk: { $avg: '$conflictRisk' },
-          signals: { $addToSet: '$signals' },
+          // Risco individual so dos bloqueios (nas mensagens aprovadas o risco gravado e o da equipe).
+          avgConflictRisk: { $avg: { $cond: [isUserBlock, '$conflictRisk', null] } },
+          signals: {
+            $addToSet: {
+              $cond: [
+                isUserBlock,
+                '$signals',
+                { $filter: { input: { $ifNull: ['$signals', []] }, cond: { $eq: ['$$this', 'offensive_language'] } } },
+              ],
+            },
+          },
           lastAt: { $max: '$createdAt' },
         },
       },
@@ -251,10 +266,15 @@ const buildAggregation = async (adminId) => {
       ...(item.helpNeeded ? ['help_needed'] : []),
     ];
     const reasonLabels = formatSignals(reasonSignals, item.alertLevel);
+    // Alerta coletivo (tendencia da conversa) gravado na mensagem de quem falou por ultimo: nao e atribuido a ela.
+    const scope = item.source === 'team_chat_blocked' || item.spamAlert || (item.signals || []).includes('offensive_language')
+      ? 'user'
+      : 'team';
 
     return {
       ...item,
-      userName: userNames[String(item.userId)] || item.userId,
+      scope,
+      userName: scope === 'team' ? 'Indicador coletivo da equipe' : userNames[String(item.userId)] || item.userId,
       alertLevelLabel: formatAlertLevel(item.alertLevel),
       reasonLabels,
       reasonText: reasonLabels.join(', '),

@@ -1,9 +1,13 @@
+const { classifyText } = require('./nlpModerationService');
+
 const POSITIVE = new Set(['bom', 'boa', 'otimo', 'excelente', 'resolvido', 'concluido']);
 const NEGATIVE = new Set(['ruim', 'erro', 'falha', 'atrasado', 'problema', 'travou', 'urgente']);
 const SPAM = new Set(['spam', 'promocao', 'clique', 'oferta']);
 const CONFLICT = new Set(['briga', 'brigar', 'conflito', 'discussao', 'culpa', 'culpado', 'incompetente', 'irresponsavel']);
 const HELP = new Set(['ajuda', 'ajudar', 'duvida', 'travado', 'bloqueado', 'bloqueada', 'socorro', 'orientacao']);
-const OFFENSIVE = new Set(['idiota', 'burro', 'lixo']);
+// Linguagem ofensiva usa o mesmo criterio da moderacao do chat (palavra ambigua sozinha, como "lixo eletronico"
+// ou "o burro e um animal", nao conta). Vazio e tamanho nao sao categorias ofensivas.
+const OFFENSIVE_CATEGORIES = new Set(['insult', 'profanity', 'threat', 'hate']);
 
 const TOPIC_KEYWORDS = {
   tarefas: new Set(['tarefa', 'tarefas', 'backlog', 'status', 'cronometro']),
@@ -63,22 +67,22 @@ const mineText = (text) => {
     signals: [
       ...(hasAny(words, CONFLICT) ? ['conflict_language'] : []),
       ...(hasAny(words, HELP) ? ['help_request'] : []),
-      ...(hasAny(words, OFFENSIVE) ? ['offensive_language'] : []),
+      ...(OFFENSIVE_CATEGORIES.has(classifyText(text)) ? ['offensive_language'] : []),
     ],
   };
 };
 
-const analyzeConversationTrend = ({ currentInsight, recentInsights = [], blocked = false }) => {
+// Indicador COLETIVO da conversa da equipe (sentimento, conflito, ajuda), avaliado sobre mensagens aprovadas.
+// Nao gera sinais de conduta individual: a recorrencia de bloqueios de cada pessoa fica em individualModerationAlert.
+const analyzeConversationTrend = ({ currentInsight, recentInsights = [] }) => {
   const window = [currentInsight, ...recentInsights].filter(Boolean);
   const total = Math.max(window.length, 1);
   const negativeCount = window.filter((item) => item.sentiment === 'negativo').length;
-  const blockedCount = window.filter((item) => item.blocked || item.alertLevel === 'high').length + (blocked ? 1 : 0);
   const conflictCount = window.filter((item) => (item.signals || []).includes('conflict_language')).length;
   const helpCount = window.filter((item) => (item.signals || []).includes('help_request')).length;
-  const offensiveCount = window.filter((item) => (item.signals || []).includes('offensive_language')).length + blockedCount;
+  const offensiveCount = window.filter((item) => (item.signals || []).includes('offensive_language')).length;
 
   const signals = new Set(currentInsight.signals || []);
-  if (blocked || offensiveCount >= 2) signals.add('offensive_language_excess');
   if (conflictCount >= 2 || negativeCount / total >= 0.45) signals.add('possible_conflict');
   if (helpCount >= 2) signals.add('team_help_needed');
 
@@ -91,7 +95,7 @@ const analyzeConversationTrend = ({ currentInsight, recentInsights = [], blocked
   );
 
   const helpNeeded = signals.has('team_help_needed') || helpCount >= 2 || conflictRisk >= 0.65;
-  const alertLevel = blocked || conflictRisk >= 0.75 || offensiveCount >= 3
+  const alertLevel = conflictRisk >= 0.75 || offensiveCount >= 3
     ? 'high'
     : conflictRisk >= 0.5 || helpNeeded
       ? 'medium'
@@ -117,7 +121,30 @@ const analyzeConversationTrend = ({ currentInsight, recentInsights = [], blocked
   };
 };
 
+// Indicador INDIVIDUAL de moderacao: `occurrences` conta os bloqueios do mesmo usuario, na mesma equipe, nas
+// ultimas 24 horas, incluindo o atual (cada um uma vez). 1 = low (registrado, sem alerta), 2 = medium, 3+ = high.
+// Ameaca e odio (`severe`) sao high desde a primeira ocorrencia. O risco e a proporcao ate a 3a ocorrencia.
+const individualModerationAlert = ({ occurrences, severe = false }) => {
+  const count = Math.max(1, Number(occurrences) || 1);
+  const alertLevel = severe || count >= 3 ? 'high' : count === 2 ? 'medium' : 'low';
+  let recommendation = '';
+  if (severe) {
+    recommendation = 'Converse em particular com este usuario: a mensagem bloqueada foi uma ameaca ou discurso discriminatorio.';
+  } else if (alertLevel === 'high') {
+    recommendation = 'Converse em particular com este usuario: houve bloqueios recorrentes nas ultimas 24 horas.';
+  } else if (alertLevel === 'medium') {
+    recommendation = 'Observe a conduta deste usuario: houve mais de um bloqueio nas ultimas 24 horas.';
+  }
+  return {
+    alertLevel,
+    conflictRisk: severe ? 1 : Number(Math.min(count / 3, 1).toFixed(2)),
+    signals: count >= 2 ? ['offensive_language_excess'] : [],
+    recommendation,
+  };
+};
+
 module.exports = {
   mineText,
   analyzeConversationTrend,
+  individualModerationAlert,
 };
