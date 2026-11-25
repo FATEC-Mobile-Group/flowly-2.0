@@ -4,7 +4,22 @@
 
 export const QUERY_TYPES = new Set([
   'today', 'tomorrow', 'overdue', 'week', 'next_week', 'upcoming', 'pending', 'summary',
+  // Listagens de selecao (task_queries.selection_metadata): mesma lista numerada guardada pelo assistente.
+  'my_tasks', 'backlog', 'list_tasks', 'urgent',
 ]);
+
+// Consultas das proprias tarefas (as que aceitam "e amanhã?" e abrem em Minhas tarefas).
+export const PERSONAL_QUERY_TYPES = new Set([
+  'today', 'tomorrow', 'overdue', 'week', 'next_week', 'upcoming', 'pending', 'summary', 'my_tasks', 'urgent',
+]);
+
+// Rota que ja abre uma tarefa pelo ID (state.abrirTarefaId). Backlog: as tarefas nao estao em Minhas tarefas, entao
+// os cartoes ficam sem link (nenhuma rota segura existente para elas).
+export function taskRouteForQuery(type) {
+  if (type === 'list_tasks') return '/admin/tarefas';
+  if (type === 'backlog') return null;
+  return '/minhas-tarefas';
+}
 
 const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const OBJECT_ID_RE = /^[a-f\d]{24}$/i;
@@ -42,15 +57,37 @@ const parseTask = (raw) => {
     dataEntrega: validDay(raw.dataEntrega),
     urgencia: URGENCIES.has(raw.urgencia) ? raw.urgencia : null,
     equipe: text(raw.equipe),
+    responsavel: text(raw.responsavel),
   };
 };
+
+// Detalhes de uma tarefa (campo opcional `task`, task_queries.task_card). Sem titulo: null (fica so o texto).
+export function parseAssistantTask(raw) {
+  const task = parseTask(raw);
+  if (!task) return null;
+  const descricao = text(raw.descricao);
+  return {
+    ...task,
+    descricao: descricao ? descricao.slice(0, 2000) : null,
+    today: validDay(raw.today),
+    // So true quando o assistente comprovou que o responsavel e quem esta logado (ausente = nao comprovado).
+    atribuidaAoUsuario: raw.atribuidaAoUsuario === true,
+  };
+}
 
 // Consulta valida ou null. Itens sem titulo sao ignorados; total nunca fica menor que os itens recebidos.
 export function parseAssistantQuery(raw) {
   if (!raw || typeof raw !== 'object' || !QUERY_TYPES.has(raw.type)) return null;
   const today = validDay(raw.today);
   if (!today || !Array.isArray(raw.tasks)) return null;
-  const tasks = raw.tasks.map(parseTask).filter(Boolean);
+  // Posicao original de cada item: um item invalido no meio nao renumera os seguintes (a numeracao precisa ser a
+  // mesma da lista guardada pelo assistente para "detalhes da 3").
+  const tasks = raw.tasks
+    .map((item, index) => {
+      const task = parseTask(item);
+      return task ? { ...task, position: index + 1 } : null;
+    })
+    .filter(Boolean);
   const total = Number.isInteger(raw.total) && raw.total >= tasks.length ? raw.total : tasks.length;
   return { type: raw.type, today, total, tasks };
 }
@@ -68,6 +105,9 @@ export const formatDay = (day) => {
 // Prazo relativo ao "hoje" informado pelo proprio assistente (mesmo fuso usado no filtro).
 export function describeDeadline(task, today) {
   if (!task.dataEntrega) return 'Sem prazo';
+  // Concluida nao esta atrasada; sem a data de conclusao, so a data original do prazo.
+  if (task.status === 'concluido') return `Prazo era ${formatDay(task.dataEntrega)}`;
+  if (!today) return `Prazo ${formatDay(task.dataEntrega)}`;
   const diff = dayNumber(task.dataEntrega) - dayNumber(today);
   if (diff === 0) return 'Vence hoje';
   if (diff === 1) return 'Vence amanhã';
@@ -99,5 +139,7 @@ export function splitReplyText(replyText) {
   const start = full.search(/(^|\s)1\.\s/);
   if (start <= 0) return { intro: full, hint: '', listed: false };
   const hintMatch = full.slice(start).match(/Você pode pedir detalhes[^.]*\./);
-  return { intro: full.slice(0, start).trim(), hint: hintMatch ? hintMatch[0] : '', listed: true };
+  // "Encontrei 2 tarefas. Opções para seleção: 1. ..." -> so "Encontrei 2 tarefas." acima dos cartoes.
+  const intro = full.slice(0, start).trim().replace(/\s*Opções para seleção:$/, '');
+  return { intro, hint: hintMatch ? hintMatch[0] : '', listed: true };
 }

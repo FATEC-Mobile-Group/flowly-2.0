@@ -170,13 +170,18 @@ describe('estado inicial', () => {
 
     expect(sentCommands()).toEqual(['Minhas tarefas de hoje']);
     expect(document.querySelector('.voice-assistant-shell')).toHaveClass('has-conversation');
-    expect(screen.queryByRole('group', { name: 'Sugestões de perguntas' })).toBeNull();
+    // As sugestoes iniciais saem; depois de uma consulta das proprias tarefas ficam so as de outros periodos.
+    expect(screen.queryByRole('button', { name: 'Minhas tarefas de hoje' })).toBeNull();
+    const contexto = screen.getByRole('group', { name: 'Sugestões de perguntas' });
+    expect(within(contexto).getAllByRole('button').map((b) => b.textContent)).toEqual(['E hoje?', 'E amanhã?', 'E as atrasadas?']);
   });
 
-  test('admin nao recebe sugestoes de consultas que sao do perfil user', () => {
+  test('admin recebe so sugestoes de consultas do proprio perfil (nunca as do colaborador)', () => {
     authUtils.getUserType.mockReturnValue('admin');
     render(<VoiceAssistantPage />);
-    expect(screen.queryByRole('group', { name: 'Sugestões de perguntas' })).toBeNull();
+    const sugestoes = screen.getByRole('group', { name: 'Sugestões de perguntas' });
+    expect(within(sugestoes).getAllByRole('button').map((b) => b.textContent)).toEqual(['Listar tarefas', 'Listar equipes', 'Meu perfil']);
+    expect(screen.queryByRole('button', { name: 'Minhas tarefas de hoje' })).toBeNull();
   });
 });
 

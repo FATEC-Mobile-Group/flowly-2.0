@@ -4,7 +4,8 @@ import Sidebar from '../../components/layout/Sidebar';
 import { API_ENDPOINTS } from '../../config/config';
 import { authUtils } from '../../config/authUtils';
 import AssistantQueryResults from '../../components/assistant/AssistantQueryResults';
-import { parseAssistantQuery } from '../../utils/assistantQuery';
+import AssistantTaskDetails from '../../components/assistant/AssistantTaskDetails';
+import { PERSONAL_QUERY_TYPES, parseAssistantQuery, parseAssistantTask } from '../../utils/assistantQuery';
 import { pickPortugueseVoice } from '../../utils/voiceSelection';
 import { createVoiceTrace } from '../../utils/voiceDiagnostics';
 import '../../styles/pages/common/VoiceAssistantPage.css';
@@ -21,7 +22,13 @@ const initialMessages = [
 ];
 
 // Sugestoes do estado inicial (consultas somente leitura do perfil user); enviadas como um comando digitado.
+// Sugestoes so com consultas que o assistente ja entende para cada perfil (nenhum comando novo, nenhuma escrita).
 const SUGGESTIONS = ['Minhas tarefas de hoje', 'O que está atrasado?', 'Como está meu dia?'];
+const ADMIN_SUGGESTIONS = ['Listar tarefas', 'Listar equipes', 'Meu perfil'];
+// Depois dos detalhes de uma tarefa (ela fica escolhida no assistente): perguntas sobre ela.
+const TASK_SUGGESTIONS = ['Qual é o prazo?', 'Qual é a urgência?', 'Quem é o responsável?', 'Qual é o status?'];
+// Depois de uma consulta das proprias tarefas: outros periodos (nunca depois do backlog ou da listagem do admin).
+const PERIOD_SUGGESTIONS = ['E hoje?', 'E amanhã?', 'E as atrasadas?'];
 // Distancia do fim do historico ate a qual uma mensagem nova acompanha a conversa automaticamente.
 const NEAR_BOTTOM_PX = 80;
 
@@ -609,8 +616,20 @@ function VoiceAssistantPage() {
       traceRef.current.mark('resposta');
       const reply = payload.reply_text || payload.message || 'Resposta recebida.';
       // Metadados da consulta (opcional): so com resposta ok e formato valido; senao fica so o texto.
-      const query = payload.ok ? parseAssistantQuery(payload.query) : null;
-      addMessage('assistant', reply, { error: !payload.ok, ...(query ? { query } : {}) });
+      // Cartoes so em leituras: resposta ligada a uma operacao (confirmacao, andamento, resultado incerto) fica sempre
+      // em texto, para nenhum aviso obrigatorio sumir atras de um cartao.
+      const conversationStatus = payload?.conversation?.status;
+      const cardsAllowed = payload.ok && !payload?.conversation?.operation_id
+        && !CONFIRMATION_PHASES[conversationStatus] && !TERMINAL_OPERATION_STATUSES.has(conversationStatus);
+      const query = cardsAllowed ? parseAssistantQuery(payload.query) : null;
+      // Detalhes estruturados (opcional): sem eles, o texto continua sendo a resposta.
+      const task = cardsAllowed ? parseAssistantTask(payload.task) : null;
+      addMessage('assistant', reply, {
+        error: !payload.ok,
+        ...(query ? { query } : {}),
+        ...(task ? { task } : {}),
+        commandKey: typeof payload?.command?.key === 'string' ? payload.command.key : null,
+      });
       // Resposta tardia (depois do standby ou de outra conversa) nao mexe na confirmacao mostrada.
       if (request.muted || request.conversationId !== conversationIdRef.current) return;
       applyConfirmation(payload);
@@ -1068,7 +1087,21 @@ function VoiceAssistantPage() {
   const hintId = interactionHint ? 'voice-interaction-hint' : undefined;
   // Sem conversa ainda: estrela em destaque e sugestoes; com conversa, o historico e o principal.
   const hasConversation = messages.some((message) => message.id !== 'welcome');
-  const showSuggestions = !hasConversation && authUtils.getUserType() === 'user';
+  // Sugestoes: no inicio, as do perfil; depois, so as do contexto da ultima resposta (detalhes -> perguntas sobre a
+  // tarefa; consulta das proprias tarefas -> outros periodos). Nunca com confirmacao na tela, escuta ou pedido ativo.
+  const userType = authUtils.getUserType();
+  const lastMessage = messages[messages.length - 1];
+  let suggestions = [];
+  if (!hasConversation) {
+    if (userType === 'user') suggestions = SUGGESTIONS;
+    else if (userType === 'admin') suggestions = ADMIN_SUGGESTIONS;
+  } else if (lastMessage?.role === 'assistant' && !lastMessage.error) {
+    if (lastMessage.task || lastMessage.commandKey === 'task_details') suggestions = TASK_SUGGESTIONS;
+    else if (userType === 'user' && lastMessage.query && PERSONAL_QUERY_TYPES.has(lastMessage.query.type)) {
+      suggestions = PERIOD_SUGGESTIONS;
+    }
+  }
+  const showSuggestions = suggestions.length > 0 && !confirmation && mic === 'idle' && !resuming;
 
   return (
     <div className="admin-page voice-assistant-page">
@@ -1100,12 +1133,14 @@ function VoiceAssistantPage() {
               {messages.map((message) => (
                 <article
                   key={message.id}
-                  className={`voice-message ${message.role} ${message.error ? 'error' : ''} ${message.query ? 'has-query' : ''}`}
+                  className={`voice-message ${message.role} ${message.error ? 'error' : ''} ${message.query || message.task ? 'has-query' : ''}`}
                 >
                   <span className="voice-message-author">
                     {message.role === 'user' ? 'Você' : 'Assistente'}
                   </span>
-                  {message.query ? (
+                  {message.task ? (
+                    <AssistantTaskDetails task={message.task} replyText={message.text} />
+                  ) : message.query ? (
                     <AssistantQueryResults query={message.query} replyText={message.text} />
                   ) : (
                     <p className="voice-message-text">{message.text}</p>
@@ -1113,8 +1148,12 @@ function VoiceAssistantPage() {
                 </article>
               ))}
               {showSuggestions && (
-                <div className="voice-suggestions" role="group" aria-label="Sugestões de perguntas">
-                  {SUGGESTIONS.map((suggestion) => (
+                <div
+                  className={`voice-suggestions ${hasConversation ? 'contextual' : ''}`}
+                  role="group"
+                  aria-label="Sugestões de perguntas"
+                >
+                  {suggestions.map((suggestion) => (
                     <button
                       key={suggestion}
                       type="button"
