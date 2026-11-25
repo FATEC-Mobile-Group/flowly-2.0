@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Link, useInRouterContext } from 'react-router-dom';
+import { authUtils } from '../../config/authUtils';
+import { taskRouteFor } from '../../utils/navigationRequests';
 import {
   STATUS_LABELS,
   URGENCY_LABELS,
@@ -7,10 +9,11 @@ import {
   isOverdue,
   splitReplyText,
   summaryCounts,
+  taskRouteForQuery,
 } from '../../utils/assistantQuery';
 
 const COLLAPSED_LIMIT = 5;
-const MY_TASKS_ROUTE = '/minhas-tarefas';
+const ALL_TASKS_LABELS = { '/minhas-tarefas': 'Abrir Minhas tarefas', '/admin/tarefas': 'Abrir Tarefas' };
 
 // Resultado de uma consulta de tarefas dentro da mensagem do assistente: introducao do reply_text, indicadores do
 // resumo (quando completos), lista compacta e navegacao para Minhas tarefas. So dados reais da resposta; apenas
@@ -26,6 +29,14 @@ function AssistantQueryResults({ query, replyText }) {
   const missing = query.total - query.tasks.length;
   // So encurta o texto quando a lista realmente vai aparecer nos cartoes.
   const introOnly = listed && query.tasks.length > 0;
+  // Rota que ja abre a tarefa pelo ID; sem rota segura (backlog), so os dados.
+  const userType = authUtils.getUserType();
+  // "Mais urgentes" vem da lista aberta, que pode ser do backlog (colaborador) ou a listagem geral (admin): rota do
+  // perfil, e para o colaborador so com responsavel (as listas dele so tem as proprias tarefas ou o backlog sem dono).
+  const route = inRouter ? (query.type === 'urgent' ? taskRouteFor(userType) : taskRouteForQuery(query.type)) : null;
+  const linkable = (task) => Boolean(route && task.id)
+    && (query.type !== 'urgent' || userType === 'admin' || Boolean(task.responsavel));
+  const showOwner = query.type === 'list_tasks' || query.type === 'backlog';
 
   return (
     <div className="voice-query">
@@ -46,7 +57,7 @@ function AssistantQueryResults({ query, replyText }) {
             const overdue = isOverdue(task, query.today);
             return (
               <li key={task.id || `${task.titulo}-${index}`} className={`voice-query-item ${overdue ? 'overdue' : ''}`}>
-                {numbered && <span className="voice-query-index" aria-hidden="true">{index + 1}</span>}
+                {numbered && <span className="voice-query-index" aria-hidden="true">{task.position || index + 1}</span>}
                 <div className="voice-query-body">
                   <span className="voice-query-title">{task.titulo}</span>
                   <span className="voice-query-meta">
@@ -62,12 +73,15 @@ function AssistantQueryResults({ query, replyText }) {
                       </span>
                     )}
                     {task.equipe && <span className="voice-query-chip team">{task.equipe}</span>}
+                    {showOwner && (
+                      <span className="voice-query-chip owner">{task.responsavel || 'Sem responsável'}</span>
+                    )}
                   </span>
                 </div>
-                {inRouter && task.id && (
+                {linkable(task) && (
                   <Link
                     className="voice-query-open"
-                    to={MY_TASKS_ROUTE}
+                    to={route}
                     state={{ abrirTarefaId: task.id }}
                     aria-label={`Ver tarefa ${task.titulo}`}
                   >
@@ -80,7 +94,7 @@ function AssistantQueryResults({ query, replyText }) {
         </ol>
       )}
 
-      {(hidden > 0 || missing > 0 || (inRouter && query.tasks.length > 0)) && (
+      {(hidden > 0 || missing > 0 || (route && query.tasks.length > 0)) && (
         <div className="voice-query-footer">
           {hidden > 0 && (
             <button type="button" className="voice-query-more" onClick={() => setExpanded(true)}>
@@ -92,8 +106,8 @@ function AssistantQueryResults({ query, replyText }) {
               Mostrando {query.tasks.length} de {query.total} tarefas.
             </span>
           )}
-          {inRouter && query.tasks.length > 0 && (
-            <Link className="voice-query-all" to={MY_TASKS_ROUTE}>Abrir Minhas tarefas</Link>
+          {route && query.tasks.length > 0 && (
+            <Link className="voice-query-all" to={route}>{ALL_TASKS_LABELS[route]}</Link>
           )}
         </div>
       )}
