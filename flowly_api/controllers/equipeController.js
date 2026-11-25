@@ -250,7 +250,9 @@ exports.criarEquipeIdempotente = async (req, res) => {
 exports.listarEquipes = async (req, res) => {
   try {
     await garantirCriadorComoMembro(req.user.id);
-    const equipes = await Equipe.find({ membros: req.user.id }).populate('membros', 'nome email fotoPerfil');
+    // tipo (aditivo, o mesmo que GET /equipes/:id/membros ja devolve aos membros): permite ao Painel Geral contar
+    // colaboradores sem adivinhar quem e administrador.
+    const equipes = await Equipe.find({ membros: req.user.id }).populate('membros', 'nome email fotoPerfil tipo');
     res.json(await assinarFotosMembrosEquipes(equipes));
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao listar equipes' });

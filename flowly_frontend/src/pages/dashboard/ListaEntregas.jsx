@@ -1,21 +1,35 @@
 import React, { useId } from 'react';
 import { Link } from 'react-router-dom';
-import { validObjectId } from '../../utils/navigationRequests';
+import { linkTarefas } from './painelIndicadores';
 
-function ProximasEntregas({ itens, total, filtrando }) {
+// Uma secao de entregas do Painel Geral (atrasadas ou proximos 7 dias). "Ver detalhes" abre a tarefa na gestao
+// administrativa pelo contrato state.abrirTarefaId (detalhes abertos automaticamente, PR #62), mantendo a equipe
+// selecionada na URL. O total do recorte e o link para a lista filtrada completa ficam no rodape.
+function ListaEntregas({
+  titulo,
+  subtitulo,
+  tipo,
+  itens,
+  total,
+  equipeId,
+  destino,
+  vazio,
+  rotuloTotal,
+}) {
   const idTitulo = useId();
 
   return (
-    <section className="glass-card entregas-panel" aria-labelledby={idTitulo}>
-      <header className="painel-cabecalho">
-        <h3 id={idTitulo}>Próximas entregas</h3>
-        <p className="painel-subtitulo">Tarefas não concluídas, ordenadas pelo prazo</p>
+    <section className={`glass-card entregas-panel entregas-${tipo}`} aria-labelledby={idTitulo}>
+      <header className="painel-cabecalho painel-cabecalho--com-total">
+        <div>
+          <h3 id={idTitulo}>{titulo}</h3>
+          <p className="painel-subtitulo">{subtitulo}</p>
+        </div>
+        <span className={`entregas-total entregas-total--${tipo}`}>{total}</span>
       </header>
 
       {itens.length === 0 ? (
-        <p className="painel-vazio">
-          {filtrando ? 'Nenhuma tarefa em aberto nesta equipe.' : 'Nenhuma tarefa em aberto.'}
-        </p>
+        <p className="painel-vazio">{vazio}</p>
       ) : (
         <ol className="entregas-lista">
           {itens.map((item) => (
@@ -32,11 +46,11 @@ function ProximasEntregas({ itens, total, filtrando }) {
                 <time dateTime={item.dia}>{item.data}</time>
                 <span className="entrega-relativo">{item.prazo}</span>
               </div>
-              {item.atrasada && <span className="entrega-selo">Atrasada</span>}
-              {validObjectId(item.id) && (
+              {item.venceHoje && <span className="entrega-selo entrega-selo--hoje">Hoje</span>}
+              {item.abrivel && (
                 <Link
                   className="entrega-abrir"
-                  to="/admin/tarefas"
+                  to={linkTarefas(equipeId)}
                   state={{ abrirTarefaId: item.id }}
                   aria-label={`Ver detalhes de ${item.descricao}`}
                 >
@@ -48,14 +62,14 @@ function ProximasEntregas({ itens, total, filtrando }) {
         </ol>
       )}
 
-      {total > itens.length && (
+      {total > 0 && (
         <p className="entregas-resumo">
-          Mostrando {itens.length} de {total} tarefas não concluídas.{' '}
-          <Link to="/admin/tarefas">Ver tarefas</Link>
+          {total > itens.length ? `Mostrando ${itens.length} de ${total}. ` : ''}
+          <Link to={linkTarefas(equipeId, destino)}>{rotuloTotal}</Link>
         </p>
       )}
     </section>
   );
 }
 
-export default ProximasEntregas;
+export default ListaEntregas;

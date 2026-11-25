@@ -1,43 +1,46 @@
-import React, { useCallback, useEffect, useId, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import apiClient from "../../config/apiClient";
 import { Link } from 'react-router-dom';
 import { FaBell, FaSyncAlt } from 'react-icons/fa';
-import { Bar } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
+  ArcElement,
   Tooltip,
-  CategoryScale,
-  LinearScale,
-  BarElement
 } from 'chart.js';
 import Sidebar from "../../components/layout/Sidebar";
 import { useFotoPerfil } from "../../components/layout/useFotoPerfil";
 import { API_ENDPOINTS } from "../../config/config";
 import RankingEquipes from "./RankingEquipes";
 import IndicadoresPainel from "./IndicadoresPainel";
-import ProximasEntregas from "./ProximasEntregas";
+import DistribuicaoTarefas from "./DistribuicaoTarefas";
+import ListaEntregas from "./ListaEntregas";
+import PontosAtencao from "./PontosAtencao";
 import { useCoresDoTema } from "./useCoresDoTema";
 import {
-  calcularIndicadores,
   chaveDiaLocal,
-  contarPorStatus,
   filtrarPorEquipe,
   idDaEquipe,
-  listarProximasEntregas,
   ordenarEquipesPorNome
 } from "./painelGeralUtils";
+import {
+  DESTINOS,
+  calcularPainel,
+  listarAtrasadas,
+  listarPontosAtencao,
+  listarProximosSeteDias,
+  periodoProximosSeteDias,
+} from "./painelIndicadores";
 import "../../styles/pages/dashboard/DashboardGeral.css";
 import "../../styles/pages/admin/DashboardAdmin.css";
 
-ChartJS.register(
-  BarElement,
-  Tooltip,
-  CategoryScale,
-  LinearScale
-);
+// Rosca da distribuicao: so o arco e o tooltip (sem Legend: a legenda e a lista acessivel ao lado).
+ChartJS.register(ArcElement, Tooltip);
 
-const CORES_STATUS = ['rgba(255, 51, 102, 0.8)', 'rgba(251, 192, 45, 0.8)', 'rgba(0, 212, 141, 0.8)'];
 const AVISO_EQUIPE_INDISPONIVEL = 'A equipe selecionada não está mais disponível. Mostrando todas as equipes.';
+
+// GET /tarefas?resumo=1: so os campos dos indicadores, sem URLs assinadas de anexos. Um backend que ainda nao
+// conhece o parametro o ignora e devolve a lista completa, que tem os mesmos campos (e mais): o painel funciona igual.
+const PARAMETROS_TAREFAS = { resumo: 1 };
 
 function DashboardGeral() {
   const [equipes, setEquipes] = useState([]);
@@ -65,7 +68,7 @@ function DashboardGeral() {
     try {
       const [resEquipes, resTarefas] = await Promise.all([
         apiClient.get(API_ENDPOINTS.EQUIPES, { signal: controle.signal }),
-        apiClient.get(API_ENDPOINTS.TAREFAS, { signal: controle.signal }),
+        apiClient.get(API_ENDPOINTS.TAREFAS, { signal: controle.signal, params: PARAMETROS_TAREFAS }),
       ]);
       if (controle.signal.aborted) return;
       if (!Array.isArray(resEquipes?.data) || !Array.isArray(resTarefas?.data)) {
@@ -107,7 +110,7 @@ function DashboardGeral() {
     carregarDados();
   };
 
-  const filtro = filtrarPorEquipe(equipes, tarefas, equipeId);
+  const filtro = useMemo(() => filtrarPorEquipe(equipes, tarefas, equipeId), [equipes, tarefas, equipeId]);
   const filtrando = Boolean(filtro.equipeId);
   const selecaoIndisponivel = Boolean(equipeId) && !filtrando;
 
@@ -124,20 +127,15 @@ function DashboardGeral() {
     setAvisoFiltro('');
   };
 
+  // Tudo calculado sobre a mesma base carregada; trocar a equipe nao consulta a API.
   const hoje = chaveDiaLocal(new Date());
-  const indicadores = calcularIndicadores(filtro.equipes, filtro.tarefas, hoje);
-  const entregas = listarProximasEntregas(filtro.tarefas, hoje);
+  const indicadores = useMemo(() => calcularPainel(filtro.equipes, filtro.tarefas, hoje), [filtro, hoje]);
+  const atrasadas = useMemo(() => listarAtrasadas(filtro.tarefas, hoje), [filtro, hoje]);
+  const proximas = useMemo(() => listarProximosSeteDias(filtro.tarefas, hoje), [filtro, hoje]);
+  const pontos = useMemo(() => listarPontosAtencao(indicadores, { filtrando }), [indicadores, filtrando]);
+  const periodo = periodoProximosSeteDias(hoje);
   const opcoesEquipes = ordenarEquipesPorNome(equipes).filter((equipe) => idDaEquipe(equipe));
-
-  const dadosGeraisBar = {
-    labels: ['Pendente', 'Em Andamento', 'Concluído'],
-    datasets: [{
-      label: 'Quantidade de Tarefas',
-      data: contarPorStatus(filtro.tarefas),
-      backgroundColor: CORES_STATUS,
-      borderRadius: 6
-    }]
-  };
+  const equipeSelecionada = filtrando ? filtro.equipes[0]?.nome || 'Equipe sem nome' : null;
 
   return (
   <div className="admin-page">
@@ -145,22 +143,9 @@ function DashboardGeral() {
 
     <main className="dashboard-geral">
       <header className="dashboard-header">
-        <div className="painel-filtros">
-          <div className="filtro-equipe">
-            <label htmlFor={idFiltro}>Equipe</label>
-            <select id={idFiltro} value={filtro.equipeId} onChange={escolherEquipe} disabled={estado !== 'pronto'}>
-              <option value="">Todas as equipes</option>
-              {opcoesEquipes.map((equipe) => (
-                <option key={idDaEquipe(equipe)} value={idDaEquipe(equipe)}>
-                  {equipe.nome || 'Equipe sem nome'}
-                </option>
-              ))}
-            </select>
-          </div>
-          <button type="button" className="botao-atualizar" onClick={carregarDados} disabled={atualizando}>
-            <FaSyncAlt aria-hidden="true" className={atualizando ? 'girando' : undefined} />
-            <span>{atualizando ? 'Atualizando…' : 'Atualizar'}</span>
-          </button>
+        <div className="painel-titulo">
+          <h2>Painel Geral</h2>
+          <p>Situação das equipes e tarefas sob sua gestão, com atalhos para as listas filtradas.</p>
         </div>
         <div className="header-profile">
           <Link to="/notificacoes" className="notification-bell" aria-label="Ver notificações">
@@ -180,6 +165,29 @@ function DashboardGeral() {
         </div>
       </header>
 
+      <div className="painel-filtros">
+        <div className="filtro-equipe">
+          <label htmlFor={idFiltro}>Equipe</label>
+          <select id={idFiltro} value={filtro.equipeId} onChange={escolherEquipe} disabled={estado !== 'pronto'}>
+            <option value="">Todas as equipes</option>
+            {opcoesEquipes.map((equipe) => (
+              <option key={idDaEquipe(equipe)} value={idDaEquipe(equipe)}>
+                {equipe.nome || 'Equipe sem nome'}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button type="button" className="botao-atualizar" onClick={carregarDados} disabled={atualizando}>
+          <FaSyncAlt aria-hidden="true" className={atualizando ? 'girando' : undefined} />
+          <span>{atualizando ? 'Atualizando…' : 'Atualizar'}</span>
+        </button>
+        {estado === 'pronto' && (
+          <p className="painel-escopo">
+            {equipeSelecionada ? <>Mostrando a equipe <strong>{equipeSelecionada}</strong></> : 'Mostrando todas as equipes'}
+          </p>
+        )}
+      </div>
+
       {avisoFiltro && <p className="aviso-filtro" role="status">{avisoFiltro}</p>}
 
       {estado === 'erro' ? (
@@ -196,52 +204,50 @@ function DashboardGeral() {
             indicadores={estado === 'pronto' ? indicadores : null}
             filtrando={filtrando}
             totalEquipes={equipes.length}
+            equipeId={filtro.equipeId}
           />
 
           {estado === 'carregando' ? (
             <p className="painel-status" role="status">Carregando dados do painel…</p>
           ) : (
-            <div className="dashboard-grid">
-              <div className="glass-card big-chart">
-                <header className="painel-cabecalho">
-                  <h3>Visão Geral de Produtividade</h3>
-                </header>
-                {/* Altura fixa no contêiner: o gráfico não acompanha a altura do ranking. */}
-                <div className="chart-area">
-                  {filtro.tarefas.length === 0 ? (
-                    <p className="painel-vazio chart-vazio">
-                      {filtrando ? 'Esta equipe ainda não tem tarefas.' : 'Nenhuma tarefa nas suas equipes.'}
-                    </p>
-                  ) : (
-                    <Bar
-                      data={dadosGeraisBar}
-                      options={{
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                          // Outras telas registram o Legend no Chart.js global: aqui ele fica desligado.
-                          legend: { display: false },
-                          title: { display: false }
-                        },
-                        scales: {
-                          x: { ticks: { color: cores.texto }, grid: { color: cores.grade } },
-                          y: {
-                            beginAtZero: true,
-                            title: { display: true, text: 'Volume', color: cores.texto },
-                            ticks: { color: cores.texto, stepSize: 1 },
-                            grid: { color: cores.grade }
-                          }
-                        }
-                      }}
-                    />
-                  )}
-                </div>
+            <>
+              <div className="dashboard-grid">
+                <DistribuicaoTarefas
+                  indicadores={indicadores}
+                  equipeId={filtro.equipeId}
+                  filtrando={filtrando}
+                  cores={cores}
+                />
+                <RankingEquipes key={filtro.equipeId || 'todas'} equipes={filtro.equipes} tarefas={filtro.tarefas} />
               </div>
 
-              <RankingEquipes key={filtro.equipeId || 'todas'} equipes={filtro.equipes} tarefas={filtro.tarefas} />
+              <div className="dashboard-grid dashboard-grid--entregas">
+                <ListaEntregas
+                  titulo="Entregas atrasadas"
+                  subtitulo="Não concluídas com prazo antes de hoje, das mais antigas para as mais recentes"
+                  tipo="atrasadas"
+                  itens={atrasadas.itens}
+                  total={atrasadas.total}
+                  equipeId={filtro.equipeId}
+                  destino={DESTINOS.atrasadas}
+                  vazio={filtrando ? 'Nenhuma tarefa atrasada nesta equipe.' : 'Nenhuma tarefa atrasada.'}
+                  rotuloTotal="Ver todas as atrasadas"
+                />
+                <ListaEntregas
+                  titulo="Próximas entregas"
+                  subtitulo={`Não concluídas com prazo de hoje (${periodo.inicio}) até ${periodo.fim}`}
+                  tipo="proximas"
+                  itens={proximas.itens}
+                  total={proximas.total}
+                  equipeId={filtro.equipeId}
+                  destino={DESTINOS.proximos7}
+                  vazio={filtrando ? 'Nenhuma entrega nos próximos 7 dias nesta equipe.' : 'Nenhuma entrega nos próximos 7 dias.'}
+                  rotuloTotal="Ver entregas dos próximos 7 dias"
+                />
+              </div>
 
-              <ProximasEntregas itens={entregas.itens} total={entregas.total} filtrando={filtrando} />
-            </div>
+              <PontosAtencao pontos={pontos} equipeId={filtro.equipeId} />
+            </>
           )}
         </>
       )}

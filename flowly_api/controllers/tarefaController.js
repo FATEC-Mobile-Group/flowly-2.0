@@ -37,6 +37,24 @@ const assinarAnexosTarefa = async (tarefa) => {
 
 const assinarAnexosTarefas = (tarefas) => Promise.all(tarefas.map(assinarAnexosTarefa));
 
+// Regra oficial do backlog disponivel: tarefa sem responsavel e pendente. `user: null` casa com nulo e com o campo
+// ausente (semantica do MongoDB). Status AUSENTE conta como pendente porque o Mongoose aplica o padrao do schema
+// ('pendente') ao carregar o documento: e assim que a gestao administrativa e os clientes ja enxergam essas tarefas.
+// Status null EXPLICITO nao e elegivel ($exists: false nao casa com null gravado; o Mongoose mantem o null), nem
+// em andamento, concluido ou qualquer outro valor.
+// A mesma condicao vale para a listagem e para a gravacao condicional de quem assume a tarefa.
+const condicaoBacklogDisponivel = () => ({
+  user: null,
+  $or: [{ status: 'pendente' }, { status: { $exists: false } }],
+});
+// Mesma semantica na conferencia previa: undefined = campo ausente (objeto sem o padrao aplicado); null nao entra.
+const tarefaNoBacklog = (tarefa) => !tarefa.user && (tarefa.status === 'pendente' || tarefa.status === undefined);
+
+// GET /tarefas?resumo=1: so os campos dos indicadores do Painel Geral, sem anexos (nem URLs assinadas), detalhes,
+// subtarefas ou tags. Qualquer outro valor do parametro (ausente, repetido, "true") devolve a lista completa de sempre.
+const CAMPOS_RESUMO_TAREFA = '_id descricao status urgencia dataEntrega equipe user tempoGasto createdAt';
+const pedidoResumido = (valor) => valor === '1';
+
 const MSG_CONFLITO_TAREFA = 'A tarefa foi alterada por outra operação ao mesmo tempo. Tente novamente.';
 
 const MSG_CRONOMETRO_INCONSISTENTE = 'O cronômetro desta tarefa está inconsistente: o horário de início está ausente, '
@@ -339,6 +357,16 @@ exports.listarTarefas = async (req, res) => {
     const filtro = await montarFiltroTarefasAcessiveis(req, filtroBase);
     if (!filtro) {
       return res.json([]);
+    }
+
+    // Mesmo filtro e mesma autorizacao nos dois modos: o resumo so reduz os campos devolvidos.
+    if (pedidoResumido(req.query.resumo)) {
+      const resumo = await Tarefa.find(filtro)
+        .select(CAMPOS_RESUMO_TAREFA)
+        .populate('user', 'nome')
+        .populate('equipe', 'nome')
+        .sort({ urgencia: -1, dataEntrega: 1 });
+      return res.json(resumo.map((tarefa) => (typeof tarefa.toObject === 'function' ? tarefa.toObject() : tarefa)));
     }
 
     const tarefas = await Tarefa.find(filtro)
@@ -787,7 +815,8 @@ exports.minhasTarefas = async (req, res) => {
   }
 };
 
-// USER: backlog de tarefas sem responsável (apenas equipes do usuário)
+// USER: backlog disponivel (pendentes e sem responsavel), apenas das equipes de que o usuario e membro.
+// Tarefas sem responsavel em andamento ou concluidas continuam na gestao administrativa, mas nao aqui.
 exports.listarBacklog = async (req, res) => {
   try {
     const minhasEquipes = await Equipe.find({ membros: req.user.id }).select('_id');
@@ -799,7 +828,7 @@ exports.listarBacklog = async (req, res) => {
 
     const tarefas = await Tarefa.find({
       equipe: { $in: equipeIds },
-      $or: [{ user: null }, { user: { $exists: false } }],
+      ...condicaoBacklogDisponivel(),
     })
       .populate('equipe', 'nome')
       .sort({ urgencia: -1, dataEntrega: 1 });
@@ -809,6 +838,27 @@ exports.listarBacklog = async (req, res) => {
     console.error('Erro ao buscar backlog:', err);
     res.status(500).json({ erro: 'Erro ao buscar backlog' });
   }
+};
+
+const MSG_TAREFA_JA_ATRIBUIDA = 'Esta tarefa já possui responsável';
+const MSG_TAREFA_FORA_DO_BACKLOG = 'Esta tarefa não está disponível no backlog: apenas tarefas pendentes e sem responsável podem ser assumidas.';
+
+// Gravacao condicional recusada: rele a tarefa so para escolher a mensagem, DENTRO do mesmo escopo autorizado
+// (equipes acessiveis a quem pede e a mesma equipe lida antes). Se a tarefa foi excluida, mudou de equipe ou deixou de
+// ser acessivel, nada sobre ela e revelado: resposta generica de conflito. Retorna o codigo do motivo.
+const MOTIVO_RECUSA = {
+  ja_atribuida: { codigo: 'tarefa_ja_atribuida', erro: MSG_TAREFA_JA_ATRIBUIDA },
+  fora_do_backlog: { codigo: 'tarefa_fora_do_backlog', erro: MSG_TAREFA_FORA_DO_BACKLOG },
+  alterada: { codigo: 'tarefa_alterada', erro: MSG_CONFLITO_TAREFA },
+};
+const motivoAtribuicaoRecusada = async (req, tarefa, session) => {
+  const filtro = await montarFiltroTarefasAcessiveis(req, { _id: tarefa._id, equipe: tarefa.equipe }, session);
+  if (!filtro) return MOTIVO_RECUSA.alterada;
+  const consulta = Tarefa.findOne(filtro).select('user status');
+  const atual = await (session ? consulta.session(session) : consulta);
+  if (!atual) return MOTIVO_RECUSA.alterada;
+  if (atual.user) return MOTIVO_RECUSA.ja_atribuida;
+  return tarefaNoBacklog(atual) ? MOTIVO_RECUSA.alterada : MOTIVO_RECUSA.fora_do_backlog;
 };
 
 // USER: atribuir tarefa do backlog para si mesmo
@@ -823,7 +873,10 @@ exports.atribuirParaMim = async (req, res) => {
     }
 
     if (tarefa.user) {
-      return res.status(409).json({ erro: 'Esta tarefa já possui responsável' });
+      return res.status(409).json({ erro: MSG_TAREFA_JA_ATRIBUIDA });
+    }
+    if (!tarefaNoBacklog(tarefa)) {
+      return res.status(409).json({ erro: MSG_TAREFA_FORA_DO_BACKLOG });
     }
 
     const equipe = await Equipe.findById(tarefa.equipe).select('membros createdBy nome');
@@ -839,15 +892,15 @@ exports.atribuirParaMim = async (req, res) => {
       return res.status(403).json({ erro: 'Você não pertence à equipe desta tarefa' });
     }
 
-    // Atribuicao condicional: so grava se a tarefa ainda estiver sem responsavel no momento da gravacao. Antes,
-    // um save() sem condicao deixava duas requisicoes simultaneas "assumirem" a mesma tarefa (a ultima vencia).
-    // Quem perde a corrida recebe o mesmo 409 de "ja tem responsavel", sem log nem notificacao.
+    // Atribuicao condicional: so grava se, no momento da gravacao, a tarefa ainda estiver no backlog (sem
+    // responsavel e pendente). Quem perde a corrida - para outra atribuicao ou para uma mudanca de status - recebe
+    // 409, sem log nem notificacao. O status nunca e alterado aqui.
     const atribuicao = await Tarefa.updateOne(
-      { _id: tarefa._id, equipe: tarefa.equipe, user: null },
+      { _id: tarefa._id, equipe: tarefa.equipe, ...condicaoBacklogDisponivel() },
       { $set: { user: req.user.id } }
     );
     if (!atribuicao || atribuicao.matchedCount !== 1) {
-      return res.status(409).json({ erro: 'Esta tarefa já possui responsável' });
+      return res.status(409).json({ erro: (await motivoAtribuicaoRecusada(req, tarefa)).erro });
     }
 
     await logActivity(
@@ -895,7 +948,9 @@ const ROTA_ATRIBUIR = '/api/tarefas/:id/atribuir-para-mim';
 const MENSAGENS_ATRIBUIR = {
   tarefa_sem_equipes: { status: 404, erro: 'Tarefa nÃ£o encontrada' },
   tarefa_nao_encontrada: { status: 404, erro: 'Tarefa não encontrada' },
-  tarefa_ja_atribuida: { status: 409, erro: 'Esta tarefa já possui responsável' },
+  tarefa_ja_atribuida: { status: 409, erro: MSG_TAREFA_JA_ATRIBUIDA },
+  tarefa_fora_do_backlog: { status: 409, erro: MSG_TAREFA_FORA_DO_BACKLOG },
+  tarefa_alterada: { status: 409, erro: MSG_CONFLITO_TAREFA },
   equipe_nao_encontrada: { status: 400, erro: 'Equipe da tarefa não encontrada' },
   fora_da_equipe: { status: 403, erro: 'Você não pertence à equipe desta tarefa' },
 };
@@ -954,12 +1009,15 @@ exports.atribuirParaMimIdempotente = async (req, res) => {
         if (!filtro) {
           throw new IdempotentRequestError(404, 'tarefa_sem_equipes');
         }
-        const tarefa = await Tarefa.findOne(filtro).select('equipe createdBy descricao user').session(session);
+        const tarefa = await Tarefa.findOne(filtro).select('equipe createdBy descricao user status').session(session);
         if (!tarefa) {
           throw new IdempotentRequestError(404, 'tarefa_nao_encontrada');
         }
         if (tarefa.user) {
           throw new IdempotentRequestError(409, 'tarefa_ja_atribuida');
+        }
+        if (!tarefaNoBacklog(tarefa)) {
+          throw new IdempotentRequestError(409, 'tarefa_fora_do_backlog');
         }
         const equipe = await Equipe.findById(tarefa.equipe).select('membros createdBy nome').session(session);
         if (!equipe) {
@@ -969,14 +1027,16 @@ exports.atribuirParaMimIdempotente = async (req, res) => {
           throw new IdempotentRequestError(403, 'fora_da_equipe');
         }
 
-        // Atribuicao condicional: so se a tarefa ainda estiver sem responsavel no momento da gravacao.
+        // Atribuicao condicional: so se a tarefa ainda estiver no backlog (sem responsavel e pendente) no momento
+        // da gravacao, com a mesma condicao do fluxo legado.
         const atribuicao = await Tarefa.updateOne(
-          { _id: tarefa._id, equipe: tarefa.equipe, user: null },
+          { _id: tarefa._id, equipe: tarefa.equipe, ...condicaoBacklogDisponivel() },
           { $set: { user: usuarioId } },
           { session }
         );
         if (!atribuicao || atribuicao.matchedCount !== 1) {
-          throw new IdempotentRequestError(409, 'tarefa_ja_atribuida');
+          const motivo = await motivoAtribuicaoRecusada(req, tarefa, session);
+          throw new IdempotentRequestError(409, motivo.codigo);
         }
 
         // Com session o log nao engole erro: se falhar, a atribuicao volta junto.

@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 
 // O canvas do Chart.js nao entende var(--...): as cores saem das variaveis do tema ja aplicadas no <html>.
 // Valores padrao = tema escuro do App.css, usados se a variavel ainda nao existir (ex.: testes sem CSS global).
-export const CORES_PADRAO = { texto: '#b0bec5', grade: 'rgba(255, 255, 255, 0.1)' };
+// claro: tema claro ativo (data-theme="light"), para escolher tons com contraste suficiente sobre fundo claro.
+export const CORES_PADRAO = { texto: '#b0bec5', grade: 'rgba(255, 255, 255, 0.1)', claro: false };
 
 export const lerCoresDoTema = () => {
   if (typeof window === 'undefined' || !document?.documentElement) return CORES_PADRAO;
@@ -11,6 +12,7 @@ export const lerCoresDoTema = () => {
   return {
     texto: ler('--text-secondary', CORES_PADRAO.texto),
     grade: ler('--border-color', CORES_PADRAO.grade),
+    claro: document.documentElement.getAttribute('data-theme') === 'light',
   };
 };
 
@@ -22,7 +24,9 @@ export function useCoresDoTema() {
   useEffect(() => {
     const atualizar = () => setCores((atuais) => {
       const novas = lerCoresDoTema();
-      return novas.texto === atuais.texto && novas.grade === atuais.grade ? atuais : novas;
+      return novas.texto === atuais.texto && novas.grade === atuais.grade && novas.claro === atuais.claro
+        ? atuais
+        : novas;
     });
     atualizar();
     const observador = new MutationObserver(atualizar);

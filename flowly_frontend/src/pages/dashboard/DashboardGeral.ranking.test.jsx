@@ -20,7 +20,7 @@ const grafico = vi.hoisted(() => ({ props: null }));
 vi.mock('react-chartjs-2', async () => {
   const { createElement } = await vi.importActual('react');
   return {
-    Bar: (props) => {
+    Doughnut: (props) => {
       grafico.props = props;
       return createElement('div', { 'data-testid': 'grafico-status' });
     },
@@ -68,7 +68,7 @@ const abrirPainel = async (dados) => {
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 };
 
-const painelRanking = () => screen.getByRole('region', { name: /Ranking de Equipes|Atividade das Equipes/ });
+const painelRanking = () => screen.getByRole('region', { name: 'Progresso das equipes' });
 const itensRanking = () => [...painelRanking().querySelectorAll('.ranking-list > li')];
 const nomesRanking = () => itensRanking().map((li) => li.querySelector('.ranking-nome').textContent);
 const botaoRanking = () => within(painelRanking()).queryByRole('button');
@@ -91,16 +91,21 @@ beforeEach(() => {
 });
 
 describe('ranking do Painel Geral', () => {
-  test('uma equipe: aparece com posicao, concluidas e percentual, sem botao de expandir', async () => {
-    await abrirPainel({ equipes: [equipe('a', 'Alfa')], tarefas: tarefasDe('a', { c: 1, p: 2 }) });
+  test('uma equipe: concluidas de total, barra e percentual, link para as tarefas da equipe, sem botao de expandir', async () => {
+    const ALFA = 'a'.repeat(24);
+    await abrirPainel({ equipes: [equipe(ALFA, 'Alfa')], tarefas: tarefasDe(ALFA, { c: 1, p: 2 }) });
 
-    expect(within(painelRanking()).getByRole('heading', { name: 'Ranking de Equipes' })).toBeInTheDocument();
+    expect(within(painelRanking()).getByRole('heading', { name: 'Progresso das equipes' })).toBeInTheDocument();
     expect(nomesRanking()).toEqual(['Alfa']);
     const [item] = itensRanking();
-    expect(item.querySelector('.ranking-medal')).toHaveTextContent('1');
-    expect(item).toHaveTextContent('1 concluída de 3');
+    // Inicial da equipe, nao posicao: a ordem organiza a lista, nao avalia desempenho.
+    expect(item.querySelector('.ranking-medal')).toHaveTextContent('A');
+    expect(item).toHaveTextContent('1 concluída de 3 · 0 em andamento · 2 pendentes');
     expect(item).toHaveTextContent('33%');
     expect(item.querySelector('.ranking-progresso > span')).toHaveStyle({ width: '33%' });
+    expect(within(item).getByRole('progressbar', { name: 'Progresso da equipe Alfa' })).toHaveAttribute('aria-valuenow', '33');
+    expect(within(item).getByRole('link', { name: 'Ver tarefas da equipe Alfa' })).toHaveAttribute('href', `/admin/tarefas?equipe=${ALFA}`);
+    expect(within(painelRanking()).getByRole('link', { name: 'Gerenciar todas as equipes' })).toHaveAttribute('href', '/admin');
     expect(botaoRanking()).toBeNull();
   });
 
@@ -117,8 +122,8 @@ describe('ranking do Painel Geral', () => {
 
     expect(itensRanking()).toHaveLength(14);
     expect(nomesRanking().at(-1)).toBe('Equipe 1');
-    expect(itensRanking().map((li) => li.querySelector('.ranking-medal').textContent))
-      .toEqual(Array.from({ length: 14 }, (_, i) => String(i + 1)));
+    // Sem numeracao de "posicao": so a inicial.
+    expect(itensRanking().map((li) => li.querySelector('.ranking-medal').textContent)).toEqual(Array(14).fill('E'));
     expect(botaoRanking()).toHaveTextContent('Mostrar menos');
     expect(botaoRanking()).toHaveAttribute('aria-expanded', 'true');
     // A lista completa fica no conteudo com altura limitada (CSS), dentro do proprio cartao.
@@ -140,22 +145,20 @@ describe('ranking do Painel Geral', () => {
     expect(botaoRanking()).toBeNull();
   });
 
-  test('nenhuma tarefa concluida: mostra a atividade das equipes, sem posicoes nem percentuais', async () => {
+  test('nenhuma tarefa concluida: mesmo formato de progresso (0%), ordem pelo volume e criterio explicado', async () => {
     const equipes = [equipe('a', 'Antiga'), equipe('b', 'Beta'), equipe('c', 'Gama')];
     const tarefas = [...tarefasDe('a', { p: 1 }), ...tarefasDe('b', { a: 1, p: 2 }), ...tarefasDe('c', { a: 2 })];
     await abrirPainel({ equipes, tarefas });
 
     const painel = painelRanking();
-    expect(within(painel).getByRole('heading', { name: 'Atividade das Equipes' })).toBeInTheDocument();
-    expect(within(painel).queryByRole('heading', { name: 'Ranking de Equipes' })).toBeNull();
-    expect(painel).toHaveTextContent('Nenhuma tarefa concluída ainda');
+    expect(within(painel).getByRole('heading', { name: 'Progresso das equipes' })).toBeInTheDocument();
+    expect(painel).toHaveTextContent('Nenhuma tarefa concluída ainda. Ordem pelo volume de tarefas.');
     expect(painel.querySelector('ol')).toBeNull();
     expect(nomesRanking()).toEqual(['Beta', 'Gama', 'Antiga']);
-    expect(itensRanking()[0]).toHaveTextContent('3 tarefas · 1 em andamento · 2 pendentes');
-    expect(itensRanking()[2]).toHaveTextContent('1 tarefa · 0 em andamento · 1 pendente');
+    expect(itensRanking()[0]).toHaveTextContent('0 concluídas de 3 · 1 em andamento · 2 pendentes');
+    expect(itensRanking()[2]).toHaveTextContent('0 concluídas de 1 · 0 em andamento · 1 pendente');
+    expect(itensRanking().map((li) => li.querySelector('.ranking-percentual').textContent)).toEqual(['0%', '0%', '0%']);
     expect(itensRanking().map((li) => li.querySelector('.ranking-medal').textContent)).toEqual(['B', 'G', 'A']);
-    expect(painel).not.toHaveTextContent('%');
-    expect(painel).not.toHaveTextContent('concluídas de');
   });
 
   test('empates no ranking seguem criterios fixos, nao a ordem da API', async () => {
@@ -201,7 +204,7 @@ describe('ranking do Painel Geral', () => {
     await abrirPainel({ equipes: [equipe('a', 'Alfa')], tarefas: [] });
 
     const painel = painelRanking();
-    expect(painel.querySelector('.ranking-vazio')).toHaveTextContent('Alfa ainda não tem tarefas.');
+    expect(painel.querySelector('.ranking-vazio')).toHaveTextContent('Alfa: sem tarefas.');
     expect(botaoRanking()).toBeNull();
     expect(painel).not.toHaveTextContent('equipe sem tarefas');
     expect(painel.querySelector('.ranking-sem-tarefas')).toBeNull();
@@ -289,48 +292,40 @@ describe('indicadores e grafico preservados', () => {
     return { equipes, tarefas };
   };
 
-  // Fase 2: "Equipes Operando" virou "Equipes Vinculadas" e o tempo passou de "646m" para horas e minutos;
-  // os calculos (contagem de equipes, total, concluidas e soma do tempo) continuam os mesmos.
+  // PR #63: rotulos novos ("Equipes vinculadas", "Tempo registrado"); os calculos de equipes, total,
+  // concluidas e soma do tempo continuam os mesmos.
   test('os indicadores mantem os mesmos calculos', async () => {
     await abrirPainel(dados());
 
-    expect(indicador('Equipes Vinculadas')).toBe('3');
-    expect(indicador('Total de Tarefas')).toBe('5');
-    expect(indicador('Tarefas Concluídas')).toBe('1');
-    expect(indicador('Tempo Investido')).toBe('10h 46min');
+    expect(indicador('Equipes vinculadas')).toBe('3');
+    expect(indicador('Total de tarefas')).toBe('5');
+    expect(indicador('Concluídas')).toBe('1');
+    expect(indicador('Tempo registrado')).toBe('10h 46min');
   });
 
-  test('o grafico recebe os mesmos dados, sem legenda e com altura controlada pelo conteiner', async () => {
+  test('o grafico recebe a distribuicao por status oficial, sem legenda do Chart.js e com altura pelo conteiner', async () => {
     await abrirPainel(dados());
 
-    expect(grafico.props.data).toEqual({
-      labels: ['Pendente', 'Em Andamento', 'Concluído'],
-      datasets: [{
-        label: 'Quantidade de Tarefas',
-        data: [3, 1, 1],
-        backgroundColor: ['rgba(255, 51, 102, 0.8)', 'rgba(251, 192, 45, 0.8)', 'rgba(0, 212, 141, 0.8)'],
-        borderRadius: 6,
-      }],
-    });
+    expect(grafico.props.data.labels).toEqual(['Pendente', 'Em andamento', 'Concluída']);
+    expect(grafico.props.data.datasets[0].data).toEqual([3, 1, 1]);
     expect(grafico.props.options).toMatchObject({
       responsive: true,
       maintainAspectRatio: false,
       plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } },
     });
     expect(screen.getByTestId('grafico-status').parentElement).toHaveClass('chart-area');
-    expect(screen.getByRole('heading', { name: 'Visão Geral de Produtividade' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Distribuição das tarefas' })).toBeInTheDocument();
   });
 
-  test('expandir o ranking nao altera os dados do grafico nem os indicadores', async () => {
+  test('expandir o progresso nao altera os dados do grafico nem os indicadores', async () => {
     await abrirPainel(quatorzeEquipes());
     const antes = grafico.props.data;
 
     fireEvent.click(botaoRanking());
 
     expect(grafico.props.data).toEqual(antes);
-    expect(indicador('Equipes Vinculadas')).toBe('14');
-    expect(indicador('Total de Tarefas')).toBe(String(quatorzeEquipes().tarefas.length));
+    expect(indicador('Equipes vinculadas')).toBe('14');
+    expect(indicador('Total de tarefas')).toBe(String(quatorzeEquipes().tarefas.length));
   });
 });
 
@@ -348,18 +343,18 @@ describe('contrato de layout do Painel Geral (CSS)', () => {
     .filter((s) => !s.startsWith('@'))
     .flatMap((s) => s.split(',').map((parte) => parte.trim()));
 
-  test('grafico e ranking em grade 2fr / 1fr, cada cartao com a propria altura', () => {
+  test('secoes lado a lado em duas colunas, empilhadas pela largura real do painel (container query)', () => {
     const grade = regra('.dashboard-geral .dashboard-grid');
 
     expect(grade).toMatch(/display:\s*grid/);
-    expect(grade).toMatch(/align-items:\s*start/);
-    expect(grade).toMatch(/grid-template-columns:\s*minmax\(0,\s*2fr\)\s*minmax\(\d+px,\s*1fr\)/);
+    expect(grade).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s*minmax\(0,\s*1fr\)/);
+    expect(regra('.dashboard-geral')).toMatch(/container-type:\s*inline-size/);
+    expect(estilos).toMatch(/@container painel-geral \(max-width: \d+px\) \{\n {2}\.dashboard-geral \.dashboard-grid \{\n {4}grid-template-columns: minmax\(0, 1fr\);/);
   });
 
-  test('o grafico tem altura fixa no conteiner e o cartao nao centraliza o conteudo', () => {
+  test('o grafico tem altura fixa no conteiner; o antigo .big-chart saiu', () => {
     expect(regra('.dashboard-geral .chart-area')).toMatch(/height:\s*\d+px/);
-    expect(regra('.dashboard-geral .big-chart')).not.toMatch(/justify-content:\s*center/);
-    expect(estilos).not.toMatch(/(?:^|\n)\.big-chart\s*\{/);
+    expect(estilos).not.toMatch(/big-chart/);
   });
 
   test('a lista expandida rola dentro do cartao, com altura maxima', () => {
@@ -370,8 +365,10 @@ describe('contrato de layout do Painel Geral (CSS)', () => {
   });
 
   test('estilos novos ficam restritos ao Painel Geral; .dashboard-header compartilhada nao muda', () => {
-    const novos = /cards-container|summary-card|dashboard-grid|big-chart|chart-area|painel-|ranking-|header-search|header-profile|profile-info|filtro-|botao-|kpi-|entrega|aviso-|girando|chart-vazio|card\.red/;
-    const fora = seletores().filter((s) => novos.test(s) && !s.startsWith('.dashboard-geral '));
+    const novos = /cards-container|summary-card|dashboard-grid|big-chart|chart-area|painel-|ranking-|header-search|header-profile|profile-info|filtro-|botao-|kpi-|entrega|aviso-|girando|chart-vazio|card\.red|distribuicao-|atencao-/;
+    // Variantes do tema claro tambem ficam dentro do Painel Geral.
+    const noPainel = (s) => s.startsWith('.dashboard-geral ') || s.startsWith('[data-theme="light"] .dashboard-geral ');
+    const fora = seletores().filter((s) => novos.test(s) && !noPainel(s));
     // .header-profile/.profile-info ja existiam sem escopo e nao foram alterados (a busca .header-search saiu na Fase 2).
     expect(fora).toEqual(['.header-profile', '.profile-info']);
 

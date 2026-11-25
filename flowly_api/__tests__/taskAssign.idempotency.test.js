@@ -45,8 +45,12 @@ const mockThenable = (produce, onSession) => {
 };
 const mockMatches = (row, filter) =>
   Object.entries(filter).every(([field, condition]) => {
+    if (field === '$or') return condition.some((alternativa) => mockMatches(row, alternativa));
     if (field === 'equipe' && condition && condition.$in) return condition.$in.some((value) => mockSame(value, row.equipe));
     if (condition === null) return row[field] == null; // { user: null } casa com null ou campo ausente
+    if (condition && typeof condition === 'object' && '$exists' in condition) {
+      return (row[field] !== undefined) === condition.$exists;
+    }
     return mockSame(row[field], condition);
   });
 const mockWaitUnlocked = async (row) => {
@@ -180,6 +184,9 @@ jest.mock('../models/Tarefa', () => {
       // Fora de transacao (fluxo legado): como no MongoDB, espera a trava da transacao e SO ENTAO avalia o filtro
       // contra o estado confirmado; avaliacao e gravacao sao uma unica operacao atomica (sem await no meio).
       await mockWaitUnlocked(row);
+      // A retomada depois do await e outra rodada: uma transacao pode ter travado a tarefa nesse intervalo.
+      // Como no MongoDB, a escrita so avalia o filtro quando nao ha trava aberta.
+      while (row && mockDb.locks.has(row)) await mockWaitUnlocked(row);
       if (!row || !mockMatches(row, filter)) return { matchedCount: 0, modifiedCount: 0 };
       Object.assign(row, mockPlain(update.$set || {}));
       return { matchedCount: 1, modifiedCount: 1 };
@@ -384,6 +391,9 @@ const KEY_2 = '9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a';
 const SEM_EQUIPES_404 = { erro: 'Tarefa nÃ£o encontrada' };
 const TAREFA_404 = { erro: 'Tarefa não encontrada' };
 const JA_ATRIBUIDA_409 = { erro: 'Esta tarefa já possui responsável' };
+// Condicao da gravacao: sem responsavel (nulo ou ausente) e pendente (ou status ausente, lido como pendente).
+const BACKLOG_DISPONIVEL = { user: null, $or: [{ status: 'pendente' }, { status: { $exists: false } }] };
+const FORA_DO_BACKLOG_409 = { erro: 'Esta tarefa não está disponível no backlog: apenas tarefas pendentes e sem responsável podem ser assumidas.' };
 const id = () => new mongoose.Types.ObjectId().toString();
 const keysOf = (value) => Object.keys(value).sort();
 
@@ -483,7 +493,7 @@ describe('PUT /api/tarefas/:id/atribuir-para-mim com Idempotency-Key', () => {
     expect(mockDb.legacySaves).toEqual([]); // nada de save() sem condicao
     expect(mockDb.updateCalls).toEqual([{
       withSession: false,
-      filter: { _id: tarefa._id, equipe: equipe._id, user: null },
+      filter: { _id: tarefa._id, equipe: equipe._id, ...BACKLOG_DISPONIVEL },
       update: { $set: { user: pessoaA._id } },
     }]);
     expect(mockDb.logSaves).toEqual([{ withSession: false }]);
@@ -506,7 +516,7 @@ describe('PUT /api/tarefas/:id/atribuir-para-mim com Idempotency-Key', () => {
     expect(mockDb.updateCalls).toHaveLength(1);
     expect(mockDb.updateCalls[0]).toEqual({
       withSession: true,
-      filter: { _id: tarefa._id, equipe: equipe._id, user: null },
+      filter: { _id: tarefa._id, equipe: equipe._id, ...BACKLOG_DISPONIVEL },
       update: { $set: { user: pessoaA._id } },
     });
     expect(mockDb.equipeFindSessions).toEqual([true]);
@@ -886,5 +896,133 @@ describe('PUT /api/tarefas/:id/atribuir-para-mim com Idempotency-Key', () => {
     expect(mockDb.keys).toHaveLength(0);
     expect(mockDb.legacySaves).toHaveLength(0);
     expect(tarefa.user).toBeNull();
+  });
+
+  // Elegibilidade do backlog (PR #63): so tarefa sem responsavel E pendente pode ser assumida, nos dois caminhos.
+  describe('elegibilidade: so tarefa pendente e sem responsavel', () => {
+    const semRastro = () => {
+      expect(tarefa.user).toBeNull();
+      expect(mockDb.logs).toHaveLength(0);
+      expect(mockDb.notifications).toHaveLength(0);
+      expect(mockDb.notificationInserts).toHaveLength(0);
+      expect(mockDb.emits).toHaveLength(0);
+    };
+
+    test.each([['concluido'], ['em_andamento']])('tarefa %s sem responsavel: 409 nos dois caminhos, status intacto', async (status) => {
+      tarefa.status = status;
+      const legado = await put();
+      expect(legado.status).toBe(409);
+      expect(legado.body).toEqual(FORA_DO_BACKLOG_409);
+      const protegido = await put({ key: KEY });
+      expect(protegido.status).toBe(409);
+      expect(protegido.body).toEqual(FORA_DO_BACKLOG_409);
+      expect(mockDb.keys[0]).toMatchObject({ status: 'failed', failure: { statusCode: 409, code: 'tarefa_fora_do_backlog' } });
+      // Repeticao da chave: mesma resposta guardada, sem consultar nem gravar de novo.
+      const repetido = await put({ key: KEY });
+      expect(repetido.status).toBe(409);
+      expect(repetido.body).toEqual(FORA_DO_BACKLOG_409);
+      expect(repetido.headers['idempotency-replayed']).toBe('true');
+      expect(mockDb.updateCalls).toEqual([]); // recusada antes de qualquer gravacao
+      expect(tarefa.status).toBe(status);
+      semRastro();
+    });
+
+    test('tarefa legada sem os campos user e status: continua podendo ser assumida (status nao e alterado)', async () => {
+      delete tarefa.user;
+      delete tarefa.status;
+      const response = await put({ key: KEY });
+      expect(response.status).toBe(200);
+      expect(tarefa.user).toBe(pessoaA._id);
+      expect(tarefa).not.toHaveProperty('status');
+      expect(mockDb.logs).toHaveLength(1);
+      expect(mockDb.emits).toHaveLength(1);
+    });
+
+    test.each([['sem cabecalho', undefined], ['com Idempotency-Key', KEY]])(
+      'status muda entre a leitura e a gravacao (%s): 409 de fora do backlog, sem atribuir nem deixar rastro',
+      async (_caso, key) => {
+        const response = await withGate('pauseUpdate', async ({ pending, release }) => {
+          const pedido = put({ key }).then((r) => r);
+          pending.push(pedido);
+          // Ja passou nas conferencias com a tarefa pendente e esta na gravacao condicional.
+          await waitFor(() => mockDb.pausedUpdates === 1, 'atribuicao pausada na gravacao');
+          tarefa.status = 'em_andamento'; // o admin ou outro fluxo mudou o status nesse meio-tempo
+          mockTx.pauseUpdate = null;
+          release();
+          return pedido;
+        });
+        expect(response.status).toBe(409);
+        expect(response.body).toEqual(FORA_DO_BACKLOG_409);
+        expect(tarefa.status).toBe('em_andamento');
+        semRastro();
+      }
+    );
+
+    test('atribuicao concorrente com a gravacao condicional nova: perdedora continua recebendo "ja possui responsavel"', async () => {
+      const responses = await withGate('pauseUpdate', async ({ pending, release }) => {
+        const a = put({ token: tokenA }).then((r) => r);
+        const b = put({ key: KEY_2, token: tokenB }).then((r) => r);
+        pending.push(a, b);
+        await waitFor(() => mockDb.pausedUpdates === 2, 'as duas pausadas na gravacao');
+        mockTx.pauseUpdate = null;
+        release();
+        return Promise.all([a, b]);
+      });
+      expect(responses.map((r) => r.status).sort()).toEqual([200, 409]);
+      expect(responses.find((r) => r.status === 409).body).toEqual(JA_ATRIBUIDA_409);
+      expect(mockDb.logs).toHaveLength(1);
+      expect(mockDb.notifications).toHaveLength(1);
+    });
+
+    test('status null explicito: nao elegivel nos dois caminhos (so o campo ausente conta como pendente)', async () => {
+      tarefa.status = null;
+      for (const key of [undefined, KEY]) {
+        const response = await put({ key });
+        expect(response.status).toBe(409);
+        expect(response.body).toEqual(FORA_DO_BACKLOG_409);
+      }
+      expect(mockDb.updateCalls).toEqual([]);
+      expect(tarefa.status).toBeNull();
+      semRastro();
+    });
+
+    // Releitura depois da gravacao recusada: so dentro do escopo autorizado e da mesma equipe; fora dele, conflito
+    // generico, sem dizer se a tarefa existe, quem a assumiu ou em que estado ficou.
+    const CONFLITO_GENERICO_409 = { erro: 'A tarefa foi alterada por outra operação ao mesmo tempo. Tente novamente.' };
+    test.each([
+      ['excluida', () => { mockDb.tarefas.splice(mockDb.tarefas.indexOf(tarefa), 1); }],
+      ['movida para outra equipe (e assumida la)', () => {
+        const outra = { _id: id(), nome: 'Equipe Beta', createdBy: admin._id, membros: [pessoaA._id, pessoaB._id] };
+        mockDb.equipes.push(outra);
+        tarefa.equipe = outra._id;
+        tarefa.user = pessoaB._id;
+      }],
+      ['quem pede saiu da equipe', () => { equipe.membros = [pessoaB._id]; tarefa.user = pessoaB._id; }],
+    ])('tarefa %s durante a gravacao: 409 generico nos dois caminhos, sem revelar o motivo', async (_caso, alterar) => {
+      for (const key of [undefined, KEY]) {
+        const response = await withGate('pauseUpdate', async ({ pending, release }) => {
+          const pedido = put({ key }).then((r) => r);
+          pending.push(pedido);
+          await waitFor(() => mockDb.pausedUpdates >= 1, 'atribuicao pausada na gravacao');
+          alterar();
+          mockTx.pauseUpdate = null;
+          release();
+          return pedido;
+        });
+        expect(response.status).toBe(409);
+        expect(response.body).toEqual(CONFLITO_GENERICO_409);
+        expect(JSON.stringify(response.body)).not.toMatch(/responsável|backlog|Pessoa|Beta/);
+        // Reinicia o cenario para o segundo caminho.
+        mockDb.pausedUpdates = 0;
+        if (!mockDb.tarefas.includes(tarefa)) mockDb.tarefas.push(tarefa);
+        tarefa.equipe = equipe._id;
+        tarefa.user = null;
+        equipe.membros = [pessoaA._id, pessoaB._id];
+      }
+      expect(mockDb.keys[0]).toMatchObject({ status: 'failed', failure: { statusCode: 409, code: 'tarefa_alterada' } });
+      expect(mockDb.logs).toHaveLength(0);
+      expect(mockDb.notifications).toHaveLength(0);
+      expect(mockDb.emits).toHaveLength(0);
+    });
   });
 });

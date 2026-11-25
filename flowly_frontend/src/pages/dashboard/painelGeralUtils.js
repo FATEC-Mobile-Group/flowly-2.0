@@ -1,7 +1,5 @@
 // Calculos do Painel Geral sobre os dados ja carregados (GET /equipes e GET /tarefas). Nao consulta a API.
 
-export const LIMITE_PROXIMAS_ENTREGAS = 5;
-
 const nomes = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true });
 
 const doisDigitos = (numero) => String(numero).padStart(2, '0');
@@ -124,30 +122,5 @@ export function calcularIndicadores(equipes, tarefas, hoje) {
     atrasadas: tarefas.filter((t) => estaAtrasada(t, hoje)).length,
     tempoMinutos,
     tempoFormatado: formatarTempo(tempoMinutos),
-  };
-}
-
-// Tarefas nao concluidas com prazo valido, da entrega mais antiga (atrasadas primeiro) para a mais distante.
-export function listarProximasEntregas(tarefas, hoje, limite = LIMITE_PROXIMAS_ENTREGAS) {
-  const elegiveis = tarefas
-    .filter((tarefa) => tarefa && !estaConcluida(tarefa))
-    .map((tarefa, indice) => ({ tarefa, indice, dia: diaDaEntrega(tarefa.dataEntrega) }))
-    .filter(({ dia }) => dia !== null)
-    .sort((a, b) => (a.dia < b.dia ? -1 : a.dia > b.dia ? 1 : 0)
-      || nomes.compare(a.tarefa.descricao || '', b.tarefa.descricao || '')
-      || String(a.tarefa._id ?? a.indice).localeCompare(String(b.tarefa._id ?? b.indice)));
-
-  return {
-    total: elegiveis.length,
-    itens: elegiveis.slice(0, limite).map(({ tarefa, indice, dia }) => ({
-      id: tarefa._id != null ? String(tarefa._id) : `sem-id-${indice}`,
-      descricao: tarefa.descricao || 'Tarefa sem descrição',
-      equipe: tarefa.equipe?.nome || 'Equipe não informada',
-      dia,
-      data: formatarDia(dia),
-      prazo: descreverPrazo(dia, hoje),
-      atrasada: dia < hoje,
-      venceHoje: dia === hoje,
-    })),
   };
 }
