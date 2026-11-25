@@ -107,6 +107,38 @@ describe('send_message', () => {
       blocked: true,
       message: expect.stringContaining('insulto'),
     });
+    // O insight de bloqueio recebe so motivo e categoria, nunca o texto.
+    expect(mockSaveBlockedChatInsight).toHaveBeenCalledTimes(1);
+    const [insight] = mockSaveBlockedChatInsight.mock.calls[0];
+    expect(Object.keys(insight).sort()).toEqual(['category', 'equipe', 'reason', 'userId']);
+    expect(insight).toMatchObject({ userId: USER_ID, reason: 'unsafe_content', category: 'insult' });
+    expect(JSON.stringify(insight)).not.toContain('idiota');
+  });
+
+  test('palavrão e ódio da política nova: bloqueados com a mensagem da categoria, sem repetir o texto', async () => {
+    const palavrao = await run({ equipeId: TEAM_ID, texto: 'Que merda, o build quebrou de novo' });
+    const odio = await run({ equipeId: TEAM_ID, texto: 'Morte aos judeus' });
+
+    expect(mockSaved).toHaveLength(0);
+    expect(mockNotifyUsers).not.toHaveBeenCalled();
+    expect(palavrao.ack.mock.calls[0][0]).toEqual({
+      ok: false, reason: 'unsafe_content', blocked: true, message: expect.stringContaining('palavrões'),
+    });
+    expect(odio.ack.mock.calls[0][0]).toEqual({
+      ok: false, reason: 'unsafe_content', blocked: true, message: expect.stringContaining('discurso de ódio'),
+    });
+    expect(mockSaveBlockedChatInsight.mock.calls.map(([insight]) => insight.category)).toEqual(['profanity', 'hate']);
+    expect(JSON.stringify([palavrao.ack.mock.calls, odio.ack.mock.calls])).not.toMatch(/merda|judeus/i);
+  });
+
+  test('depois de uma rejeição, o envio legítimo (tema acadêmico) funciona normalmente', async () => {
+    await run({ equipeId: TEAM_ID, texto: 'você é um idiota' });
+    const { ack, events } = await run({ equipeId: TEAM_ID, texto: 'Precisamos estudar a ascensão do nazismo' });
+
+    expect(mockSaved).toHaveLength(1);
+    expect(ack).toHaveBeenCalledWith({ ok: true, messageId: '64b000000000000000000001' });
+    expect(events.filter((event) => event.kind === 'broadcast')).toHaveLength(1);
+    expect(mockNotifyUsers).toHaveBeenCalledTimes(1);
   });
 
   test('cliente sem ACK continua recebendo message_blocked e nada é gravado', async () => {

@@ -23,6 +23,7 @@ const CAPTION_MESSAGES = {
   insult: 'A legenda não foi aceita porque parece conter um insulto. Revise o texto e tente novamente.',
   threat: 'A legenda não foi aceita porque parece conter uma ameaça. Revise o texto e tente novamente.',
   profanity: 'A legenda não foi aceita porque contém palavrões. Revise o texto e tente novamente.',
+  hate: 'A legenda não foi aceita porque parece conter discurso de ódio ou discriminação. Revise o texto e tente novamente.',
 };
 const CAPTION_DEFAULT_MESSAGE = 'A legenda não foi aceita pelas regras do chat. Revise o texto e tente novamente.';
 

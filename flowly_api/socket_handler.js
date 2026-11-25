@@ -72,6 +72,7 @@ const MODERATION_MESSAGES = {
   insult: 'Sua mensagem não foi enviada porque parece conter um insulto. Revise o texto e tente novamente.',
   threat: 'Sua mensagem não foi enviada porque parece conter uma ameaça. Revise o texto e tente novamente.',
   profanity: 'Sua mensagem não foi enviada porque contém palavrões. Revise o texto e tente novamente.',
+  hate: 'Sua mensagem não foi enviada porque parece conter discurso de ódio ou discriminação. Discussões e pesquisas sobre o tema são permitidas; revise o texto e tente novamente.',
 };
 const DEFAULT_MODERATION_MESSAGE = 'Sua mensagem não foi enviada porque viola as regras do chat. Revise o texto e tente novamente.';
 const SEND_FAILED_MESSAGE = 'Não foi possível enviar a mensagem agora. Seu texto foi mantido; tente novamente.';
@@ -165,11 +166,12 @@ const handleSendMessage = async ({ io, socket, data, ack }) => {
 
     const moderation = moderateText(cleanText);
     if (!moderation.allowed) {
+      // So motivo e categoria: o texto bloqueado nao vai para o insight.
       saveBlockedChatInsight({
-        texto: cleanText,
         equipe,
         userId,
         reason: moderation.reason,
+        category: moderation.category,
       }).catch((error) => {
         console.error('Erro ao registrar insight de mensagem bloqueada:', error.message);
       });
