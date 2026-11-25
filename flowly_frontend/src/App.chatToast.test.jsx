@@ -60,6 +60,12 @@ beforeEach(() => {
   Object.keys(handlersDoSocket).forEach((evento) => delete handlersDoSocket[evento]);
   playOriginal = HTMLMediaElement.prototype.play;
   HTMLMediaElement.prototype.play = vi.fn(() => Promise.resolve());
+  // O jsdom nao reproduz video: o elemento simula um quadro real em reproducao, que o FaceCapture exige para
+  // liberar a captura (depois da estabilizacao curta do stream novo).
+  vi.spyOn(HTMLMediaElement.prototype, 'readyState', 'get').mockReturnValue(4);
+  vi.spyOn(HTMLMediaElement.prototype, 'paused', 'get').mockReturnValue(false);
+  vi.spyOn(HTMLVideoElement.prototype, 'videoWidth', 'get').mockReturnValue(640);
+  vi.spyOn(HTMLVideoElement.prototype, 'videoHeight', 'get').mockReturnValue(480);
   Object.defineProperty(navigator, 'mediaDevices', {
     configurable: true,
     value: {
@@ -96,7 +102,8 @@ describe('C1 - toast de chat nao remonta o Perfil', () => {
     render(<App />);
 
     await waitFor(() => expect(aberturasDaCamera()).toBe(1));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Capturar foto de frente' })).toBeEnabled());
+    // A captura so libera depois do quadro real e da estabilizacao do stream novo (CAMERA_SETTLE_MS).
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Capturar foto de frente' })).toBeEnabled(), { timeout: 3000 });
     await esperar(50);
 
     // Estado que o usuario ja produziu na pagina.
