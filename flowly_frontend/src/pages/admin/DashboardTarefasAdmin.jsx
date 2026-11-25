@@ -3,7 +3,7 @@ import apiClient from "../../config/apiClient";
 import { API_ENDPOINTS } from "../../config/config";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { validObjectId } from "../../utils/navigationRequests";
-import { chaveDiaLocal, diaDaEntrega } from "../dashboard/painelGeralUtils";
+import { chaveDiaLocal, diaDaEntrega, formatarTempo } from "../dashboard/painelGeralUtils";
 import {
   ATRIBUICAO_BACKLOG,
   ATRIBUICAO_SEM_RESPONSAVEL,
@@ -16,6 +16,7 @@ import {
   backlogDisponivel,
   filtrarTarefas,
   formatarPrazo,
+  formatarDataCriacao,
   idDaEquipeDaTarefa,
   instanteValido,
   lerFiltrosTarefas,
@@ -157,6 +158,8 @@ function DashboardTarefasAdmin() {
     const id = validObjectId(String(tarefaPedida));
     if (id && tarefas.some((tarefa) => String(tarefa._id) === id)) {
       setDestacada(id);
+      // Abre os detalhes uma unica vez: o pedido e consumido abaixo, entao fechar depois nao reabre.
+      setExpandidas((atuais) => (atuais.has(id) ? atuais : new Set(atuais).add(id)));
       setAvisoPedido("");
     } else {
       setAvisoPedido("A tarefa solicitada não está disponível nesta lista.");
@@ -311,19 +314,27 @@ function DashboardTarefasAdmin() {
       >
         <td data-label="Tarefa" className="task-row-titulo">
           <span className="task-row-nome">{tarefa.descricao || "Tarefa sem título"}</span>
-          {tarefa.detalhes && (
-            <>
-              <button
-                type="button"
-                className="task-row-detalhes-btn"
-                aria-expanded={aberta}
-                aria-controls={idDetalhes}
-                onClick={() => alternarDetalhes(id)}
-              >
-                {aberta ? "Ocultar detalhes" : "Ver detalhes"}
-              </button>
-              {aberta && <p id={idDetalhes} className="task-row-detalhes">{tarefa.detalhes}</p>}
-            </>
+          <button
+            type="button"
+            className="task-row-detalhes-btn"
+            aria-expanded={aberta}
+            aria-controls={idDetalhes}
+            onClick={() => alternarDetalhes(id)}
+          >
+            {aberta ? "Ocultar detalhes" : "Ver detalhes"}
+          </button>
+          {aberta && (
+            <div id={idDetalhes} className="task-row-detalhes">
+              <p>{tarefa.detalhes || "Sem detalhes cadastrados."}</p>
+              <p className="task-row-detalhes-meta">
+                <span>
+                  {instanteValido(tarefa.createdAt) === null
+                    ? "Data de criação indisponível"
+                    : `Criada em ${formatarDataCriacao(tarefa.createdAt)}`}
+                </span>
+                {Number(tarefa.tempoGasto) > 0 && <span>{`Tempo registrado: ${formatarTempo(tarefa.tempoGasto)}`}</span>}
+              </p>
+            </div>
           )}
         </td>
         <td data-label="Equipe">
@@ -334,7 +345,7 @@ function DashboardTarefasAdmin() {
         <td data-label="Urgência">{renderUrgencia(tarefa)}</td>
         <td data-label="Prazo">{renderPrazo(tarefa)}</td>
         <td data-label="Estimado">{tarefa.tempoEstimado ? `${tarefa.tempoEstimado} min` : "—"}</td>
-        <td data-label="Ações">{renderAcoes(tarefa)}</td>
+        <td data-label="Ações" className="task-row-acoes">{renderAcoes(tarefa)}</td>
       </tr>
     );
   };
@@ -388,7 +399,7 @@ function DashboardTarefasAdmin() {
               <th scope="col">Urgência</th>
               <th scope="col">Prazo</th>
               <th scope="col">Estimado</th>
-              <th scope="col"><span className="admin-sr-only">Ações</span></th>
+              <th scope="col" className="task-row-acoes">Ações</th>
             </tr>
           </thead>
           <tbody>{visiveis.map(renderLinha)}</tbody>

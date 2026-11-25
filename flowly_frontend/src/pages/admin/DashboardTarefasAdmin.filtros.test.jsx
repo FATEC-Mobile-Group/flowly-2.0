@@ -18,7 +18,7 @@ const BRUNO = oid(12);
 
 const tarefasPadrao = () => [
   { _id: oid(101), descricao: 'Corrigir login', detalhes: 'Erro no token', status: 'pendente', urgencia: 'alta', tempoEstimado: 90, dataEntrega: '2026-11-24T00:00:00.000Z', createdAt: '2026-11-24T10:00:00.000Z', equipe: { _id: EQ_DEV, nome: 'Desenvolvimento' }, user: { _id: ANA, nome: 'Ana Souza' } },
-  { _id: oid(102), descricao: 'Revisão de código', status: 'em_andamento', urgencia: 'media', dataEntrega: '2026-11-25T00:00:00.000Z', createdAt: '2026-11-20T10:00:00.000Z', equipe: { _id: EQ_DEV, nome: 'Desenvolvimento' }, user: { _id: BRUNO, nome: 'Bruno Lima' } },
+  { _id: oid(102), descricao: 'Revisão de código', status: 'em_andamento', urgencia: 'media', tempoGasto: 125, dataEntrega: '2026-11-25T00:00:00.000Z', createdAt: '2026-11-20T10:00:00.000Z', equipe: { _id: EQ_DEV, nome: 'Desenvolvimento' }, user: { _id: BRUNO, nome: 'Bruno Lima' } },
   { _id: oid(103), descricao: 'Testes de regressão', status: 'pendente', urgencia: 'alta', dataEntrega: '2026-11-28T00:00:00.000Z', createdAt: '2026-11-23T10:00:00.000Z', equipe: { _id: EQ_QA, nome: 'Qualidade' }, user: null },
   { _id: oid(104), descricao: 'Relatório final', status: 'em_andamento', urgencia: 'baixa', dataEntrega: '2026-12-20T00:00:00.000Z', createdAt: '2026-10-01T10:00:00.000Z', equipe: { _id: EQ_QA, nome: 'Qualidade' }, user: null },
   { _id: oid(105), descricao: 'Documentação antiga', status: 'concluido', urgencia: 'baixa', dataEntrega: '2026-05-01T00:00:00.000Z', createdAt: '2026-05-01T10:00:00.000Z', equipe: { _id: EQ_DEV, nome: 'Desenvolvimento' }, user: { _id: ANA, nome: 'Ana Souza' } },
@@ -339,6 +339,19 @@ describe('lista e cards', () => {
     expect(screen.queryByRole('table')).toBeNull();
   });
 
+  test('cabecalho "Ações" visivel e detalhes de tarefa sem descricao mostram as informacoes disponiveis', async () => {
+    renderPage();
+    await esperarPronto();
+    expect(screen.getByRole('columnheader', { name: 'Ações' })).toBeVisible();
+    const linha = linhaDe('Revisão de código');
+    fireEvent.click(within(linha).getByRole('button', { name: 'Ver detalhes' }));
+    expect(within(linha).getByText('Sem detalhes cadastrados.')).toBeInTheDocument();
+    expect(within(linha).getByText('Criada em 20/11/2026')).toBeInTheDocument();
+    expect(within(linha).getByText('Tempo registrado: 2h 5min')).toBeInTheDocument();
+    fireEvent.click(within(linha).getByRole('button', { name: 'Ocultar detalhes' }));
+    expect(within(linha).queryByText('Sem detalhes cadastrados.')).toBeNull();
+  });
+
   test.each(['lista', 'cards'])('editar e excluir com confirmacao continuam funcionando (%s)', async (modo) => {
     localStorage.setItem(CHAVE_VISUALIZACAO_TAREFAS, modo);
     apiDelete.mockResolvedValue({});
@@ -364,14 +377,62 @@ describe('abrirTarefaId (assistente, Painel Geral, notificacoes)', () => {
     expect(regiao).toHaveTextContent('A tarefa solicitada não corresponde aos filtros ativos');
     const cartao = within(regiao).getByText('Corrigir login').closest('.task-item');
     expect(cartao).toHaveClass('is-destacada');
+    expect(within(cartao).getByText('Erro no token')).toBeInTheDocument();
     await waitFor(() => expect(cartao).toHaveFocus());
     expect(titulos()).toEqual(['Documentação antiga']);
     await waitFor(() => expect(estado()).toBe('/admin/tarefas?status=concluido|null'));
 
     fireEvent.click(within(regiao).getByRole('button', { name: 'Limpar filtros' }));
     expect(screen.queryByRole('region', { name: 'Tarefa solicitada' })).toBeNull();
-    expect(linhaDe('Corrigir login')).toHaveClass('is-destacada');
+    const linha = linhaDe('Corrigir login');
+    expect(linha).toHaveClass('is-destacada');
+    // Na lista, a tarefa pedida ja chega com os detalhes abertos.
+    expect(within(linha).getByRole('button', { name: 'Ocultar detalhes' })).toHaveAttribute('aria-expanded', 'true');
+    expect(within(linha).getByText('Erro no token')).toBeInTheDocument();
     expect(titulos()).toHaveLength(6);
+  });
+
+  test('lista: a tarefa pedida abre os detalhes, recebe destaque e foco sem segundo clique', async () => {
+    renderPage({ pathname: '/admin/tarefas', state: { abrirTarefaId: oid(101) } });
+    await esperarPronto();
+    const linha = linhaDe('Corrigir login');
+    await waitFor(() => expect(linha).toHaveClass('is-destacada'));
+    expect(within(linha).getByRole('button', { name: 'Ocultar detalhes' })).toHaveAttribute('aria-expanded', 'true');
+    expect(within(linha).getByText('Erro no token')).toBeInTheDocument();
+    expect(within(linha).getByText('Criada em 24/11/2026')).toBeInTheDocument();
+    await waitFor(() => expect(linha).toHaveFocus());
+    // So a tarefa pedida abre.
+    expect(within(linhaDe('Revisão de código')).getByRole('button', { name: 'Ver detalhes' })).toHaveAttribute('aria-expanded', 'false');
+    await waitFor(() => expect(estado()).toBe('/admin/tarefas|null'));
+  });
+
+  test('cards: a tarefa pedida aparece destacada com as informacoes visiveis', async () => {
+    localStorage.setItem(CHAVE_VISUALIZACAO_TAREFAS, 'cards');
+    renderPage({ pathname: '/admin/tarefas', search: '?status=pendente', state: { abrirTarefaId: oid(101) } });
+    await esperarPronto();
+    const cartao = linhaDe('Corrigir login');
+    await waitFor(() => expect(cartao).toHaveClass('is-destacada'));
+    expect(cartao).toHaveClass('task-item');
+    expect(within(cartao).getByText('Erro no token')).toBeInTheDocument();
+    expect(within(cartao).getByText('Ana Souza')).toBeInTheDocument();
+    expect(cartao).toHaveTextContent('24/11/2026');
+    await waitFor(() => expect(cartao).toHaveFocus());
+    await waitFor(() => expect(estado()).toBe('/admin/tarefas?status=pendente|null'));
+  });
+
+  test('fechar os detalhes da tarefa pedida nao reabre depois que o pedido foi consumido', async () => {
+    renderPage({ pathname: '/admin/tarefas', search: '?ordem=nome', state: { abrirTarefaId: oid(101) } });
+    await esperarPronto();
+    const botao = await within(linhaDe('Corrigir login')).findByRole('button', { name: 'Ocultar detalhes' });
+    await waitFor(() => expect(estado()).toBe('/admin/tarefas?ordem=nome|null'));
+    fireEvent.click(botao);
+    expect(screen.queryByText('Erro no token')).toBeNull();
+    // Novos renders (filtro, ordenacao, troca de visualizacao) nao reabrem.
+    escolher('Status', 'pendente');
+    escolher('Ordenar por', 'recentes');
+    expect(within(linhaDe('Corrigir login')).getByRole('button', { name: 'Ver detalhes' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Erro no token')).toBeNull();
+    expect(apiGet).toHaveBeenCalledTimes(2);
   });
 
   test('fechar destaque remove a tarefa fixada sem mexer nos filtros', async () => {
@@ -386,13 +447,16 @@ describe('abrirTarefaId (assistente, Painel Geral, notificacoes)', () => {
     renderPage({ pathname: '/admin/tarefas', search: `?equipe=${EQ_DEV}`, state: { abrirTarefaId: oid(102) } });
     await esperarPronto();
     await waitFor(() => expect(linhaDe('Revisão de código')).toHaveClass('is-destacada'));
+    expect(within(linhaDe('Revisão de código')).getByText('Sem detalhes cadastrados.')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Tarefa solicitada' })).toBeNull();
+    expect(screen.getByLabelText('Equipe')).toHaveValue(EQ_DEV);
   });
 
   test('recurso fora da lista autorizada: aviso, nada aberto, filtros preservados', async () => {
     renderPage({ pathname: '/admin/tarefas', search: '?status=pendente', state: { abrirTarefaId: oid(999) } });
     expect(await screen.findByRole('status')).toHaveTextContent('A tarefa solicitada não está disponível nesta lista.');
     expect(document.querySelector('.is-destacada')).toBeNull();
+    expect(document.querySelector('[aria-expanded="true"]')).toBeNull();
     await waitFor(() => expect(estado()).toBe('/admin/tarefas?status=pendente|null'));
     expect(screen.getByLabelText('Status')).toHaveValue('pendente');
   });
@@ -406,6 +470,7 @@ describe('abrirTarefaId (assistente, Painel Geral, notificacoes)', () => {
     respostas.tarefas = tarefasPadrao();
     fireEvent.click(screen.getByRole('button', { name: 'Tentar novamente' }));
     await waitFor(() => expect(linhaDe('Testes de regressão')).toHaveClass('is-destacada'));
+    expect(within(linhaDe('Testes de regressão')).getByRole('button', { name: 'Ocultar detalhes' })).toHaveAttribute('aria-expanded', 'true');
     await waitFor(() => expect(estado()).toBe('/admin/tarefas|null'));
     erro.mockRestore();
   });

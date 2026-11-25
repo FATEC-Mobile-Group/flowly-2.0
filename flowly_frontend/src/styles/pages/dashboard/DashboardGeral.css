@@ -4,6 +4,12 @@
   margin-left: 260px;
   position: relative;
   z-index: 10;
+  transition: margin-left 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Sidebar recolhida (78px): o painel ocupa o espaco liberado (mesmo padrao das demais paginas). */
+.sidebar.collapsed ~ .dashboard-geral {
+  margin-left: 78px;
 }
 
 /* Cinco indicadores: 5 colunas em telas largas, 3 + 2 no meio e 2 + 2 + 1 em telas estreitas
@@ -777,6 +783,10 @@
     margin-left: 0;
     width: 100%;
     padding: 2rem;
+  }
+
+  .sidebar.collapsed ~ .dashboard-geral {
+    margin-left: 0;
   }
 }
 

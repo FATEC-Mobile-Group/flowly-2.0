@@ -18,6 +18,12 @@
   transition: margin-left 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* Sidebar recolhida (78px): as paginas do admin ocupam o espaco liberado, no mesmo padrao de chats, assistente,
+   backlog e Meu Dia. A sidebar e irma do <main> dentro de .admin-page. */
+.sidebar.collapsed ~ .dashboard-container {
+  margin-left: 78px;
+}
+
 .dashboard-title {
   font-size: 2.5rem;
   margin-bottom: 0;
@@ -565,6 +571,11 @@
     padding-top: 80px;
   }
 
+  /* No mobile a sidebar vira gaveta: recolhida ou nao, o conteudo usa a largura toda. */
+  .sidebar.collapsed ~ .dashboard-container {
+    margin-left: 0;
+  }
+
   .dashboard-topbar {
     flex-direction: column;
     align-items: flex-start;
@@ -1037,6 +1048,15 @@
 [data-theme="light"] .prazo-hoje { background: rgba(245, 124, 0, 0.1); color: #b45309; border-color: rgba(245, 124, 0, 0.22); }
 [data-theme="light"] .urgencia-baixa { background: rgba(46, 125, 50, 0.08); color: #2e7d32; border-color: rgba(46, 125, 50, 0.2); }
 
+/* .urgencia-alta/media/baixa tambem sao a borda esquerda de 4px dos cartoes do Kanban (TarefasUser.css e
+   TarefasAdmin.css); no bundle unico essa regra vazava para a capsula. Aqui a capsula volta a ter borda de 1px. */
+.urgencia-badge.urgencia-alta { border-left: 1px solid rgba(255, 51, 102, 0.3); }
+.urgencia-badge.urgencia-media { border-left: 1px solid rgba(251, 192, 45, 0.28); }
+.urgencia-badge.urgencia-baixa { border-left: 1px solid rgba(0, 212, 141, 0.28); }
+[data-theme="light"] .urgencia-badge.urgencia-alta { border-left-color: rgba(211, 47, 47, 0.2); }
+[data-theme="light"] .urgencia-badge.urgencia-media { border-left-color: rgba(245, 124, 0, 0.22); }
+[data-theme="light"] .urgencia-badge.urgencia-baixa { border-left-color: rgba(46, 125, 50, 0.2); }
+
 .prazo-celula,
 .responsavel-celula {
   display: inline-flex;
@@ -1071,12 +1091,33 @@
   white-space: nowrap;
 }
 
+/* break-word (e nao anywhere) nas celulas: com anywhere a largura minima de cada coluna cai para uma letra e a
+   tabela automatica espreme a coluna de acoes ate "Editar" quebrar em tres linhas. Titulo e detalhes, texto livre
+   que pode ter palavras enormes, continuam podendo quebrar em qualquer ponto. */
 .tasks-table td {
-  padding: 10px 12px;
+  padding: 10px 10px;
   vertical-align: middle;
   color: var(--text-primary);
   border-bottom: 1px solid var(--border-subtle);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+}
+
+.tasks-table th { padding-left: 10px; padding-right: 10px; }
+
+.tasks-table td.task-row-titulo { overflow-wrap: anywhere; }
+
+/* Acoes: a coluna fica so com a largura dos dois botoes, sem quebrar as palavras. */
+.tasks-table .task-row-acoes {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.tasks-table .task-actions .btn-edit,
+.tasks-table .task-actions .btn-delete {
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 .tasks-table tbody tr:last-child td { border-bottom: none; }
@@ -1088,7 +1129,7 @@
 .task-row.task-urgency-baixa td:first-child { border-left-color: #00d48d; }
 .tasks-table tbody .task-row.is-destacada td { background: var(--surface-active); }
 
-.task-row-titulo { min-width: 200px; }
+.task-row-titulo { min-width: 160px; }
 
 .task-row-nome {
   display: block;
@@ -1117,9 +1158,21 @@
   line-height: 1.5;
 }
 
+.task-row-detalhes p { margin: 0; }
+
+.task-row-detalhes .task-row-detalhes-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
 .tasks-table .task-actions {
   flex-wrap: nowrap;
   justify-content: flex-end;
+  margin-top: 0;
 }
 
 .tasks-table .btn-edit,
@@ -1157,8 +1210,15 @@
 .tasks-list.tasks-list-fixada,
 .admin-gestao .admin-resultados .tasks-list { margin-top: 0; }
 
-/* Lista compacta vira blocos em telas menores (sem rolagem horizontal) */
-@media (max-width: 1100px) {
+/* Lista compacta vira blocos quando a AREA DE CONTEUDO fica estreita (sem rolagem horizontal). A medida e a
+   largura real disponivel (container query), entao a sidebar expandida ou recolhida ja esta descontada.
+   Medido no Chrome com o CSS de producao: a tabela com as 8 colunas precisa de cerca de 1000px. */
+.admin-gestao .admin-resultados {
+  container-type: inline-size;
+  container-name: tarefas-admin;
+}
+
+@container tarefas-admin (max-width: 1010px) {
   .tasks-table thead {
     position: absolute;
     width: 1px;
@@ -1206,6 +1266,21 @@
   }
 
   .tasks-table td.task-row-titulo::before { content: none; }
+
+  /* Itens da grade do bloco ocupam so a largura do conteudo: sem isso o justify-self padrao (stretch) estica
+     as capsulas de status, urgencia e prazo ate o fim da celula. */
+  .tasks-table td > * {
+    justify-self: start;
+    max-width: 100%;
+  }
+
+  .tasks-table .task-row-acoes {
+    width: 100%;
+    white-space: normal;
+    text-align: left;
+  }
+
+  .tasks-table .task-actions { flex-wrap: wrap; }
 
   .task-row td:first-child { border-left: none; }
   .task-row.task-urgency-alta { border-left: 4px solid #ff3366; }
