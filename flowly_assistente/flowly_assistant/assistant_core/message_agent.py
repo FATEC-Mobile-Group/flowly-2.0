@@ -45,7 +45,15 @@ from flowly_assistant.operations_client import FINGERPRINT, UUID_V4, OperationsC
 from flowly_assistant.queues.analytics_queue import AnalyticsQueue
 from flowly_assistant.storage.analytics_repository import AnalyticsRepository
 from flowly_assistant.conversation_client import ConversationStateClient
-from flowly_assistant.task_queries import TASK_QUERY_KEYS, build_reply, metadata, urgent_follow_up
+from flowly_assistant.task_queries import (
+    TASK_QUERY_KEYS,
+    build_reply,
+    feminine_number,
+    metadata,
+    selection_metadata,
+    task_card,
+    urgent_follow_up,
+)
 from flowly_assistant.operations_client import OPERATIONS_SECRET_ENV
 from flowly_assistant.storage.conversation_memory import (
     MEMORY_SUFFIX,
@@ -1102,6 +1110,11 @@ class MessageAgent:
         if command_key in {"my_tasks", "backlog", "list_tasks"}:
             tasks = _dict_items(result)
             display, spoken = self._tasks_reply(tasks)
+            if tasks:
+                # Cartoes na tela: a mesma lista numerada guardada para "detalhes da 1" (opcional; o texto continua).
+                payload["query"] = selection_metadata(
+                    command_key, [self._compact_task(task) for task in tasks[:SELECTABLE_TASK_LIMIT]], len(tasks)
+                )
             # Sem contexto compartilhado, a lista e so mostrada: nada de selecao guardada (nem opcoes oferecidas).
             if tasks and self.context_available:
                 self.conversations.save(
@@ -1132,6 +1145,8 @@ class MessageAgent:
             display, spoken = self._profile_reply(result)
         elif command_key == "task_details":
             display, spoken = self._task_details_reply(result, follow_up=False)
+            if isinstance(result, dict) and isinstance(result.get("tarefa"), dict):
+                payload["task"] = task_card(result["tarefa"], self.user_id)
         elif command_key == "team_members":
             display, spoken = self._members_reply(_dict_items(result), team_label)
         elif command_key in {"list_users", "search_users"}:
@@ -2066,6 +2081,7 @@ class MessageAgent:
                     spoken=spoken,
                     ok=True,
                     action_executed=False,
+                    **({"query": selection_metadata("urgent", top, len(top))} if top else {}),
                 )
             text = (
                 f"Você quer uma tarefa da lista ou as {quantity} mais urgentes? Nada foi alterado. "
@@ -2096,6 +2112,7 @@ class MessageAgent:
                 spoken=spoken,
                 ok=True,
                 action_executed=False,
+                **({"query": selection_metadata("urgent", top, len(top))} if top else {}),
             )
 
         selected_id = pending.get("selected_task_id")
@@ -2279,6 +2296,8 @@ class MessageAgent:
                 action_executed=True,
                 result=result,
                 command={"key": "task_details"},
+                **({"task": task_card(result["tarefa"], self.user_id)}
+                   if isinstance(result, dict) and isinstance(result.get("tarefa"), dict) else {}),
             )
         except Exception as exc:
             text = str(exc) or "Nao consegui concluir essa acao agora."
@@ -2578,6 +2597,8 @@ class MessageAgent:
             return text, text
         options = tasks[:SELECTABLE_TASK_LIMIT]
         header = f"Encontrei {_count(len(tasks), 'tarefa', 'tarefas')}."
+        # Fala: "duas tarefas" (o navegador leria "2 tarefas" como "dois tarefas"); a tela segue com o numeral.
+        spoken_header = f"Encontrei {feminine_number(len(tasks))} {'tarefa' if len(tasks) == 1 else 'tarefas'}."
         follow_up = "Você pode pedir detalhes, atribuir uma tarefa para você ou cancelar."
 
         listed = "; ".join(f"{idx}. {self._task_summary(task, spoken=False)}" for idx, task in enumerate(options, start=1))
@@ -2590,10 +2611,10 @@ class MessageAgent:
         said = " ".join(
             f"{idx}. {self._task_summary(task, spoken=True)}." for idx, task in enumerate(options[:SPOKEN_TASK_LIMIT], start=1)
         )
-        spoken = f"{header} {said}"
+        spoken = f"{spoken_header} {said}"
         more_options = len(options) - SPOKEN_TASK_LIMIT
         if more_options > 0:
-            spoken += f" Há mais {_count(more_options, 'opção', 'opções')} na tela."
+            spoken += f" Há mais {feminine_number(more_options)} {'opção' if more_options == 1 else 'opções'} na tela."
         return f"{display} {follow_up}", f"{spoken} {follow_up}"
 
     def _teams_reply(self, teams: list[Dict[str, Any]]) -> Tuple[str, str]:

@@ -97,7 +97,8 @@ def _urgency(task: Dict[str, Any]) -> int:
 
 
 def _title(task: Dict[str, Any]) -> str:
-    return str(task.get("descricao") or task.get("titulo") or "Tarefa sem descrição").strip()
+    title = str(task.get("descricao") or task.get("titulo") or "Tarefa sem descrição")
+    return title.replace(COUNT_MARK, "").strip()  # a marca das contagens nunca vem de um dado
 
 
 def _by_due_then_urgency(task: Dict[str, Any]) -> tuple:
@@ -201,8 +202,34 @@ def most_important(candidates: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]
 
 # --- Texto ----------------------------------------------------------------------------------------------------
 
+# Contagens geradas por este modulo levam uma marca interna (caractere de uso privado): na tela a marca some e
+# fica o numeral; na fala, so os numeros marcados viram "uma"/"duas" ("2 tarefas" seria lido "dois tarefas").
+# Todas as contagens daqui falam de tarefas/entregas (feminino). Titulos e nomes nunca levam a marca.
+COUNT_MARK = "\ue000"
+_MARKED_NUMBER_RE = re.compile(COUNT_MARK + r"(\d+)")
+_FEMININE_UNITS = {1: "uma", 2: "duas"}
+_TENS = {2: "vinte", 3: "trinta", 4: "quarenta", 5: "cinquenta", 6: "sessenta", 7: "setenta", 8: "oitenta", 9: "noventa"}
+
+
+def feminine_number(n: int) -> str:
+    """Numero para falar antes de palavra feminina: 1 -> "uma", 2 -> "duas", 22 -> "vinte e duas"; outros iguais."""
+    if n in _FEMININE_UNITS:
+        return _FEMININE_UNITS[n]
+    if 21 <= n <= 99 and n % 10 in _FEMININE_UNITS:
+        return f"{_TENS[n // 10]} e {_FEMININE_UNITS[n % 10]}"
+    return str(n)
+
+
+def _plain(text: str) -> str:
+    return text.replace(COUNT_MARK, "")
+
+
+def _spoken(text: str) -> str:
+    return _MARKED_NUMBER_RE.sub(lambda m: feminine_number(int(m.group(1))), text).replace(COUNT_MARK, "")
+
+
 def _count(n: int, singular: str, plural: str) -> str:
-    return f"{n} {singular if n == 1 else plural}"
+    return f"{COUNT_MARK}{n} {singular if n == 1 else plural}"
 
 
 def _fmt_day(day: Optional[date]) -> str:
@@ -259,7 +286,7 @@ def _listing(tasks: List[Dict[str, Any]], today: date) -> Tuple[str, str]:
         display += f" Mais {_count(len(tasks) - len(shown), 'tarefa', 'tarefas')} na tela de Tarefas."
     said = " ".join(f"{i}. {_line(t, today, spoken=True)}." for i, t in enumerate(tasks[:SPOKEN_LIMIT], start=1))
     if len(tasks) > SPOKEN_LIMIT:
-        said += f" E mais {len(tasks) - SPOKEN_LIMIT} na tela."
+        said += f" E mais {_count(len(tasks) - SPOKEN_LIMIT, 'tarefa', 'tarefas')} na tela."
     return display, said
 
 
@@ -283,6 +310,11 @@ PERIOD_TEXT = {
 
 def build_reply(query: Dict[str, Any]) -> Tuple[str, str]:
     """(texto da tela, fala). So com os dados de run_query."""
+    display, said = _build_reply(query)
+    return _plain(display), _spoken(said)
+
+
+def _build_reply(query: Dict[str, Any]) -> Tuple[str, str]:
     period = query["type"]
     today = date.fromisoformat(query["today"])
     tasks: List[Dict[str, Any]] = query.get("tasks") or []
@@ -342,7 +374,8 @@ def _summary_reply(query: Dict[str, Any], today: date) -> Tuple[str, str]:
     if due_today:
         parts.append(f"Hoje você tem {_count(len(due_today), 'tarefa', 'tarefas')}: "
                      + ", ".join(_title(t) for t in due_today[:SPOKEN_LIMIT])
-                     + (f" e mais {len(due_today) - SPOKEN_LIMIT}" if len(due_today) > SPOKEN_LIMIT else "") + ".")
+                     + (f" e mais {COUNT_MARK}{len(due_today) - SPOKEN_LIMIT}" if len(due_today) > SPOKEN_LIMIT else "")
+                     + ".")
     else:
         parts.append("Você não tem tarefas previstas para hoje.")
     if query.get("doneToday"):
@@ -364,6 +397,53 @@ def _summary_reply(query: Dict[str, Any], today: date) -> Tuple[str, str]:
         parts.append(f"Prioridade sugerida: {_title(top)} ({', '.join(reason)}).")
     text = " ".join(parts)
     return text, text
+
+
+def _person_name(user: Any) -> Optional[str]:
+    """So o nome (nunca e-mail, foto ou ID) de quem a API ja devolveu na tarefa."""
+    name = str(user.get("nome") or "").strip() if isinstance(user, dict) else ""
+    return name or None
+
+
+# Listagens de selecao (a mesma lista numerada guardada para "detalhes da 1") com o formato de metadata().
+SELECTION_QUERY_TYPES = frozenset({"my_tasks", "backlog", "list_tasks", "urgent"})
+
+
+def selection_metadata(kind: str, tasks: List[Dict[str, Any]], total: Optional[int] = None) -> Dict[str, Any]:
+    """Metadados de uma listagem de selecao: os itens na MESMA ordem da lista guardada; total = lista completa."""
+    _tz, tz_name = app_timezone()
+    meta = metadata({"type": kind, "today": today_local().isoformat(), "timezone": tz_name, "range": None,
+                     "tasks": list(tasks)})
+    if isinstance(total, int) and total > meta["total"]:
+        meta["total"] = total
+    # Responsavel (so o nome) nas listagens de selecao: util na listagem geral do admin e no backlog (sem nome).
+    for item, task in zip(meta["tasks"], tasks):
+        item["responsavel"] = _person_name(task.get("user"))
+    return meta
+
+
+def task_card(task: Dict[str, Any], viewer_id: Optional[str] = None) -> Dict[str, Any]:
+    """Detalhes de uma tarefa para a interface (so campos ja devolvidos pela rota de detalhes ao usuario).
+
+    atribuidaAoUsuario: True so quando o responsavel e o dono do JWT (viewer_id, de /users/me); sem como comprovar,
+    False (a interface entao nao oferece o link de Minhas tarefas, que so lista as proprias tarefas).
+    """
+    day = due_day(task)
+    equipe = task.get("equipe")
+    user = task.get("user")
+    owner_id = str(user.get("_id") or "") if isinstance(user, dict) else str(user or "")
+    return {
+        "atribuidaAoUsuario": bool(viewer_id) and owner_id.strip().lower() == str(viewer_id).strip().lower(),
+        "id": str(task.get("_id") or ""),
+        "titulo": _title(task),
+        "status": str(task.get("status") or "pendente"),
+        "dataEntrega": day.isoformat() if day else None,
+        "urgencia": str(task.get("urgencia") or "") or None,
+        "equipe": str(equipe.get("nome")) if isinstance(equipe, dict) and equipe.get("nome") else None,
+        "responsavel": _person_name(task.get("user")),
+        "descricao": str(task.get("detalhes") or "").strip()[:2000] or None,
+        "today": today_local().isoformat(),
+    }
 
 
 def metadata(query: Dict[str, Any]) -> Dict[str, Any]:
@@ -394,6 +474,13 @@ def metadata(query: Dict[str, Any]) -> Dict[str, Any]:
 def urgent_follow_up(
     tasks: List[Dict[str, Any]], today: Optional[date] = None, *, limit: Optional[int] = None
 ) -> Tuple[List[Dict[str, Any]], str, str]:
+    top, display, said = _urgent_follow_up(tasks, today, limit=limit)
+    return top, _plain(display), _spoken(said)
+
+
+def _urgent_follow_up(
+    tasks: List[Dict[str, Any]], today: Optional[date] = None, *, limit: Optional[int] = None
+) -> Tuple[List[Dict[str, Any]], str, str]:
     """Acompanhamento "e quais sao as mais urgentes?" sobre a lista ja mostrada (sem nova consulta).
 
     limit ("as três mais urgentes"): as N primeiras por urgencia e depois prazo, so entre as que tem urgencia.
@@ -414,7 +501,7 @@ def urgent_follow_up(
     if limit is not None:
         ranked = sorted((t for t in tasks if _urgency(t) > 0), key=_by_urgency_then_due)
         top = ranked[:limit]
-        header = (f"As {len(top)} tarefas mais urgentes da lista:" if len(top) > 1
+        header = (f"As {COUNT_MARK}{len(top)} tarefas mais urgentes da lista:" if len(top) > 1
                   else "A tarefa mais urgente da lista:")
         if len(top) < limit:
             header = f"Só {_count(len(top), 'tarefa da lista tem', 'tarefas da lista têm')} urgência informada:"
