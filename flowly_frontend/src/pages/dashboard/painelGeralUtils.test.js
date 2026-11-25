@@ -10,7 +10,6 @@ import {
   formatarDataEntrega,
   formatarDia,
   formatarTempo,
-  listarProximasEntregas,
   ordenarEquipesPorNome,
 } from './painelGeralUtils';
 
@@ -212,55 +211,6 @@ describe('calcularIndicadores', () => {
 test('contarPorStatus conta pendente, em andamento e concluido', () => {
   expect(contarPorStatus([tarefa('a', 'pendente'), tarefa('a', 'pendente'), tarefa('a', 'concluido'), tarefa('a', 'arquivada')]))
     .toEqual([2, 0, 1]);
-});
-
-describe('listarProximasEntregas', () => {
-  const hoje = '2026-11-17';
-
-  test('ate 5 nao concluidas, da entrega mais antiga para a mais distante, com atrasadas marcadas', () => {
-    const tarefas = [
-      tarefa('a', 'pendente', { descricao: 'Daqui a 10 dias', dataEntrega: entrega('2026-11-27') }),
-      tarefa('a', 'concluido', { descricao: 'Concluida vencida', dataEntrega: entrega('2026-11-01') }),
-      tarefa('a', 'pendente', { descricao: 'Amanha', dataEntrega: entrega('2026-11-18') }),
-      tarefa('b', 'em_andamento', { descricao: 'Ontem', dataEntrega: entrega('2026-11-16') }),
-      tarefa('a', 'pendente', { descricao: 'Sem prazo', dataEntrega: null }),
-      tarefa('b', 'pendente', { descricao: 'Hoje B', dataEntrega: entrega('2026-11-17') }),
-      tarefa('b', 'pendente', { descricao: 'Hoje A', dataEntrega: entrega('2026-11-17') }),
-      tarefa('a', 'pendente', { descricao: 'Semana que vem', dataEntrega: entrega('2026-11-24') }),
-      tarefa('a', 'pendente', { descricao: 'Ha muito tempo', dataEntrega: entrega('2026-10-01') }),
-    ];
-
-    const { itens, total } = listarProximasEntregas(tarefas, hoje);
-
-    expect(total).toBe(7);
-    expect(itens.map((i) => i.descricao)).toEqual(['Ha muito tempo', 'Ontem', 'Hoje A', 'Hoje B', 'Amanha']);
-    expect(itens.map((i) => [i.data, i.prazo, i.atrasada, i.venceHoje])).toEqual([
-      ['01/10/2026', 'Venceu há 47 dias', true, false],
-      ['16/11/2026', 'Venceu ontem', true, false],
-      ['17/11/2026', 'Vence hoje', false, true],
-      ['17/11/2026', 'Vence hoje', false, true],
-      ['18/11/2026', 'Vence amanhã', false, false],
-    ]);
-    expect(itens[1].equipe).toBe('Equipe b');
-  });
-
-  test('nao inventa dados: descricao e equipe ausentes aparecem como nao informadas', () => {
-    const { itens } = listarProximasEntregas(
-      [{ _id: 'x', status: 'pendente', dataEntrega: entrega('2026-11-20') }],
-      hoje,
-    );
-    expect(itens[0]).toMatchObject({ id: 'x', descricao: 'Tarefa sem descrição', equipe: 'Equipe não informada' });
-  });
-
-  test('sem tarefas elegiveis: lista vazia', () => {
-    expect(listarProximasEntregas([tarefa('a', 'concluido')], hoje)).toEqual({ itens: [], total: 0 });
-    expect(listarProximasEntregas([], hoje)).toEqual({ itens: [], total: 0 });
-  });
-
-  test('limite configuravel', () => {
-    const tarefas = ['2026-11-20', '2026-11-21', '2026-11-22'].map((dia) => tarefa('a', 'pendente', { dataEntrega: entrega(dia) }));
-    expect(listarProximasEntregas(tarefas, hoje, 2).itens).toHaveLength(2);
-  });
 });
 
 test('ordenarEquipesPorNome usa a ordem do portugues e nao altera a lista original', () => {

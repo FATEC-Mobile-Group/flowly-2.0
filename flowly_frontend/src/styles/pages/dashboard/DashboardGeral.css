@@ -5,28 +5,15 @@
   position: relative;
   z-index: 10;
   transition: margin-left 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  min-width: 0;
+  /* As grades abaixo respondem a largura real do painel (sidebar expandida ou recolhida ja descontada). */
+  container-type: inline-size;
+  container-name: painel-geral;
 }
 
 /* Sidebar recolhida (78px): o painel ocupa o espaco liberado (mesmo padrao das demais paginas). */
 .sidebar.collapsed ~ .dashboard-geral {
   margin-left: 78px;
-}
-
-/* Cinco indicadores: 5 colunas em telas largas, 3 + 2 no meio e 2 + 2 + 1 em telas estreitas
-   (ver media queries). A base de 6 colunas permite as duas linhas cheias do 3 + 2. */
-.dashboard-geral .cards-container {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 20px;
-  margin-bottom: 30px;
-}
-
-.dashboard-geral .cards-container > .summary-card {
-  grid-column: span 2;
-}
-
-.dashboard-geral .cards-container > .summary-card:nth-child(n + 4) {
-  grid-column: span 3;
 }
 
 .dashboard-header {
@@ -42,6 +29,26 @@
 .dashboard-geral .dashboard-header {
   flex-wrap: wrap;
   gap: 16px;
+  margin-bottom: 18px;
+  padding-bottom: 16px;
+}
+
+.dashboard-geral .painel-titulo {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.dashboard-geral .painel-titulo h2 {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.dashboard-geral .painel-titulo p {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
 }
 
 .dashboard-geral .painel-filtros {
@@ -49,8 +56,18 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 10px 12px;
-  flex: 1 1 320px;
+  margin-bottom: 18px;
   min-width: 0;
+}
+
+.dashboard-geral .painel-escopo {
+  margin: 0 0 0 auto;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}
+
+.dashboard-geral .painel-escopo strong {
+  color: var(--text-primary);
 }
 
 .dashboard-geral .filtro-equipe {
@@ -146,7 +163,7 @@
 }
 
 .dashboard-geral .aviso-filtro {
-  margin: -14px 0 20px;
+  margin: -6px 0 18px;
   padding: 10px 14px;
   border-radius: 12px;
   border: 1px solid var(--glass-border);
@@ -306,15 +323,6 @@
   background: var(--card-hover-bg);
 }
 
-/* Grade do grafico + ranking: cada cartao fica com a propria altura (align-items: start),
-   entao a quantidade de equipes no ranking nao estica o grafico. */
-.dashboard-geral .dashboard-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(380px, 1fr);
-  align-items: start;
-  gap: 20px;
-}
-
 .glass-card {
   background: var(--glass-bg);
   backdrop-filter: var(--glass-blur);
@@ -326,29 +334,123 @@
   color: var(--text-primary);
 }
 
-.dashboard-geral .summary-card {
-  width: auto;
-  min-width: 0;
-  height: auto;
-  min-height: 130px;
+.card.green {
+  background: linear-gradient(135deg, #4caf50, #2e7d32);
 }
 
-.dashboard-geral .summary-card .kpi-valor {
-  font-size: 2rem;
-  line-height: 1.2;
+.card.orange {
+  background: linear-gradient(135deg, #ff9800, #f57c00);
+}
+
+/* ------------------------------------------------------------------------------------------------------------
+   Indicadores: fundo do tema; a cor semantica fica no icone, no valor e nos pequenos destaques.
+   Dez indicadores: 5 colunas (2 linhas cheias) e 2 colunas em telas estreitas.
+   ------------------------------------------------------------------------------------------------------------ */
+.dashboard-geral .cards-container {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.dashboard-geral .kpi-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text-primary);
+  text-decoration: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.dashboard-geral .kpi-link:hover {
+  border-color: var(--primary-color);
+  background: var(--surface-hover);
+}
+
+.dashboard-geral .kpi-link:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.dashboard-geral .kpi-icone {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.dashboard-geral .kpi-texto {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dashboard-geral .kpi-card h3 {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.dashboard-geral .kpi-valor {
+  margin: 0;
+  font-size: 1.7rem;
+  font-weight: 800;
+  line-height: 1.15;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .dashboard-geral .kpi-detalhe {
-  position: relative;
-  z-index: 2;
-  margin-top: 4px;
-  font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.88);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text-secondary);
 }
 
-.dashboard-geral .card.red {
-  background: linear-gradient(135deg, #ff4d6d, #c2185b);
+.dashboard-geral .kpi-acao {
+  margin-top: 2px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.dashboard-geral .kpi-tom-neutro { color: var(--primary-color); }
+.dashboard-geral .kpi-valor.kpi-tom-neutro { color: var(--text-primary); }
+.dashboard-geral .kpi-tom-sucesso { color: #3ccf7f; }
+.dashboard-geral .kpi-tom-info { color: #5aa2ff; }
+.dashboard-geral .kpi-tom-alerta { color: #f4b740; }
+.dashboard-geral .kpi-tom-perigo { color: #ff6b8b; }
+
+[data-theme="light"] .dashboard-geral .kpi-tom-sucesso { color: #1e8a4f; }
+[data-theme="light"] .dashboard-geral .kpi-tom-info { color: #1f66d1; }
+[data-theme="light"] .dashboard-geral .kpi-tom-alerta { color: #b45309; }
+[data-theme="light"] .dashboard-geral .kpi-tom-perigo { color: #c62828; }
+
+/* ------------------------------------------------------------------------------------------------------------
+   Grades de secoes: distribuicao + progresso e atrasadas + proximas lado a lado quando ha espaco.
+   ------------------------------------------------------------------------------------------------------------ */
+.dashboard-geral .dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.dashboard-geral .glass-card {
+  padding: 20px;
 }
 
 .dashboard-geral .painel-status {
@@ -395,7 +497,7 @@
 }
 
 .dashboard-geral .chart-vazio {
-  height: 100%;
+  min-height: 200px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -405,13 +507,381 @@
   border-radius: 12px;
 }
 
-/* Próximas entregas: linha inteira abaixo do gráfico e do ranking. */
-.dashboard-geral .entregas-panel {
-  grid-column: 1 / -1;
+.dashboard-geral .painel-cabecalho {
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 10px;
+}
+
+.dashboard-geral .painel-cabecalho--com-total {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dashboard-geral .painel-cabecalho h3 {
+  font-size: 1.15rem;
+}
+
+.dashboard-geral .painel-subtitulo {
+  margin-top: 2px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+/* Distribuicao das tarefas: rosca compacta + legenda clicavel. */
+.dashboard-geral .distribuicao-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   min-width: 0;
+}
+
+/* Ao lado do progresso, o cartao estica ate a altura dele: o conteudo fica centralizado na vertical. */
+.dashboard-geral .distribuicao-corpo {
+  margin-block: auto;
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  align-items: center;
+  gap: 20px;
+}
+
+/* O Chart.js (maintainAspectRatio: false) ocupa este conteiner: a altura e definida aqui. */
+.dashboard-geral .chart-area {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  height: 220px;
+}
+
+.dashboard-geral .distribuicao-centro {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  line-height: 1.1;
+}
+
+.dashboard-geral .distribuicao-centro strong {
+  font-size: 1.9rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.dashboard-geral .distribuicao-centro span {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.dashboard-geral .distribuicao-legenda {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dashboard-geral .distribuicao-item {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto 46px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: var(--surface-bg);
+  color: var(--text-primary);
+  text-decoration: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.dashboard-geral .distribuicao-item:hover {
+  border-color: var(--primary-color);
+  background: var(--surface-hover);
+}
+
+.dashboard-geral .distribuicao-item:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.dashboard-geral .distribuicao-cor {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.dashboard-geral .distribuicao-rotulo {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-geral .distribuicao-valor {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard-geral .distribuicao-percentual {
+  font-size: 0.85rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.dashboard-geral .distribuicao-nota {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+/* Progresso das equipes */
+.dashboard-geral .ranking-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.dashboard-geral .ranking-conteudo {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Lista completa rola dentro do cartao em vez de aumentar a pagina ao lado do grafico. */
+.dashboard-geral .ranking-conteudo.is-expanded {
+  max-height: 360px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--primary-color) 55%, transparent) transparent;
+}
+
+.dashboard-geral .ranking-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dashboard-geral .ranking-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface-bg);
+  padding: 8px 12px;
+  border-radius: 12px;
+  transition: background 0.3s;
+}
+
+.dashboard-geral .ranking-item:hover {
+  background: var(--surface-hover);
+}
+
+.dashboard-geral .ranking-medal {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 1rem;
+}
+
+/* Inicial da equipe, sem destaque de podio: a ordem so organiza a lista. */
+.dashboard-geral .ranking-medal--neutro {
+  background: var(--surface-hover);
+  border: 1px solid var(--glass-border);
+  color: var(--text-primary);
+}
+
+.dashboard-geral .ranking-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.dashboard-geral .ranking-nome {
+  font-weight: 600;
+  font-size: 0.98rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-geral .ranking-stats {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+/* Em cartoes estreitos a linha quebra entre os trechos ("·"), nunca no meio de "2 pendentes". */
+.dashboard-geral .ranking-stats > span {
+  white-space: nowrap;
+}
+
+.dashboard-geral .ranking-progresso {
+  display: block;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--surface-hover);
+  overflow: hidden;
+}
+
+.dashboard-geral .ranking-progresso > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2fb36d;
+}
+
+[data-theme="light"] .dashboard-geral .ranking-progresso > span {
+  background: #1e8a4f;
+}
+
+.dashboard-geral .ranking-percentual {
+  flex-shrink: 0;
+  min-width: 40px;
+  text-align: right;
+  font-size: 0.9rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.dashboard-geral .ranking-link,
+.dashboard-geral .ranking-todas,
+.dashboard-geral .entrega-abrir,
+.dashboard-geral .atencao-acao,
+.dashboard-geral .entregas-resumo a {
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+
+.dashboard-geral .ranking-link:focus-visible,
+.dashboard-geral .ranking-todas:focus-visible,
+.dashboard-geral .entrega-abrir:focus-visible,
+.dashboard-geral .atencao-acao:focus-visible,
+.dashboard-geral .entregas-resumo a:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.dashboard-geral .ranking-vazio,
+.dashboard-geral .ranking-resumo {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.dashboard-geral .ranking-vazio strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dashboard-geral .ranking-sem-tarefas h4 {
+  margin-bottom: 8px;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.dashboard-geral .ranking-sem-tarefas ul {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dashboard-geral .ranking-sem-tarefas li {
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--surface-bg);
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-geral .ranking-rodape {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: auto;
+}
+
+.dashboard-geral .ranking-toggle {
+  margin-left: auto;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: var(--primary-soft);
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.dashboard-geral .ranking-toggle:hover {
+  background: var(--surface-hover);
+  border-color: var(--primary-color);
+}
+
+.dashboard-geral .ranking-toggle:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+/* Entregas atrasadas e proximas entregas */
+.dashboard-geral .entregas-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.dashboard-geral .entregas-total {
+  flex-shrink: 0;
+  min-width: 38px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--surface-bg);
+  text-align: center;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard-geral .entregas-total--atrasadas {
+  color: var(--error-color);
+  border-color: color-mix(in srgb, var(--error-color) 45%, transparent);
 }
 
 .dashboard-geral .entregas-lista {
@@ -423,9 +893,10 @@
 
 .dashboard-geral .entrega-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 84px;
+  /* descricao | prazo | selo "Hoje" (coluna vazia quando nao ha selo) | Ver detalhes */
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
-  gap: 6px 16px;
+  gap: 6px 14px;
   padding: 10px 14px;
   border-radius: 12px;
   border-left: 3px solid transparent;
@@ -490,287 +961,103 @@
 }
 
 .dashboard-geral .entrega-selo {
+  grid-column: 3;
   justify-self: end;
   padding: 3px 10px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--error-color) 45%, transparent);
-  background: color-mix(in srgb, var(--error-color) 14%, transparent);
-  color: var(--error-color);
   font-size: 0.75rem;
   font-weight: 700;
   white-space: nowrap;
 }
 
+.dashboard-geral .entrega-selo--hoje {
+  border: 1px solid rgba(251, 192, 45, 0.45);
+  background: rgba(251, 192, 45, 0.14);
+  color: #ffd95c;
+}
+
+[data-theme="light"] .dashboard-geral .entrega-selo--hoje {
+  color: #b45309;
+  border-color: rgba(245, 124, 0, 0.3);
+  background: rgba(245, 124, 0, 0.08);
+}
+
+.dashboard-geral .entrega-abrir {
+  grid-column: 4;
+}
+
 .dashboard-geral .entregas-resumo {
+  margin-top: auto;
   font-size: 0.85rem;
   color: var(--text-secondary);
 }
 
-.dashboard-geral .entregas-resumo a {
-  font-weight: 600;
-}
-
-.dashboard-geral .painel-cabecalho {
-  border-bottom: 1px solid var(--border-color);
-  padding-bottom: 10px;
-}
-
-.dashboard-geral .painel-cabecalho h3 {
-  font-size: 1.2rem;
-}
-
-.dashboard-geral .painel-subtitulo {
-  margin-top: 2px;
-  font-size: 0.82rem;
-  color: var(--text-secondary);
-}
-
-.dashboard-geral .big-chart {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-width: 0;
-}
-
-/* O Chart.js (maintainAspectRatio: false) ocupa este contêiner: a altura é definida aqui. */
-.dashboard-geral .chart-area {
-  position: relative;
-  width: 100%;
-  min-width: 0;
-  height: 380px;
-}
-
-.dashboard-geral .ranking-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-width: 0;
-}
-
-.dashboard-geral .ranking-conteudo {
+/* Pontos de atencao */
+.dashboard-geral .atencao-panel {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-/* Lista completa rola dentro do cartão em vez de aumentar a página ao lado do gráfico. */
-.dashboard-geral .ranking-conteudo.is-expanded {
-  max-height: 360px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: 6px;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--primary-color) 55%, transparent) transparent;
-}
-
-.dashboard-geral .ranking-list {
+.dashboard-geral .atencao-lista {
   list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
 }
 
-.dashboard-geral .ranking-item {
+.dashboard-geral .atencao-item {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  background: var(--surface-bg);
-  padding: 8px 12px;
-  border-radius: 12px;
-  transition: transform 0.2s, background 0.3s;
-}
-
-.dashboard-geral .ranking-item:hover {
-  background: var(--surface-hover);
-  transform: translateX(4px);
-}
-
-.dashboard-geral .ranking-medal {
-  flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--primary-color), var(--primary-deep));
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  font-size: 1rem;
-}
-
-/* Sem tarefas concluídas não há posição: só a inicial da equipe, sem destaque de pódio. */
-.dashboard-geral .ranking-medal--neutro {
-  background: var(--surface-hover);
-  border: 1px solid var(--glass-border);
-  color: var(--text-primary);
-}
-
-.dashboard-geral .ranking-info {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
   min-width: 0;
-  line-height: 1.35;
-}
-
-.dashboard-geral .ranking-nome {
-  font-weight: 600;
-  font-size: 1rem;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dashboard-geral .ranking-stats {
-  font-size: 0.82rem;
-  color: var(--text-secondary);
-}
-
-/* Em cartões estreitos a linha quebra entre os trechos ("·"), nunca no meio de "2 pendentes". */
-.dashboard-geral .ranking-stats > span {
-  white-space: nowrap;
-}
-
-.dashboard-geral .ranking-progresso {
-  display: block;
-  height: 4px;
-  margin-top: 5px;
-  border-radius: 999px;
-  background: var(--surface-hover);
-  overflow: hidden;
-}
-
-.dashboard-geral .ranking-progresso > span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--primary-color), var(--primary-deep));
-}
-
-.dashboard-geral .ranking-percentual {
-  flex-shrink: 0;
-  font-size: 0.9rem;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.dashboard-geral .ranking-vazio,
-.dashboard-geral .ranking-resumo {
-  font-size: 0.9rem;
-  color: var(--text-secondary);
-}
-
-.dashboard-geral .ranking-vazio strong {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.dashboard-geral .ranking-sem-tarefas h4 {
-  margin-bottom: 8px;
-  font-size: 0.78rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
-}
-
-.dashboard-geral .ranking-sem-tarefas ul {
-  list-style: none;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.dashboard-geral .ranking-sem-tarefas li {
-  max-width: 100%;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border-color);
+  padding: 10px 12px;
+  border-radius: 10px;
+  border-left: 3px solid var(--border-color);
   background: var(--surface-bg);
-  font-size: 0.82rem;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dashboard-geral .ranking-rodape {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-}
-
-.dashboard-geral .ranking-toggle {
-  margin-left: auto;
-  padding: 8px 16px;
-  border-radius: 999px;
-  border: 1px solid var(--glass-border);
-  background: var(--primary-soft);
-  color: var(--text-primary);
   font-size: 0.88rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
 }
 
-.dashboard-geral .ranking-toggle:hover {
-  background: var(--surface-hover);
-  border-color: var(--primary-color);
+.dashboard-geral .atencao-texto {
+  min-width: 0;
 }
 
-.dashboard-geral .ranking-toggle:focus-visible {
-  outline: 2px solid var(--primary-color);
-  outline-offset: 2px;
-}
+.dashboard-geral .atencao-perigo { border-left-color: var(--error-color); }
+.dashboard-geral .atencao-alerta { border-left-color: #f4b740; }
+.dashboard-geral .atencao-info { border-left-color: #5aa2ff; }
+.dashboard-geral .atencao-neutro { border-left-color: var(--primary-color); }
 
-.card.green {
-  background: linear-gradient(135deg, #4caf50, #2e7d32);
-}
-
-.card.orange {
-  background: linear-gradient(135deg, #ff9800, #f57c00);
-}
-
-/* Responsividade */
-@media (min-width: 1500px) {
-  .dashboard-geral .cards-container {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+/* ------------------------------------------------------------------------------------------------------------
+   Responsividade pela largura do painel (container query) e pelo viewport no celular.
+   ------------------------------------------------------------------------------------------------------------ */
+@container painel-geral (max-width: 1240px) {
+  /* Cinco colunas mais estreitas: icone acima do texto para o valor caber sem quebrar. */
+  .dashboard-geral .kpi-card {
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
   }
 
-  .dashboard-geral .cards-container > .summary-card,
-  .dashboard-geral .cards-container > .summary-card:nth-child(n + 4) {
-    grid-column: auto;
+  .dashboard-geral .kpi-icone {
+    width: 30px;
+    height: 30px;
+    font-size: 0.9rem;
+  }
+
+  .dashboard-geral .kpi-valor {
+    font-size: 1.45rem;
   }
 }
 
-@media (max-width: 1100px) {
-  .dashboard-geral .cards-container {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .dashboard-geral .cards-container > .summary-card,
-  .dashboard-geral .cards-container > .summary-card:nth-child(n + 4) {
-    grid-column: auto;
-  }
-
-  .dashboard-geral .cards-container > .summary-card:last-child {
-    grid-column: 1 / -1;
-  }
-}
-
-@media (max-width: 1200px) {
+@container painel-geral (max-width: 900px) {
   .dashboard-geral .dashboard-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .dashboard-geral .chart-area {
-    height: 320px;
-  }
-
-  /* Empilhado, o ranking fica abaixo do gráfico: a lista completa cresce sem rolagem interna. */
+  /* Empilhado, o progresso fica abaixo do grafico: a lista completa cresce sem rolagem interna. */
   .dashboard-geral .ranking-conteudo.is-expanded {
     max-height: none;
     overflow: visible;
@@ -778,64 +1065,25 @@
   }
 }
 
-@media (max-width: 768px) {
-  .dashboard-geral {
-    margin-left: 0;
-    width: 100%;
-    padding: 2rem;
+@container painel-geral (max-width: 700px) {
+  .dashboard-geral .cards-container {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
   }
 
-  .sidebar.collapsed ~ .dashboard-geral {
+  .dashboard-geral .painel-escopo {
+    flex-basis: 100%;
     margin-left: 0;
   }
 }
 
-@media (max-width: 480px) {
-  .dashboard-geral .cards-container {
-    gap: 12px;
-  }
-
-  .dashboard-geral .summary-card {
-    min-height: 104px;
-    padding: 16px;
-  }
-
-  .dashboard-geral .summary-card h3 {
-    font-size: 0.95rem;
-  }
-
-  .dashboard-geral .summary-card .kpi-valor {
-    font-size: 1.7rem;
-  }
-
-  .dashboard-geral .glass-card {
-    padding: 18px;
+@container painel-geral (max-width: 520px) {
+  .dashboard-geral .distribuicao-corpo {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .dashboard-geral .chart-area {
-    height: 240px;
-  }
-
-  .dashboard-geral .filtro-equipe {
-    max-width: none;
-  }
-
-  /* No celular o "Atualizar" vira só o ícone, na mesma linha do filtro (o texto segue para leitores de tela). */
-  .dashboard-geral .painel-filtros {
-    flex-wrap: nowrap;
-  }
-
-  .dashboard-geral .botao-atualizar {
-    padding: 10px 12px;
-  }
-
-  .dashboard-geral .botao-atualizar span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
+    height: 200px;
   }
 
   .dashboard-geral .entrega-item {
@@ -853,43 +1101,77 @@
     gap: 0 8px;
     text-align: left;
   }
-}
 
-/* Proximas entregas: atalho para a tarefa na lista de tarefas (4a coluna; o selo continua na 3a) */
-.dashboard-geral .entrega-item:has(.entrega-abrir) {
-  grid-template-columns: minmax(0, 1fr) auto 84px auto;
-}
-
-.dashboard-geral .entrega-abrir {
-  grid-column: 4;
-}
-
-@media (max-width: 480px) {
-  .dashboard-geral .entrega-item:has(.entrega-abrir) {
-    grid-template-columns: minmax(0, 1fr) auto;
+  .dashboard-geral .entrega-selo {
+    grid-column: 2;
   }
 
   .dashboard-geral .entrega-abrir {
     grid-column: 1 / -1;
     justify-self: start;
   }
+
+  /* No celular o link vai para a propria linha, alinhado ao texto: nome e numeros ficam com a largura toda. */
+  .dashboard-geral .ranking-item {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .dashboard-geral .ranking-info {
+    flex: 1 1 0;
+  }
+
+  .dashboard-geral .ranking-link {
+    flex-basis: 100%;
+    padding-left: 44px;
+  }
 }
 
-.dashboard-geral .entrega-abrir {
-  flex-shrink: 0;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--primary-color, #7e57c2);
-  text-decoration: none;
-  white-space: nowrap;
+@media (max-width: 768px) {
+  .dashboard-geral {
+    margin-left: 0;
+    width: 100%;
+    padding: 2rem;
+    padding-top: 80px;
+  }
+
+  .sidebar.collapsed ~ .dashboard-geral {
+    margin-left: 0;
+  }
 }
 
-.dashboard-geral .entrega-abrir:hover {
-  text-decoration: underline;
-}
+@media (max-width: 480px) {
+  .dashboard-geral {
+    padding: 80px 16px 24px;
+  }
 
-.dashboard-geral .entrega-abrir:focus-visible {
-  outline: 2px solid var(--primary-color, #7e57c2);
-  outline-offset: 2px;
-  border-radius: 4px;
+  .dashboard-geral .painel-titulo h2 {
+    font-size: 1.6rem;
+  }
+
+  .dashboard-geral .glass-card {
+    padding: 16px;
+  }
+
+  .dashboard-geral .filtro-equipe {
+    max-width: none;
+  }
+
+  /* No celular o "Atualizar" vira so o icone, na mesma linha do filtro (o texto segue para leitores de tela). */
+  .dashboard-geral .painel-filtros {
+    flex-wrap: wrap;
+  }
+
+  .dashboard-geral .botao-atualizar {
+    padding: 10px 12px;
+  }
+
+  .dashboard-geral .botao-atualizar span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }

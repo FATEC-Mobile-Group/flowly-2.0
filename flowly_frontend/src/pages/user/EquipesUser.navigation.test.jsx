@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { authUtils } from '../../config/authUtils';
 import EquipesUser from './EquipesUser';
 import DashboardAdmin from '../admin/DashboardAdmin';
-import ProximasEntregas from '../dashboard/ProximasEntregas';
+import ListaEntregas from '../dashboard/ListaEntregas';
 
 const { apiGet } = vi.hoisted(() => ({ apiGet: vi.fn() }));
 vi.mock('../../config/apiClient', () => ({ __esModule: true, default: { get: apiGet }, getFullApiUrl: (p) => p }));
@@ -56,10 +56,22 @@ test('Equipes do admin: Abrir chat so nas equipes em que ele participa (as unica
 
 test('Painel Geral: Ver detalhes so para itens com id confiavel', () => {
   const itens = [
-    { id: 'a'.repeat(24), descricao: 'Revisar', equipe: 'Alfa', dia: '2026-11-20', data: '20/11/2026', prazo: 'Venceu há 3 dias', atrasada: true, venceHoje: false },
-    { id: 'sem-id-1', descricao: 'Sem id', equipe: 'Beta', dia: '2026-11-25', data: '25/11/2026', prazo: 'Vence hoje', atrasada: false, venceHoje: true },
+    { id: 'a'.repeat(24), abrivel: true, descricao: 'Revisar', equipe: 'Alfa', dia: '2026-11-20', data: '20/11/2026', prazo: 'Venceu há 3 dias', atrasada: true, venceHoje: false },
+    { id: 'sem-id-1', abrivel: false, descricao: 'Sem id', equipe: 'Beta', dia: '2026-11-25', data: '25/11/2026', prazo: 'Vence hoje', atrasada: false, venceHoje: true },
   ];
-  renderAt('/admin/geral', <ProximasEntregas itens={itens} total={2} filtrando={false} />);
+  renderAt('/admin/geral', (
+    <ListaEntregas
+      titulo="Entregas atrasadas"
+      subtitulo="Não concluídas"
+      tipo="atrasadas"
+      itens={itens}
+      total={2}
+      equipeId=""
+      destino={{ prazo: 'atrasadas' }}
+      vazio="Nenhuma"
+      rotuloTotal="Ver todas"
+    />
+  ));
   const lista = screen.getByRole('list');
   expect(within(lista).getAllByRole('link')).toHaveLength(1);
   fireEvent.click(screen.getByRole('link', { name: 'Ver detalhes de Revisar' }));
