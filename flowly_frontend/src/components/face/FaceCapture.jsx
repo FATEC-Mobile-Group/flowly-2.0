@@ -15,6 +15,26 @@ const DUAL_STEPS = [
   },
 ];
 
+const CAPTURE_TIP = 'Posicione o rosto inteiro na moldura, olhe para a câmera e prefira uma iluminação frontal.';
+
+// Espera curta depois do primeiro quadro de um stream novo, para dar tempo aos ajustes automaticos da camera
+// (exposicao, foco). Valor experimental: nao garante estabilidade, so evita capturar os primeiros quadros.
+// Vale uma vez por stream: outra foto e a segunda foto do cadastro, com o mesmo stream, nao esperam de novo.
+export const CAMERA_SETTLE_MS = 500;
+
+// HTMLMediaElement.HAVE_CURRENT_DATA: o video tem um quadro atual para desenhar.
+const HAVE_CURRENT_DATA = 2;
+
+const temQuadro = (video) => Boolean(video)
+  && video.readyState >= HAVE_CURRENT_DATA
+  && video.videoWidth > 0
+  && video.videoHeight > 0;
+
+// Pronto para liberar a captura: quadro real e reproducao em andamento (nao um quadro congelado).
+const reproduzindo = (video) => temQuadro(video) && !video.paused && !video.ended;
+
+const ERRO_CAMERA = 'Não foi possível acessar a câmera. Verifique as permissões do navegador.';
+
 // Para as tracks e solta o aviso de fim: um stream encerrado ou substituido nao mexe mais no estado.
 const pararStream = (stream) => {
   stream.getTracks().forEach((track) => {
@@ -22,6 +42,9 @@ const pararStream = (stream) => {
     track.stop();
   });
 };
+
+const streamVivo = (stream) => Boolean(stream)
+  && stream.getVideoTracks().some((track) => track.readyState === 'live');
 
 function FaceCapture({
   onCapture,
@@ -36,6 +59,10 @@ function FaceCapture({
   // getUserMedia e assincrono: cada pedido guarda este numero e so o mais recente pode usar o stream.
   // stopCamera (desmontagem ou novo pedido) avanca o numero e invalida o que ainda estiver pendente.
   const pedidoRef = useRef(0);
+  // Cancela a espera pelo quadro em andamento (listeners do video e temporizador da estabilizacao).
+  const esperaRef = useRef(null);
+  // Stream que ja passou pela estabilizacao: com ele, uma nova captura nao espera de novo.
+  const estabilizadoRef = useRef(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [preview, setPreview] = useState('');
@@ -45,8 +72,18 @@ function FaceCapture({
   const isDual = captureMode === 'dual';
   const currentDualStep = DUAL_STEPS[captureStep] || DUAL_STEPS[0];
 
+  const cancelarEspera = useCallback(() => {
+    if (esperaRef.current) {
+      const cancelar = esperaRef.current;
+      esperaRef.current = null;
+      cancelar();
+    }
+  }, []);
+
   const stopCamera = useCallback(() => {
     pedidoRef.current += 1;
+    cancelarEspera();
+    estabilizadoRef.current = null;
     if (streamRef.current) {
       pararStream(streamRef.current);
       streamRef.current = null;
@@ -55,42 +92,123 @@ function FaceCapture({
       videoRef.current.srcObject = null;
     }
     setCameraReady(false);
-  }, []);
+  }, [cancelarEspera]);
 
-  const isStreamAlive = useCallback(() => {
-    const stream = streamRef.current;
-    if (!stream) {
-      return false;
+  const isStreamAlive = useCallback(() => streamVivo(streamRef.current), []);
+
+  // Libera a captura so quando o video tem um quadro real (eventos nativos + readyState + dimensoes), nunca so
+  // porque o getUserMedia devolveu um stream. Evento, temporizador ou stream antigo nao liberam nada.
+  const aguardarQuadro = useCallback((stream) => {
+    cancelarEspera();
+    const video = videoRef.current;
+    if (!video) {
+      return;
     }
-    return stream.getVideoTracks().some((track) => track.readyState === 'live');
-  }, []);
+    const pedido = pedidoRef.current;
+    const eventos = ['loadeddata', 'playing'];
+    let temporizador = null;
+
+    const atual = () => pedido === pedidoRef.current && streamRef.current === stream && streamVivo(stream);
+
+    function limpar() {
+      eventos.forEach((nome) => video.removeEventListener(nome, verificar));
+      if (temporizador !== null) {
+        clearTimeout(temporizador);
+        temporizador = null;
+      }
+    }
+
+    function liberar() {
+      temporizador = null;
+      if (!atual()) {
+        limpar();
+        return;
+      }
+      if (!reproduzindo(video)) {
+        return; // continua ouvindo: o proximo loadeddata/playing tenta de novo
+      }
+      limpar();
+      if (esperaRef.current === limpar) {
+        esperaRef.current = null;
+      }
+      estabilizadoRef.current = stream;
+      setCameraReady(true);
+    }
+
+    function verificar() {
+      if (!atual()) {
+        limpar();
+        return;
+      }
+      if (temporizador !== null || !reproduzindo(video)) {
+        return;
+      }
+      if (estabilizadoRef.current === stream) {
+        liberar();
+        return;
+      }
+      temporizador = setTimeout(liberar, CAMERA_SETTLE_MS);
+    }
+
+    eventos.forEach((nome) => video.addEventListener(nome, verificar));
+    esperaRef.current = limpar;
+    // O video pode ja estar pronto (evento disparado antes do registro dos listeners).
+    verificar();
+  }, [cancelarEspera]);
+
+  const reproduzir = useCallback((stream) => {
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+    const pedido = pedidoRef.current;
+    Promise.resolve(video.play()).catch((error) => {
+      // AbortError: a reproducao foi interrompida por uma troca de fonte, nao e falha da camera.
+      if (error?.name === 'AbortError' || pedido !== pedidoRef.current || streamRef.current !== stream) {
+        return;
+      }
+      if (reproduzindo(video)) {
+        return;
+      }
+      cancelarEspera();
+      setCameraReady(false);
+      setCameraError(ERRO_CAMERA);
+    });
+  }, [cancelarEspera]);
 
   const attachStream = useCallback((stream) => {
     streamRef.current = stream;
 
     stream.getVideoTracks().forEach((track) => {
       track.onended = () => {
+        if (streamRef.current === stream) {
+          cancelarEspera();
+        }
         setCameraReady(false);
       };
     });
 
     if (videoRef.current) {
       videoRef.current.srcObject = stream;
-      videoRef.current.play().catch(() => {});
+      reproduzir(stream);
     }
 
-    setCameraReady(true);
+    setCameraReady(false);
     setCameraError('');
-  }, []);
+    aguardarQuadro(stream);
+  }, [aguardarQuadro, cancelarEspera, reproduzir]);
 
   const startCamera = useCallback(async () => {
     if (isStreamAlive()) {
-      if (videoRef.current && videoRef.current.srcObject !== streamRef.current) {
-        videoRef.current.srcObject = streamRef.current;
-        videoRef.current.play().catch(() => {});
+      const stream = streamRef.current;
+      if (videoRef.current && videoRef.current.srcObject !== stream) {
+        videoRef.current.srcObject = stream;
+        reproduzir(stream);
       }
-      setCameraReady(true);
+      setCameraReady(false);
       setCameraError('');
+      // Stream ja estabilizado fica pronto assim que houver quadro, sem nova espera.
+      aguardarQuadro(stream);
       return;
     }
 
@@ -114,10 +232,10 @@ function FaceCapture({
       if (pedido !== pedidoRef.current) {
         return;
       }
-      setCameraError('Não foi possível acessar a câmera. Verifique as permissões do navegador.');
+      setCameraError(ERRO_CAMERA);
       setCameraReady(false);
     }
-  }, [attachStream, isStreamAlive, stopCamera]);
+  }, [aguardarQuadro, attachStream, isStreamAlive, reproduzir, stopCamera]);
 
   useEffect(() => {
     // Na desmontagem o React ja soltou videoRef quando esta limpeza roda; guarda o elemento para liberar o srcObject.
@@ -140,13 +258,14 @@ function FaceCapture({
 
   const handleCapture = () => {
     const video = videoRef.current;
-    if (!video || !cameraReady || processing) {
+    // Sem quadro real nao ha foto: nada de dimensoes artificiais gerando uma imagem vazia.
+    if (!video || !cameraReady || processing || !isStreamAlive() || !temQuadro(video)) {
       return;
     }
 
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
     const context = canvas.getContext('2d');
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     const imageBase64 = canvas.toDataURL('image/jpeg', 0.92);
@@ -184,6 +303,8 @@ function FaceCapture({
   return (
     <div className="face-capture">
       {cameraError && <div className="face-capture-error">{cameraError}</div>}
+
+      <p className="face-capture-tip">{CAPTURE_TIP}</p>
 
       {isDual && (
         <p className="face-capture-tip">
