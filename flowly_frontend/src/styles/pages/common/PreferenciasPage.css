@@ -253,3 +253,11 @@
   .preferencias-pagina .preferencia-linha { align-items: flex-start; }
   .preferencias-pagina .preferencia-switch-estado { display: none; }
 }
+
+/* Voz do assistente (PR #69) */
+.preferencias-pagina .preferencias-voz { align-items: flex-start; text-align: left; }
+.preferencias-pagina .preferencias-voz .preferencias-opcao-rotulo { justify-content: flex-start; }
+.preferencias-pagina .preferencias-nota { padding: 8px 10px; border-radius: 10px; background: var(--surface-bg); }
+.preferencias-pagina .preferencias-acoes-voz { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.preferencias-pagina .preferencias-acoes-voz .preferencias-atalho { flex: 1 1 200px; }
+.preferencias-pagina .preferencias-restaurar:disabled { opacity: 0.55; cursor: not-allowed; }

@@ -10,9 +10,15 @@ export const PREFERENCIAS_PADRAO = Object.freeze({
   sidebarRecolhida: false,
   toastsMensagens: true,
   enviarComEnter: true,
+  // Voz do assistente (PR #69): 'tecnologica' (Microsoft Daniel, quando existir no navegador) ou 'original'.
+  vozAssistente: 'tecnologica',
 });
 
 const CHAVES = Object.keys(PREFERENCIAS_PADRAO);
+// Preferencias de escolha (texto): so os valores listados valem; o resto sao interruptores (booleanos).
+const OPCOES = Object.freeze({ vozAssistente: ['tecnologica', 'original'] });
+
+const valorValido = (chave, valor) => (OPCOES[chave] ? OPCOES[chave].includes(valor) : typeof valor === 'boolean');
 
 // Mesma identificacao da aparencia: id da conta (ou o nome, ou "guest" sem sessao).
 export const chaveDasPreferencias = () => {
@@ -26,7 +32,7 @@ export function normalizarPreferencias(valor) {
   const origem = valor && typeof valor === 'object' && !Array.isArray(valor) ? valor : {};
   return Object.freeze(Object.fromEntries(CHAVES.map((chave) => [
     chave,
-    typeof origem[chave] === 'boolean' ? origem[chave] : PREFERENCIAS_PADRAO[chave],
+    valorValido(chave, origem[chave]) ? origem[chave] : PREFERENCIAS_PADRAO[chave],
   ])));
 }
 
@@ -50,7 +56,7 @@ export function lerPreferencias() {
 }
 
 export function definirPreferencia(nome, valor) {
-  if (!CHAVES.includes(nome) || typeof valor !== 'boolean') return;
+  if (!CHAVES.includes(nome) || !valorValido(nome, valor)) return;
   const chave = chaveDasPreferencias();
   const proximo = normalizarPreferencias({ ...lerPreferencias(), [nome]: valor });
   cache = { chave, valor: proximo };
