@@ -63,12 +63,11 @@ beforeEach(() => {
   vi.setSystemTime(AGORA);
   localStorage.clear();
   localStorage.setItem('id', ADM);
-  respostas = { equipes: equipesPadrao(), insights: { insights: { totalMessages: 7, spamAlerts: 1, topTopics: [{ topic: 'tarefas' }], suggestions: ['Acompanhe a equipe.'] } } };
+  respostas = { equipes: equipesPadrao() };
   apiGet.mockReset();
   apiDelete.mockReset();
   apiGet.mockImplementation(async (url) => {
     if (url === API_ENDPOINTS.EQUIPES) return responder(respostas.equipes);
-    if (url === API_ENDPOINTS.ADMIN_ASSISTANT_INSIGHTS) return responder(respostas.insights);
     throw new Error(`URL inesperada: ${url}`);
   });
 });
@@ -206,16 +205,21 @@ describe('acoes', () => {
     expect(estado()).toBe(`/admin/chats|{"equipeId":"${EQ_DEV}"}`);
   });
 
-  test('modal de Insights IA continua abrindo com os dados do endpoint', async () => {
+  test('Insights inteligentes: pagina propria (sem modal e sem consulta aqui), geral e por equipe', async () => {
     renderPage();
     await esperarPronto();
-    fireEvent.click(screen.getByRole('button', { name: 'Insights IA' }));
-    expect(await screen.findByText('Insights de PLN')).toBeInTheDocument();
-    expect(await screen.findByText('Acompanhe a equipe.')).toBeInTheDocument();
-    expect(apiGet).toHaveBeenCalledWith(API_ENDPOINTS.ADMIN_ASSISTANT_INSIGHTS);
-    fireEvent.click(screen.getByRole('button', { name: 'Alertas' }));
-    expect(screen.getByText('Nenhum alerta importante detectado.')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Fechar' }));
+    expect(screen.queryByRole('button', { name: 'Insights IA' })).toBeNull();
     expect(screen.queryByText('Insights de PLN')).toBeNull();
+    fireEvent.click(screen.getByRole('link', { name: 'Insights inteligentes' }));
+    expect(estado()).toBe('/admin/insights|null');
+    expect(apiGet).not.toHaveBeenCalledWith(API_ENDPOINTS.ADMIN_ASSISTANT_INSIGHTS, expect.anything());
+    expect(apiGet.mock.calls.map(([url]) => url)).toEqual([API_ENDPOINTS.EQUIPES]);
+  });
+
+  test('Ver insights de uma equipe leva o filtro da equipe', async () => {
+    renderPage();
+    await esperarPronto();
+    fireEvent.click(within(cartao('Qualidade e Validação')).getByRole('link', { name: 'Ver insights da equipe Qualidade e Validação' }));
+    expect(estado()).toBe(`/admin/insights?equipe=${EQ_QA}|null`);
   });
 });

@@ -18,6 +18,7 @@ import {
 } from "./adminFiltrosUtils";
 import { useFiltrosNaUrl } from "./useFiltrosNaUrl";
 import { CampoBusca, CampoSelect, plural } from "./FiltrosAdmin";
+import { insightsRoute, validObjectId } from "../../utils/navigationRequests";
 
 const CRIACAO_EQUIPES = [
   { valor: "", rotulo: "Todas" },
@@ -41,11 +42,6 @@ function DashboardAdmin() {
   const [estado, setEstado] = useState("carregando");
   const [tentativa, setTentativa] = useState(0);
   const [adminNome, setAdminNome] = useState("");
-  const [insightsOpen, setInsightsOpen] = useState(false);
-  const [insightsTab, setInsightsTab] = useState("resumo");
-  const [insights, setInsights] = useState(null);
-  const [insightsLoading, setInsightsLoading] = useState(false);
-  const [insightsError, setInsightsError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
@@ -123,26 +119,6 @@ function DashboardAdmin() {
     }
   };
 
-  const fetchAssistantInsights = async () => {
-    setInsightsOpen(true);
-    setInsightsLoading(true);
-    setInsightsError("");
-
-    try {
-      const res = await apiClient.get(API_ENDPOINTS.ADMIN_ASSISTANT_INSIGHTS);
-      setInsights(res.data?.insights || null);
-    } catch (err) {
-      console.error("Erro ao carregar insights do assistente", err);
-      setInsightsError("Não foi possível carregar os insights agora.");
-    } finally {
-      setInsightsLoading(false);
-    }
-  };
-
-  const recentInsights = insights?.recent || [];
-  const chatSummaries = insights?.chatSummaries || insights?.byTeam || [];
-  const badActors = insights?.badActors || [];
-
   return (
     <div className="admin-page">
       <Sidebar />
@@ -155,9 +131,9 @@ function DashboardAdmin() {
             <p className="admin-subtitulo">Encontre equipes, participantes e acesse as tarefas de cada uma.</p>
           </div>
           <div className="dashboard-actions">
-            <button type="button" className="btn-create" onClick={fetchAssistantInsights}>
-              Insights IA
-            </button>
+            <Link to="/admin/insights" className="btn-create">
+              Insights inteligentes
+            </Link>
             <Link to="/admin/criar-equipe" className="btn-create">
               Criar nova equipe
             </Link>
@@ -297,6 +273,13 @@ function DashboardAdmin() {
                         </Link>
                       )}
                       <Link
+                        to={insightsRoute({ equipe: validObjectId(String(equipe._id ?? "")) || "" })}
+                        className="btn-edit btn-insights"
+                        aria-label={`Ver insights da equipe ${equipe.nome}`}
+                      >
+                        Ver insights
+                      </Link>
+                      <Link
                         to={`/admin/equipe/${equipe._id}`}
                         className="btn-edit"
                         aria-label={`Editar equipe ${equipe.nome}`}
@@ -320,141 +303,6 @@ function DashboardAdmin() {
         </div>
       </main>
 
-      {insightsOpen && (
-        <div className="insights-modal-overlay" onClick={() => setInsightsOpen(false)}>
-          <section className="insights-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="insights-modal-header">
-              <div>
-                <span className="insights-kicker">Assistente de voz</span>
-                <h3>Insights de PLN</h3>
-              </div>
-              <button type="button" className="insights-close" onClick={() => setInsightsOpen(false)}>
-                Fechar
-              </button>
-            </div>
-
-            <div className="insights-tabs">
-              {[
-                ["resumo", "Resumo"],
-                ["chats", "Equipes"],
-                ["alertas", "Alertas"],
-              ].map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  className={insightsTab === key ? "active" : ""}
-                  onClick={() => setInsightsTab(key)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {insightsLoading ? (
-              <p className="insights-feedback">Carregando insights...</p>
-            ) : insightsError ? (
-              <p className="insights-feedback error">{insightsError}</p>
-            ) : (
-              <div className="insights-content">
-                {insightsTab === "resumo" && (
-                  <>
-                    <div className="insights-grid">
-                      <div className="insight-card">
-                        <span>Total de mensagens</span>
-                        <strong>{insights?.totalMessages || 0}</strong>
-                      </div>
-                      <div className="insight-card">
-                        <span>Alertas de spam</span>
-                        <strong>{insights?.spamAlerts || 0}</strong>
-                      </div>
-                      <div className="insight-card">
-                        <span>Tópico principal</span>
-                        <strong>{insights?.topTopics?.[0]?.topic || "Sem dados"}</strong>
-                      </div>
-                    </div>
-                    <div className="insight-suggestions">
-                      <h4>Sugestões gerais</h4>
-                      {(insights?.suggestions || []).map((suggestion) => (
-                        <p key={suggestion}>{suggestion}</p>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {insightsTab === "chats" && (
-                  <div className="team-insights-list">
-                    {chatSummaries.length === 0 ? (
-                      <p className="insights-feedback">Nenhum assunto de chat nos ultimos dias.</p>
-                    ) : (
-                      chatSummaries.map((team) => (
-                        <article key={team.channelId} className="team-insight-card">
-                          <div className="team-insight-header">
-                            <div>
-                              <span>Ultimos {insights?.chatWindowDays || 7} dias</span>
-                              <h4>{team.teamName}</h4>
-                            </div>
-                            <strong>{team.totalMessages} msg</strong>
-                          </div>
-                          <div className="team-insight-topics">
-                            {(team.topTopics || []).length === 0 ? (
-                              <span>Sem topicos recorrentes</span>
-                            ) : (
-                              team.topTopics.map((topic) => (
-                                <span key={topic.topic}>{topic.topic} · {topic.count}</span>
-                              ))
-                            )}
-                          </div>
-                          <div className="insight-suggestions compact">
-                            {(team.suggestions || []).map((suggestion) => (
-                              <p key={suggestion}>{suggestion}</p>
-                            ))}
-                          </div>
-                        </article>
-                      ))
-                    )}
-                  </div>
-                )}
-
-                {insightsTab === "alertas" && (
-                  <div className="insights-list">
-                    {badActors.length > 0 && (
-                      <>
-                        {badActors.map((actor) => (
-                          <div key={`${actor.channelId}-${actor.userId}`} className="insight-message spam">
-                            <div>
-                              <strong>{actor.userName}</strong>
-                              <span>{actor.teamName} · {actor.count} ocorrências</span>
-                            </div>
-                            <p><strong>Motivo:</strong> {actor.reasonText || "Acompanhamento preventivo"}</p>
-                            <p>{actor.recommendation}</p>
-                            <p>Risco: {Math.round((actor.conflictRisk || 0) * 100)}%</p>
-                          </div>
-                        ))}
-                      </>
-                    )}
-                    {recentInsights.length === 0 ? (
-                      badActors.length === 0 && <p className="insights-feedback">Nenhum alerta importante detectado.</p>
-                    ) : (
-                      recentInsights.map((item) => (
-                        <div key={item._id} className={`insight-message ${item.spamAlert || item.alertLevel === "high" ? "spam" : ""}`}>
-                          <div>
-                            <strong>{item.userName || "Usuario"}</strong>
-                            <span>{item.teamName || item.channelId} · {new Date(item.createdAt).toLocaleString()}</span>
-                          </div>
-                          <p><strong>Nível:</strong> {item.alertLevelLabel || item.alertLevel || item.sentiment}</p>
-                          <p><strong>Motivo:</strong> {item.reasonText || "Acompanhamento preventivo"}</p>
-                          <p>{item.content}</p>
-                          {item.recommendation && <p>{item.recommendation}</p>}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
-        </div>
-      )}
       <ConfirmDialog
         open={!!deleteTarget}
         title="Excluir equipe?"

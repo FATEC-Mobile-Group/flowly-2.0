@@ -140,6 +140,29 @@
   cursor: progress;
 }
 
+/* Atalho discreto para os Insights inteligentes (link, sem consulta no painel). */
+.dashboard-geral .painel-atalho {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 4px;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  border-radius: 6px;
+}
+
+.dashboard-geral .painel-atalho:hover {
+  color: var(--text-primary);
+}
+
+.dashboard-geral .painel-atalho:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
 .dashboard-geral .botao-atualizar:focus-visible,
 .dashboard-geral .botao-tentar:focus-visible {
   outline: 2px solid var(--primary-color);

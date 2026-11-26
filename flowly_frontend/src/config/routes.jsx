@@ -10,6 +10,7 @@ import DashboardUser from '../pages/user/DashboardUser';
 import DashboardGeral from '../pages/dashboard/DashboardGeral';
 import DashboardTarefasAdmin from '../pages/admin/DashboardTarefasAdmin';
 import TarefasAdmin from '../pages/admin/TarefasAdmin';
+import InsightsAdmin from '../pages/admin/insights/InsightsAdmin';
 import TarefasUser from '../pages/user/TarefasUser';
 import BacklogUser from '../pages/user/BacklogUser';
 import BacklogTaskDetailUser from '../pages/user/BacklogTaskDetailUser';
@@ -86,6 +87,11 @@ export const adminRoutes = [
   {
     path: '/admin/chats',
     element: <ChatsPage />,
+    requiredRole: USER_TYPES.ADMIN,
+  },
+  {
+    path: '/admin/insights',
+    element: <InsightsAdmin />,
     requiredRole: USER_TYPES.ADMIN,
   },
   {
