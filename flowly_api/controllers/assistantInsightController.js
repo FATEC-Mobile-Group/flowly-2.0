@@ -2,6 +2,7 @@ const AssistantInsight = require('../models/AssistantInsight');
 const Equipe = require('../models/Equipe');
 const User = require('../models/User');
 const crypto = require('crypto');
+const insightsAdmin = require('../services/insightsAdminService');
 
 const secretsMatch = (expected, received) => {
   const expectedBuffer = Buffer.from(expected);
@@ -9,6 +10,15 @@ const secretsMatch = (expected, received) => {
   return expectedBuffer.length === receivedBuffer.length &&
     crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
 };
+
+const CONTEUDO_OCULTO = {
+  team_chat_blocked: 'Mensagem bloqueada pela moderação do chat. O conteúdo não é exibido.',
+  outro: 'Registro do assistente. O conteúdo da conversa não é exibido.',
+};
+
+// Chave da equipe nos agrupamentos: teamId (ObjectId) ou, sem ele, o canal (texto), sempre como texto, para o
+// mesmo time nao virar duas linhas (ObjectId e string sao chaves diferentes no MongoDB).
+const TEAM_KEY = { $toString: { $ifNull: ['$teamId', '$channelId'] } };
 
 const CHAT_INSIGHTS_DAYS = 7;
 const BEHAVIOR_ALERT_DAYS = 14;
@@ -65,9 +75,7 @@ const buildSuggestions = ({
 }) => {
   const suggestions = [];
   const negative = sentiments.negativo || 0;
-  const neutral = sentiments.neutro || 0;
   const negativeRatio = totalMessages > 0 ? negative / totalMessages : 0;
-  const neutralRatio = totalMessages > 0 ? neutral / totalMessages : 0;
   const topicNames = topTopics.map((item) => item.topic);
 
   if (negativeRatio >= 0.35) {
@@ -76,23 +84,19 @@ const buildSuggestions = ({
   if (criticalAlerts > 0 || conflictRisk >= 0.5) {
     suggestions.push('Verifique possivel conflito ou necessidade de apoio: ha alertas criticos no chat da equipe.');
   }
-  if (neutralRatio >= 0.6 && totalMessages >= 5) {
-    suggestions.push('Estimule feedbacks mais objetivos: muitas mensagens estão neutras e podem esconder dúvidas não verbalizadas.');
-  }
+  // Removidas (PR #64): "mensagens neutras podem esconder duvidas" e a sugestao pelo topico "chat", que e o
+  // valor padrao quando nenhum assunto e reconhecido. Nenhuma das duas tinha evidencia nos registros.
   if (topicNames.includes('tarefas')) {
     suggestions.push('Revise clareza de tarefas, status e responsabilidades com a equipe.');
   }
   if (topicNames.includes('equipes')) {
     suggestions.push('Verifique dúvidas sobre composição, papéis ou comunicação da equipe.');
   }
-  if (topicNames.includes('chat')) {
-    suggestions.push('Acompanhe conversas e comentários: o time pode estar usando o assistente para dúvidas operacionais.');
-  }
   if (spamAlerts > 0) {
     suggestions.push('Investigue alertas de spam ou uso inadequado no canal da equipe.');
   }
   if (suggestions.length === 0) {
-    suggestions.push('Nenhum ponto crítico detectado. Continue acompanhando os tópicos recorrentes.');
+    suggestions.push('Nenhum sinal de acompanhamento foi registrado. A ausência de registros não garante que não existam dificuldades.');
   }
 
   return suggestions;
@@ -116,7 +120,8 @@ const buildAggregation = async (adminId) => {
     ? {
         $or: [
           { teamId: { $in: adminEquipes.map((equipe) => equipe._id) } },
-          { channelId: { $in: allowedTeamIds } },
+          // O canal so vale para registro sem teamId: um canal autorizado nao libera um teamId de outra equipe.
+          { teamId: null, channelId: { $in: allowedTeamIds } },
         ],
       }
     : { _id: { $exists: false } };
@@ -165,7 +170,7 @@ const buildAggregation = async (adminId) => {
           totals: [
             {
               $group: {
-                _id: { $ifNull: ['$teamId', '$channelId'] },
+                _id: TEAM_KEY,
                 totalMessages: { $sum: 1 },
                 spamAlerts: { $sum: { $cond: ['$spamAlert', 1, 0] } },
                 criticalAlerts: {
@@ -179,7 +184,7 @@ const buildAggregation = async (adminId) => {
             {
               $group: {
                 _id: {
-                  teamKey: { $ifNull: ['$teamId', '$channelId'] },
+                  teamKey: TEAM_KEY,
                   sentiment: '$sentiment',
                 },
                 count: { $sum: 1 },
@@ -191,7 +196,7 @@ const buildAggregation = async (adminId) => {
             {
               $group: {
                 _id: {
-                  teamKey: { $ifNull: ['$teamId', '$channelId'] },
+                  teamKey: TEAM_KEY,
                   topic: '$topics',
                 },
                 count: { $sum: 1 },
@@ -217,7 +222,7 @@ const buildAggregation = async (adminId) => {
       {
         $group: {
           _id: {
-            teamKey: { $ifNull: ['$teamId', '$channelId'] },
+            teamKey: TEAM_KEY,
             userId: '$userId',
           },
           count: { $sum: 1 },
@@ -273,6 +278,9 @@ const buildAggregation = async (adminId) => {
 
     return {
       ...item,
+      // Bloqueios antigos (antes do PR #61) guardavam o texto original, e eventos do assistente guardam a conversa:
+      // so a mensagem aprovada do chat (que os administradores da equipe ja leem no chat) sai como texto.
+      content: item.source === 'team_chat' ? item.content : CONTEUDO_OCULTO[item.source] || CONTEUDO_OCULTO.outro,
       scope,
       userName: scope === 'team' ? 'Indicador coletivo da equipe' : userNames[String(item.userId)] || item.userId,
       alertLevelLabel: formatAlertLevel(item.alertLevel),
@@ -409,7 +417,27 @@ const ingestAssistantInsight = async (req, res) => {
   }
 };
 
+// Sem `versao`: resposta antiga, para o frontend que ja esta publicado. `versao=2`: contrato novo, com periodo,
+// equipe e ocorrencia (services/insightsAdminService.js). A resposta nova sempre traz `versao: 2`; o frontend
+// novo so trata como dados do periodo uma resposta com esse campo.
 const getAssistantInsights = async (req, res) => {
+  const versao = req.query?.versao;
+  if (versao !== undefined) {
+    if (versao !== String(insightsAdmin.VERSAO)) {
+      return res.status(400).json({ success: false, codigo: 'versao_invalida', erro: 'Versão do contrato de insights não suportada.' });
+    }
+    try {
+      const insights = await insightsAdmin.obterInsightsAdmin({ adminId: req.user.id, query: req.query });
+      return res.json({ success: true, versao: insightsAdmin.VERSAO, insights });
+    } catch (err) {
+      if (err instanceof insightsAdmin.ParametroInvalido) {
+        return res.status(400).json({ success: false, codigo: err.codigo, erro: err.message });
+      }
+      console.error('Erro ao carregar insights administrativos:', err?.message || err);
+      return res.status(500).json({ success: false, error: 'Erro ao carregar insights do assistente' });
+    }
+  }
+
   try {
     const insights = await buildAggregation(req.user.id);
     return res.json({ success: true, insights });

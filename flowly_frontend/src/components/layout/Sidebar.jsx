@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   FaChartPie, FaUsers, FaTasks, FaSignOutAlt,
-  FaBars, FaTimes, FaPlus, FaClipboardList, FaHome, FaInbox, FaComments, FaBell, FaMicrophone
+  FaBars, FaTimes, FaPlus, FaClipboardList, FaHome, FaInbox, FaComments, FaBell, FaMicrophone, FaLightbulb
 } from 'react-icons/fa';
 import { authUtils } from '../../config/authUtils';
 import { useFotoPerfil } from './useFotoPerfil';
@@ -44,6 +44,7 @@ const Sidebar = () => {
     const currentPath = location.pathname.replace(/\/+$/, '') || '/';
     const exactMenuPaths = [
       '/admin/geral',
+      '/admin/insights',
       '/admin',
       '/admin/chats',
       '/assistente',
@@ -89,6 +90,7 @@ const Sidebar = () => {
 
   const adminMenuItems = [
     { path: '/admin/geral', icon: <FaChartPie />, label: 'Painel Geral' },
+    { path: '/admin/insights', icon: <FaLightbulb />, label: 'Insights inteligentes' },
     { path: '/admin', icon: <FaUsers />, label: 'Equipes' },
     { path: '/admin/chats', icon: <FaComments />, label: 'Chats' },
     { path: '/assistente', icon: <FaMicrophone />, label: 'Assistente' },

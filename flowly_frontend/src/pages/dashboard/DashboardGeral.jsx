@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import apiClient from "../../config/apiClient";
 import { Link } from 'react-router-dom';
-import { FaBell, FaSyncAlt } from 'react-icons/fa';
+import { FaBell, FaLightbulb, FaSyncAlt } from 'react-icons/fa';
+import { insightsRoute, validObjectId } from '../../utils/navigationRequests';
 import {
   Chart as ChartJS,
   ArcElement,
@@ -181,6 +182,11 @@ function DashboardGeral() {
           <FaSyncAlt aria-hidden="true" className={atualizando ? 'girando' : undefined} />
           <span>{atualizando ? 'Atualizando…' : 'Atualizar'}</span>
         </button>
+        {/* Atalho sem consulta: os Insights so carregam na propria pagina. Leva a equipe escolhida, se houver. */}
+        <Link to={insightsRoute({ equipe: validObjectId(filtro.equipeId) || '' })} className="painel-atalho">
+          <FaLightbulb aria-hidden="true" />
+          <span>Insights inteligentes</span>
+        </Link>
         {estado === 'pronto' && (
           <p className="painel-escopo">
             {equipeSelecionada ? <>Mostrando a equipe <strong>{equipeSelecionada}</strong></> : 'Mostrando todas as equipes'}

@@ -1,0 +1,763 @@
+/* Insights inteligentes (/admin/insights). A pagina usa .dashboard-geral (cabecalho, filtros, indicadores,
+   cartoes e o container "painel-geral" do PR #63); aqui ficam so os elementos proprios, escopados em .insights-page.
+   Cores pelas variaveis do tema; nada de desfoque, sombra nova ou animacao continua. */
+
+.insights-page .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.insights-page .filtro-periodo {
+  flex: 0 1 230px;
+}
+
+.insights-page .aviso-filtro {
+  margin: 0 0 14px;
+}
+
+.insights-page .insights-aviso-legado {
+  border-left: 4px solid #f4b740;
+}
+
+/* ---------------------------------------------------------------- Abas */
+.insights-page .insights-abas {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 18px;
+  padding: 4px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.insights-page .insights-abas button {
+  min-height: 38px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.insights-page .insights-abas button:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.insights-page .insights-abas button.is-ativa {
+  color: var(--text-primary);
+  background: var(--primary-soft);
+  border-color: var(--primary-color);
+}
+
+.insights-page .insights-abas button:focus-visible,
+.insights-page .insights-link:focus-visible,
+.insights-page .insights-botao-texto:focus-visible,
+.insights-page .insights-alertas:focus-visible,
+.insights-page .insights-campo select:focus-visible,
+.insights-page .insights-campo input:focus-visible,
+.insights-page .insights-opcao input:focus-visible,
+.insights-page .insights-tabela-detalhes summary:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.insights-page .insights-aba-conteudo {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.insights-page .insights-aba-conteudo > .dashboard-grid {
+  margin-bottom: 0;
+  align-items: start;
+}
+
+/* ---------------------------------------------------------------- Indicadores */
+.insights-page .cards-container {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 0;
+}
+
+.insights-page .insights-indicadores--moderacao,
+.insights-page .insights-indicadores--legado {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.insights-page .kpi-valor small {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.insights-page .insights-origens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: -4px 0 0;
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+}
+
+.insights-page .insights-origens span:first-child {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.insights-page .insights-nota {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.insights-page .glass-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- Grafico */
+.insights-page .insights-grafico {
+  position: relative;
+  height: 240px;
+  min-width: 0;
+}
+
+.insights-page .insights-legenda {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.84rem;
+}
+
+.insights-page .insights-legenda li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.insights-page .insights-legenda strong {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Marca da legenda com o mesmo traco da linha (cor + padrao). */
+.insights-page .insights-legenda-marca {
+  width: 22px;
+  height: 0;
+  border-top: 3px solid currentColor;
+}
+
+.insights-page .insights-legenda-marca--chat { color: #5aa2ff; }
+.insights-page .insights-legenda-marca--bloqueadas { color: #ff6b8b; border-top-style: dashed; }
+.insights-page .insights-legenda-marca--ajuda { color: #f4b740; border-top-style: dotted; }
+.insights-page .insights-legenda-marca--assistente { color: #a78bfa; border-top-style: double; }
+
+[data-theme="light"] .insights-page .insights-legenda-marca--chat { color: #1f66d1; }
+[data-theme="light"] .insights-page .insights-legenda-marca--bloqueadas { color: #c62828; }
+[data-theme="light"] .insights-page .insights-legenda-marca--ajuda { color: #b45309; }
+[data-theme="light"] .insights-page .insights-legenda-marca--assistente { color: #6d28d9; }
+
+.insights-page .insights-tabela-detalhes summary {
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-radius: 6px;
+  width: fit-content;
+}
+
+.insights-page .insights-tabela-rolagem {
+  margin-top: 8px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.insights-page .insights-tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.insights-page .insights-tabela th,
+.insights-page .insights-tabela td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-color);
+  text-align: right;
+}
+
+.insights-page .insights-tabela th:first-child {
+  text-align: left;
+}
+
+.insights-page .insights-tabela thead th {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- Recomendacoes */
+.insights-page .insights-recomendacoes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.insights-page .insights-recomendacao {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--primary-color);
+  background: var(--surface-bg);
+  min-width: 0;
+}
+
+.insights-page .insights-recomendacao--moderacao_grave,
+.insights-page .insights-recomendacao--alertas_individuais { border-left-color: var(--error-color); }
+.insights-page .insights-recomendacao--alertas_coletivos,
+.insights-page .insights-recomendacao--moderacao_recorrente,
+.insights-page .insights-recomendacao--ajuda { border-left-color: #f4b740; }
+
+.insights-page .insights-recomendacao p {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.insights-page .insights-recomendacao-topo {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.insights-page .insights-contador {
+  flex-shrink: 0;
+  min-width: 28px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.insights-page .insights-recomendacao-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  color: var(--text-secondary);
+  font-size: 0.8rem !important;
+}
+
+.insights-page .insights-recomendacao-acao span {
+  font-weight: 700;
+}
+
+.insights-page .insights-link,
+.insights-page .insights-botao-texto {
+  width: fit-content;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.insights-page .insights-link:hover,
+.insights-page .insights-botao-texto:hover {
+  color: var(--primary-color);
+}
+
+/* ---------------------------------------------------------------- Filtros locais */
+.insights-page .insights-filtros-locais {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 14px;
+}
+
+.insights-page .insights-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 1 220px;
+  min-width: 0;
+}
+
+.insights-page .insights-campo label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.insights-page .insights-campo select,
+.insights-page .insights-campo input {
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--input-text);
+  font: inherit;
+  font-size: 0.88rem;
+  min-width: 0;
+}
+
+.insights-page .insights-campo option {
+  color: var(--text-primary);
+  background: var(--dropdown-bg);
+}
+
+.insights-page .insights-opcao {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  font-size: 0.86rem;
+}
+
+.insights-page .insights-filtros-locais .admin-contagem {
+  margin: 0 0 0 auto;
+  align-self: center;
+}
+
+/* ---------------------------------------------------------------- Equipes */
+.insights-page .insights-equipes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.insights-page .insights-equipe {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  min-width: 0;
+}
+
+.insights-page .insights-equipe-topo {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.insights-page .insights-equipe h4 {
+  margin: 0;
+  font-size: 1.02rem;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.insights-page .insights-equipe-vazia {
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.insights-page .insights-equipe-numeros {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.insights-page .insights-equipe-numeros div {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  min-width: 0;
+}
+
+.insights-page .insights-equipe-numeros dt {
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+  line-height: 1.25;
+}
+
+.insights-page .insights-equipe-numeros dd {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.insights-page .insights-equipe-alertas,
+.insights-page .insights-assuntos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.insights-page .insights-equipe-alertas span:first-child,
+.insights-page .insights-assuntos-rotulo {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.insights-page .insights-assuntos ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.insights-page .insights-assuntos li {
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+
+.insights-page .insights-equipe-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+}
+
+/* ---------------------------------------------------------------- Selos, gravidade e listas */
+.insights-page .insights-selo {
+  flex-shrink: 0;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.insights-page .insights-selo--alerta,
+.insights-page .insights-selo--individual { border-color: #ff6b8b; }
+.insights-page .insights-selo--coletivo { border-color: #5aa2ff; }
+.insights-page .insights-selo--historico { border-style: dashed; }
+
+.insights-page .insights-gravidade {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.insights-page .insights-gravidade[data-gravidade="high"] { color: #ff6b8b; }
+.insights-page .insights-gravidade[data-gravidade="medium"] { color: #f4b740; }
+.insights-page .insights-gravidade[data-gravidade="low"] { color: #5aa2ff; }
+[data-theme="light"] .insights-page .insights-gravidade[data-gravidade="high"] { color: #c62828; }
+[data-theme="light"] .insights-page .insights-gravidade[data-gravidade="medium"] { color: #b45309; }
+[data-theme="light"] .insights-page .insights-gravidade[data-gravidade="low"] { color: #1f66d1; }
+
+.insights-page .insights-lista-simples {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.insights-page .insights-lista-simples li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--surface-bg);
+  min-width: 0;
+}
+
+.insights-page .insights-lista-simples li.is-grave {
+  border-left: 4px solid var(--error-color);
+}
+
+.insights-page .insights-lista-linha {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.insights-page .insights-nome {
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.insights-page .insights-lista-detalhe {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------- Moderacao: barras por categoria */
+.insights-page .insights-barras {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.insights-page .insights-barra-rotulo {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.86rem;
+}
+
+.insights-page .insights-barra-rotulo strong {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.insights-page .insights-barra {
+  display: block;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: var(--border-color);
+  overflow: hidden;
+}
+
+.insights-page .insights-barra > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary-color);
+}
+
+.insights-page .insights-barra--threat > span,
+.insights-page .insights-barra--hate > span { background: var(--error-color); }
+.insights-page .insights-barra--insult > span { background: #f4b740; }
+.insights-page .insights-barra--sem_categoria > span { background: var(--text-secondary); }
+
+/* ---------------------------------------------------------------- Alertas */
+.insights-page .insights-resumo-alertas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}
+
+.insights-page .insights-resumo-alertas strong {
+  color: var(--text-primary);
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.insights-page .insights-alertas {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  border-radius: 12px;
+}
+
+.insights-page .insights-alerta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  border-left: 4px solid var(--border-color);
+  background: var(--glass-bg);
+  min-width: 0;
+}
+
+.insights-page .insights-alerta--individual { border-left-color: #ff6b8b; }
+.insights-page .insights-alerta--coletivo { border-left-color: #5aa2ff; }
+.insights-page .insights-alerta--historico { border-left-style: dashed; }
+
+.insights-page .insights-alerta.is-destacado {
+  border-color: var(--primary-color);
+  background: var(--primary-soft);
+}
+
+.insights-page .insights-alerta-topo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.insights-page .insights-alerta-topo time {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.insights-page .insights-alerta h4 {
+  margin: 0;
+  font-size: 0.98rem;
+  overflow-wrap: anywhere;
+}
+
+.insights-page .insights-alerta-dados {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 0;
+}
+
+.insights-page .insights-alerta-dados div {
+  min-width: 0;
+}
+
+.insights-page .insights-alerta-dados dt {
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}
+
+.insights-page .insights-alerta-dados dd {
+  margin: 0;
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+.insights-page .insights-ocorrencia {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.insights-page .insights-ocorrencia-texto {
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.insights-page .insights-paginacao {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  font-size: 0.86rem;
+}
+
+.insights-page .insights-paginacao button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------- Responsividade pela largura real */
+@container painel-geral (max-width: 900px) {
+  .insights-page .insights-alertas,
+  .insights-page .insights-equipes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container painel-geral (max-width: 700px) {
+  .insights-page .cards-container {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .insights-page .insights-equipe-numeros {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .insights-page .insights-abas {
+    width: 100%;
+  }
+
+  .insights-page .insights-abas button {
+    flex: 1 1 0;
+    padding: 0 8px;
+    min-width: 0;
+  }
+}
+
+@container painel-geral (max-width: 520px) {
+  .insights-page .insights-abas {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .insights-page .insights-campo {
+    flex: 1 1 100%;
+  }
+
+  .insights-page .insights-filtros-locais .admin-contagem {
+    margin-left: 0;
+  }
+
+  .insights-page .insights-alerta-dados {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .insights-page .insights-alerta-topo time {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+
+  .insights-page .insights-grafico {
+    height: 200px;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Os dois seletores ocupam a linha toda; o "Atualizar" (so icone) fica ao lado do periodo. */
+  .insights-page .filtro-equipe {
+    flex: 1 1 100%;
+  }
+
+  .insights-page .filtro-periodo {
+    flex: 1 1 0;
+  }
+}
