@@ -6,6 +6,7 @@ import apiClient from '../../../config/apiClient';
 import { API_ENDPOINTS } from '../../../config/config';
 import Sidebar from '../../../components/layout/Sidebar';
 import { useFotoPerfil } from '../../../components/layout/useFotoPerfil';
+import { useNaoLidas } from '../../../components/notifications/notificationStore';
 import { useCoresDoTema } from '../../dashboard/useCoresDoTema';
 import VisaoGeralInsights from './VisaoGeralInsights';
 import EquipesInsights from './EquipesInsights';
@@ -75,7 +76,8 @@ function InsightsAdmin() {
   const [atualizacao, setAtualizacao] = useState(0);
   const [estado, setEstado] = useState(ESTADO_INICIAL);
   const [aviso, setAviso] = useState('');
-  const [notificationCount, setNotificationCount] = useState(0);
+  // Contador compartilhado com a sidebar e a central (atualizado tambem pelo Socket.IO).
+  const notificationCount = useNaoLidas() ?? 0;
   const cores = useCoresDoTema();
   const ids = { equipe: useId(), periodo: useId(), abas: useId() };
   const abasRef = useRef([]);
@@ -131,17 +133,6 @@ function InsightsAdmin() {
       });
     return () => controle.abort();
   }, [chave, atualizacao]);
-
-  // O contador do sino e independente: se falhar, a pagina segue normalmente.
-  useEffect(() => {
-    const controle = new AbortController();
-    apiClient.get(API_ENDPOINTS.NOTIFICATIONS_COUNT, { signal: controle.signal })
-      .then((res) => {
-        if (!controle.signal.aborted) setNotificationCount(res?.data?.count || 0);
-      })
-      .catch(() => {});
-    return () => controle.abort();
-  }, []);
 
   const aplicar = (mudancas, opcoes = {}) => {
     setSearchParams(serializarFiltrosInsights({ ...filtros, ...mudancas }), { preventScrollReset: true, ...opcoes });

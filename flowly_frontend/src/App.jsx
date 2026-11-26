@@ -9,6 +9,7 @@ import ThemeToggle from "./components/layout/ThemeToggle";
 import FloatingTimer from "./components/timer/FloatingTimer";
 import ColorBendsBackground from "./components/layout/ColorBendsBackground";
 import MessageToastContainer from "./components/notifications/MessageToastContainer";
+import { receberNotificacao } from "./components/notifications/notificationStore";
 import "./styles/common/App.css";
 
 // Home de cada papel. Sem sessao, ou com papel desconhecido, vai para o login (rota publica, sem loop).
@@ -88,6 +89,8 @@ function AppContent() {
     }
 
     socket.on('notification_created', (notification) => {
+      // Contador compartilhado e central; repeticao do mesmo _id (reconexao) nao conta nem gera outro aviso.
+      if (!receberNotificacao(notification)) return;
       if (notification?.tipo !== 'chat') return;
 
       const toastId = notification._id || `${Date.now()}-${Math.random()}`;

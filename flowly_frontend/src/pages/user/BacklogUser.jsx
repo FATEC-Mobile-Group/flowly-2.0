@@ -2,9 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom';
 import { FaBell, FaCalendarAlt, FaSyncAlt, FaUserCheck, FaUsers } from 'react-icons/fa';
 import apiClient from '../../config/apiClient';
-import { API_ENDPOINTS } from '../../config/config';
 import Sidebar from '../../components/layout/Sidebar';
 import { useFotoPerfil } from '../../components/layout/useFotoPerfil';
+import { useNaoLidas } from '../../components/notifications/notificationStore';
 import { CampoBusca, CampoSelect, plural } from '../admin/FiltrosAdmin';
 import { formatarDataCriacao, instanteValido, rotuloUrgencia } from '../admin/adminFiltrosUtils';
 import { chaveDiaLocal } from '../dashboard/painelGeralUtils';
@@ -102,7 +102,8 @@ const BacklogUser = () => {
   const [filtros, setFiltros] = useState(FILTROS_BACKLOG_PADRAO);
   const [atribuindoId, setAtribuindoId] = useState(null);
   const [aviso, setAviso] = useState(null);
-  const [notificationCount, setNotificationCount] = useState(0);
+  // Contador compartilhado com a sidebar e a central (atualizado tambem pelo Socket.IO).
+  const notificationCount = useNaoLidas() ?? 0;
   const carregamento = useRef(null);
   const montado = useRef(true);
   const temLista = useRef(false);
@@ -145,17 +146,6 @@ const BacklogUser = () => {
       carregamento.current?.abort();
     };
   }, [carregar]);
-
-  // O contador do sino e independente: se falhar, o backlog segue normalmente.
-  useEffect(() => {
-    const controle = new AbortController();
-    apiClient.get(API_ENDPOINTS.NOTIFICATIONS_COUNT, { signal: controle.signal })
-      .then((res) => {
-        if (!controle.signal.aborted) setNotificationCount(res?.data?.count || 0);
-      })
-      .catch(() => {});
-    return () => controle.abort();
-  }, []);
 
   const tentarNovamente = () => {
     setEstado('carregando');

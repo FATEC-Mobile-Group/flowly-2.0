@@ -6,6 +6,7 @@ import {
 } from 'react-icons/fa';
 import { authUtils } from '../../config/authUtils';
 import { useFotoPerfil } from './useFotoPerfil';
+import { useNaoLidas } from '../notifications/notificationStore';
 import '../../styles/components/Sidebar.css';
 
 const Sidebar = () => {
@@ -18,6 +19,8 @@ const Sidebar = () => {
   const isAdmin = userType === 'admin';
   const userName = localStorage.getItem('nome') || 'Usuário';
   const { fotoUrl: userPhotoUrl, aoFalharFoto: handleFotoErro } = useFotoPerfil();
+  // Mesmo contador do sino dos cabecalhos e da central (components/notifications/notificationStore.js).
+  const naoLidas = useNaoLidas();
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -150,18 +153,29 @@ const Sidebar = () => {
             {expanded && (isAdmin ? 'ADMINISTRAÇÃO' : 'NAVEGAÇÃO')}
           </div>
           <ul className="sidebar-menu">
-            {menuItems.map((item) => (
-              <li key={item.path}>
-                <Link
-                  to={item.path}
-                  className={`sidebar-link ${isActive(item.path) ? 'active' : ''}`}
-                  title={item.label}
-                >
-                  <span className="sidebar-link-icon">{item.icon}</span>
-                  {expanded && <span className="sidebar-link-text">{item.label}</span>}
-                </Link>
-              </li>
-            ))}
+            {menuItems.map((item) => {
+              const contador = item.path === '/notificacoes' && naoLidas > 0 ? naoLidas : 0;
+              const rotulo = contador ? `${item.label} (${contador} não ${contador === 1 ? 'lida' : 'lidas'})` : item.label;
+              return (
+                <li key={item.path}>
+                  <Link
+                    to={item.path}
+                    className={`sidebar-link ${isActive(item.path) ? 'active' : ''}`}
+                    title={rotulo}
+                    aria-label={contador ? rotulo : undefined}
+                  >
+                    <span className="sidebar-link-icon">
+                      {item.icon}
+                      {contador > 0 && !expanded && <span className="sidebar-contador sidebar-contador--ponto" aria-hidden="true" />}
+                    </span>
+                    {expanded && <span className="sidebar-link-text">{item.label}</span>}
+                    {contador > 0 && expanded && (
+                      <span className="sidebar-contador" aria-hidden="true">{contador > 99 ? '99+' : contador}</span>
+                    )}
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         </nav>
 
