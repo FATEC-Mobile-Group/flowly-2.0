@@ -147,7 +147,7 @@ describe('ChatsPage: mensagens de uma equipe', () => {
 
     // Aguarda o historico terminar: so entao o socket esta pronto e a lista vazia e definitiva.
     await waitFor(() => {
-      expect(apiGet).toHaveBeenCalledWith(expect.stringContaining('/messages'));
+      expect(apiGet).toHaveBeenCalledWith(expect.stringContaining('/messages'), { params: { limit: 50 } });
     });
     await act(async () => {
       await apiGet.mock.results.at(-1).value;
@@ -319,6 +319,7 @@ describe('ChatsPage: mensagens de uma equipe', () => {
       });
     };
 
+    // Rascunho por conversa (PR #67): o texto da Alfa fica com a Alfa; a Beta abre com o rascunho dela.
     test('trocar de equipe durante o envio nao apaga o rascunho nem envia na outra equipe', async () => {
       const OTHER_EQUIPE_ID = '507f1f77bcf86cd799439014';
       const secondSocket = createFakeSocket();
@@ -346,7 +347,8 @@ describe('ChatsPage: mensagens de uma equipe', () => {
       });
 
       expect(socket.disconnect).toHaveBeenCalled();
-      expect(input()).toHaveValue('mensagem da Alfa');
+      // O texto nao vai para a conversa errada: a Beta abre vazia.
+      expect(input()).toHaveValue('');
       expect(within(screen.getByRole('alert')).getByText('Envio não confirmado')).toBeInTheDocument();
       expect(secondSocket.sendCount()).toBe(0);
 
@@ -357,6 +359,16 @@ describe('ChatsPage: mensagens de uma equipe', () => {
       });
       expect(input()).toHaveValue('rascunho da Beta');
       expect(secondSocket.sendCount()).toBe(0);
+
+      // Voltando para a Alfa, o texto que nao teve confirmacao continua la; a Beta guarda o dela.
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /Equipe Alfa/ }));
+      });
+      expect(input()).toHaveValue('mensagem da Alfa');
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /Equipe Beta/ }));
+      });
+      expect(input()).toHaveValue('rascunho da Beta');
     });
 
     test('ACK que chega depois do prazo nao apaga um rascunho novo', async () => {
