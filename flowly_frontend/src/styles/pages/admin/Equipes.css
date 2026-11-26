@@ -542,3 +542,18 @@
     max-width: 100%;
   }
 }
+
+/* Descricao opcional da equipe (PR #65). */
+.form .equipe-descricao-campo {
+  min-height: 84px;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.45;
+}
+
+.form .equipe-descricao-contador {
+  margin-top: -8px;
+  align-self: flex-end;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}

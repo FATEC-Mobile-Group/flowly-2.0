@@ -707,42 +707,36 @@
 
 .admin-gestao .team-member-name { overflow-wrap: anywhere; }
 
+.admin-gestao .team-item-descricao {
+  margin: 8px 0 10px;
+  color: var(--text-desc);
+  font-size: 0.88rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Acoes no rodape do cartao (a lista de participantes cresce e empurra para baixo): grade 2x2 e a exclusao
+   separada, abaixo de um divisor. Os botoes vem de components/AcoesEquipe.css. */
 .team-actions {
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   margin-top: 14px;
 }
 
-.team-actions-principais {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.team-actions .acao-equipe--excluir {
+  align-self: flex-end;
+  margin-top: 2px;
 }
 
-/* Quando as acoes quebram de linha, a exclusao continua separada, no canto direito. */
-.team-actions .btn-delete {
-  margin-left: auto;
-}
-
-.admin-gestao .team-actions a {
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-}
-
-.btn-tarefas {
-  background: var(--primary-soft);
-  color: var(--text-primary);
-  border-color: var(--primary-shadow);
-}
-
-.btn-tarefas:hover,
-[data-theme="light"] .btn-tarefas,
-[data-theme="light"] .btn-tarefas:hover {
-  background: var(--surface-active);
-  color: var(--text-primary);
-  border-color: var(--primary-shadow);
+.team-actions .acoes-equipe {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 /* Tarefas: etiquetas */
@@ -1023,4 +1017,9 @@
   .admin-filtros-grade,
   .admin-filtros-grade-curta { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
   .admin-gestao .teams-list { grid-template-columns: 1fr; }
+}
+
+/* Celular: um filtro por linha, sem cortar o texto das opcoes (criacao, atividade e ordenacao). */
+@media (max-width: 480px) {
+  .admin-gestao .admin-filtros-grade-curta { grid-template-columns: 1fr; }
 }

@@ -85,36 +85,68 @@ export const ORDENS_EQUIPES = [
   { valor: 'nomeZA', rotulo: 'Nome (Z–A)' },
 ];
 export const ORDEM_PADRAO_EQUIPES = 'recentes';
-export const FILTROS_EQUIPES_PADRAO = { busca: '', criacao: '', ordem: ORDEM_PADRAO_EQUIPES };
+// Atividade: equipes com ou sem tarefas, pelos mesmos dados resumidos do Painel Geral (GET /tarefas?resumo=1).
+export const ATIVIDADE_COM_TAREFAS = 'com';
+export const ATIVIDADE_SEM_TAREFAS = 'sem';
+export const FILTROS_ATIVIDADE = [
+  { valor: '', rotulo: 'Todas as equipes' },
+  { valor: ATIVIDADE_COM_TAREFAS, rotulo: 'Equipes com tarefas' },
+  { valor: ATIVIDADE_SEM_TAREFAS, rotulo: 'Equipes sem tarefas' },
+];
+export const FILTROS_EQUIPES_PADRAO = { busca: '', criacao: '', atividade: '', ordem: ORDEM_PADRAO_EQUIPES };
 
 export function lerFiltrosEquipes(params) {
   const invalidos = [];
   const criacao = params.get('criacao') || '';
+  const atividade = params.get('atividade') || '';
   const ordem = params.get('ordem') || ORDEM_PADRAO_EQUIPES;
   const criacaoValida = valorPermitido(FILTROS_CRIACAO, criacao);
+  const atividadeValida = valorPermitido(FILTROS_ATIVIDADE, atividade);
   const ordemValida = valorPermitido(ORDENS_EQUIPES, ordem);
   if (!criacaoValida) invalidos.push('data de criação');
+  if (!atividadeValida) invalidos.push('atividade');
   if (!ordemValida) invalidos.push('ordenação');
   return {
     filtros: {
       busca: lerBusca(params),
       criacao: criacaoValida ? criacao : '',
+      atividade: atividadeValida ? atividade : '',
       ordem: ordemValida ? ordem : ORDEM_PADRAO_EQUIPES,
     },
     invalidos,
   };
 }
 
-export function serializarFiltrosEquipes({ busca, criacao, ordem }) {
+export function serializarFiltrosEquipes({ busca, criacao, atividade, ordem }) {
   const params = new URLSearchParams();
   const texto = String(busca || '').trim();
   if (texto) params.set('q', texto);
   if (criacao) params.set('criacao', criacao);
+  if (atividade) params.set('atividade', atividade);
   if (ordem && ordem !== ORDEM_PADRAO_EQUIPES) params.set('ordem', ordem);
   return params;
 }
 
-export const equipesComFiltroAtivo = (filtros) => Boolean(filtros.busca || filtros.criacao);
+export const equipesComFiltroAtivo = (filtros) => Boolean(filtros.busca || filtros.criacao || filtros.atividade);
+
+// Tarefas por equipe (id -> quantidade), de uma lista ja carregada. Lista invalida = dados indisponiveis (null):
+// nunca vira "todas as equipes sem tarefas".
+export function contarTarefasPorEquipe(tarefas) {
+  if (!Array.isArray(tarefas)) return null;
+  const contagem = new Map();
+  tarefas.forEach((tarefa) => {
+    const id = idDaEquipeDaTarefa(tarefa);
+    if (id) contagem.set(id, (contagem.get(id) || 0) + 1);
+  });
+  return contagem;
+}
+
+// Sem a contagem (null), o filtro de atividade nao e aplicado: quem chama avisa que ele esta indisponivel.
+export function correspondeAtividade(equipe, atividade, tarefasPorEquipe) {
+  if (!atividade || !(tarefasPorEquipe instanceof Map)) return true;
+  const total = tarefasPorEquipe.get(String(equipe?._id ?? '')) || 0;
+  return atividade === ATIVIDADE_COM_TAREFAS ? total > 0 : total === 0;
+}
 
 const ordenadorEquipes = {
   recentes: (a, b) => compararCriacao(a?.createdAt, b?.createdAt, -1),
@@ -123,13 +155,15 @@ const ordenadorEquipes = {
   nomeZA: (a, b) => compararNomes(b?.nome, a?.nome),
 };
 
-export function filtrarEquipes(equipes, filtros, agora) {
+export function filtrarEquipes(equipes, filtros, agora, tarefasPorEquipe = null) {
   const lista = Array.isArray(equipes) ? equipes.filter(Boolean) : [];
   const ordenar = ordenadorEquipes[filtros.ordem] || ordenadorEquipes[ORDEM_PADRAO_EQUIPES];
   return lista
     .filter((equipe) => correspondeCriacao(equipe.createdAt, filtros.criacao, agora))
+    .filter((equipe) => correspondeAtividade(equipe, filtros.atividade, tarefasPorEquipe))
     .filter((equipe) => correspondeBusca([
       equipe.nome,
+      equipe.descricao,
       ...(equipe.membros || []).flatMap((membro) => [membro?.nome, membro?.email]),
     ], filtros.busca))
     // Desempate estavel: nome e depois id, para a ordem nao mudar entre recarregamentos.

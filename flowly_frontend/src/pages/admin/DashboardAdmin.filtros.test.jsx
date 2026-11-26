@@ -31,6 +31,13 @@ const equipesPadrao = () => [
   { _id: EQ_QA, nome: 'Qualidade e Validação', createdAt: '2026-11-10T12:00:00.000Z', createdBy: ADM, membros: [{ _id: ADM, nome: 'Admin Teste', email: 'admin@exemplo.com' }, BRUNO] },
 ];
 
+// GET /tarefas?resumo=1: Desenvolvimento com 2 tarefas, Qualidade com 1; Arquivo Antigo e Sem Data sem tarefas.
+const tarefasPadrao = () => [
+  { _id: 't1', equipe: { _id: EQ_DEV, nome: 'Desenvolvimento' }, status: 'pendente' },
+  { _id: 't2', equipe: { _id: EQ_DEV, nome: 'Desenvolvimento' }, status: 'concluido' },
+  { _id: 't3', equipe: EQ_QA, status: 'em_andamento' },
+];
+
 let respostas;
 const responder = async (valor) => {
   const resultado = typeof valor === 'function' ? await valor() : valor;
@@ -56,6 +63,7 @@ const esperarPronto = () => screen.findByText(/^Exibindo \d+ de/);
 const nomes = () => [...document.querySelectorAll('.team-item h3')].map((el) => el.textContent);
 const cartao = (nome) => screen.getByRole('article', { name: `Equipe ${nome}` });
 const estado = () => screen.getByTestId('estado').textContent;
+const chamadas = () => apiGet.mock.calls.map(([url]) => url);
 const escolher = (rotulo, valor) => fireEvent.change(screen.getByLabelText(rotulo), { target: { value: valor } });
 
 beforeEach(() => {
@@ -63,11 +71,12 @@ beforeEach(() => {
   vi.setSystemTime(AGORA);
   localStorage.clear();
   localStorage.setItem('id', ADM);
-  respostas = { equipes: equipesPadrao() };
+  respostas = { equipes: equipesPadrao(), tarefas: tarefasPadrao() };
   apiGet.mockReset();
   apiDelete.mockReset();
   apiGet.mockImplementation(async (url) => {
     if (url === API_ENDPOINTS.EQUIPES) return responder(respostas.equipes);
+    if (url === API_ENDPOINTS.TAREFAS) return responder(respostas.tarefas);
     throw new Error(`URL inesperada: ${url}`);
   });
 });
@@ -93,7 +102,7 @@ describe('cards e estados', () => {
     expect(semData).not.toHaveTextContent('Criada por');
     expect(semData).toHaveTextContent('0 participantes');
     expect(semData).toHaveTextContent('Sem participantes nesta equipe.');
-    expect(apiGet).toHaveBeenCalledTimes(1);
+    expect(chamadas()).toEqual([API_ENDPOINTS.EQUIPES, API_ENDPOINTS.TAREFAS]);
   });
 
   test('erro de carregamento nao aparece como "nenhuma equipe"; tentar novamente recarrega', async () => {
@@ -159,7 +168,7 @@ describe('pesquisa, ordenacao e filtros', () => {
     escolher('Criação', 'mais30dias');
     expect(nomes()).toEqual(['Arquivo Antigo']);
     expect(estado()).toBe('/admin?criacao=mais30dias|null');
-    expect(apiGet).toHaveBeenCalledTimes(1);
+    expect(chamadas()).toEqual([API_ENDPOINTS.EQUIPES, API_ENDPOINTS.TAREFAS]);
   });
 
   test('filtros vindos da URL e valores invalidos ignorados com aviso', async () => {
@@ -213,7 +222,7 @@ describe('acoes', () => {
     fireEvent.click(screen.getByRole('link', { name: 'Insights inteligentes' }));
     expect(estado()).toBe('/admin/insights|null');
     expect(apiGet).not.toHaveBeenCalledWith(API_ENDPOINTS.ADMIN_ASSISTANT_INSIGHTS, expect.anything());
-    expect(apiGet.mock.calls.map(([url]) => url)).toEqual([API_ENDPOINTS.EQUIPES]);
+    expect(chamadas()).toEqual([API_ENDPOINTS.EQUIPES, API_ENDPOINTS.TAREFAS]);
   });
 
   test('Ver insights de uma equipe leva o filtro da equipe', async () => {
@@ -221,5 +230,85 @@ describe('acoes', () => {
     await esperarPronto();
     fireEvent.click(within(cartao('Qualidade e Validação')).getByRole('link', { name: 'Ver insights da equipe Qualidade e Validação' }));
     expect(estado()).toBe(`/admin/insights?equipe=${EQ_QA}|null`);
+  });
+});
+
+describe('PR #65: descricao, acoes e filtro por atividade', () => {
+  test('descricao opcional aparece so quando preenchida (equipes antigas sem o campo continuam iguais)', async () => {
+    respostas.equipes = equipesPadrao().map((equipe) => (equipe._id === EQ_DEV ? { ...equipe, descricao: '  Squad do aplicativo web  ' } : equipe));
+    renderPage();
+    await esperarPronto();
+    expect(cartao('Desenvolvimento').querySelector('.team-item-descricao')).toHaveTextContent('Squad do aplicativo web');
+    expect(cartao('Qualidade e Validação').querySelector('.team-item-descricao')).toBeNull();
+    expect(cartao('Sem Data').querySelector('.team-item-descricao')).toBeNull();
+  });
+
+  test('acoes em grade com icones e rotulos; exclusao separada e vermelha; contagem de tarefas no cartao', async () => {
+    renderPage();
+    await esperarPronto();
+    const dev = cartao('Desenvolvimento');
+    const grade = dev.querySelector('.team-actions .acoes-equipe');
+    const rotulos = [...grade.querySelectorAll('.acao-equipe')].map((acao) => [acao.className.replace('acao-equipe ', ''), acao.textContent]);
+    expect(rotulos).toEqual([
+      ['acao-equipe--tarefas', 'Ver tarefas'],
+      ['acao-equipe--chat', 'Abrir chat'],
+      ['acao-equipe--insights', 'Ver insights'],
+      ['acao-equipe--editar', 'Editar'],
+    ]);
+    expect(grade.querySelectorAll('svg[aria-hidden="true"]')).toHaveLength(4);
+    const excluir = within(dev).getByRole('button', { name: 'Excluir equipe Desenvolvimento' });
+    expect(excluir).toHaveClass('acao-equipe--excluir');
+    expect(grade.contains(excluir)).toBe(false);
+    expect(dev).toHaveTextContent('2 tarefas');
+    expect(cartao('Qualidade e Validação')).toHaveTextContent('1 tarefa');
+    expect(cartao('Arquivo Antigo')).toHaveTextContent('Sem tarefas');
+  });
+
+  test('com e sem tarefas, na URL, combinado com a pesquisa; uma consulta de tarefas para todas as equipes', async () => {
+    renderPage();
+    await esperarPronto();
+    escolher('Atividade', 'sem');
+    expect(nomes()).toEqual(['Arquivo Antigo', 'Sem Data']);
+    expect(estado()).toBe('/admin?atividade=sem|null');
+    escolher('Atividade', 'com');
+    expect(nomes()).toEqual(['Desenvolvimento', 'Qualidade e Validação']);
+    fireEvent.change(screen.getByLabelText('Pesquisar'), { target: { value: 'bruno' } });
+    await waitFor(() => expect(nomes()).toEqual(['Qualidade e Validação']));
+    fireEvent.click(screen.getByRole('button', { name: 'Limpar filtros' }));
+    expect(nomes()).toHaveLength(4);
+    expect(chamadas()).toEqual([API_ENDPOINTS.EQUIPES, API_ENDPOINTS.TAREFAS]);
+    expect(apiGet).toHaveBeenCalledWith(API_ENDPOINTS.TAREFAS, expect.objectContaining({ params: { resumo: 1 } }));
+  });
+
+  test('link do Painel Geral (?atividade=sem) abre a lista ja filtrada', async () => {
+    renderPage('/admin?atividade=sem');
+    await esperarPronto();
+    expect(screen.getByLabelText('Atividade')).toHaveValue('sem');
+    expect(nomes()).toEqual(['Arquivo Antigo', 'Sem Data']);
+    expect(screen.getByText('Exibindo 2 de 4 equipes')).toBeInTheDocument();
+  });
+
+  test('tarefas indisponiveis: ninguem vira "sem tarefas"; o filtro nao e aplicado e isso e avisado', async () => {
+    respostas.tarefas = new Error('falha');
+    const erro = vi.spyOn(console, 'error').mockImplementation(() => {});
+    renderPage('/admin?atividade=sem');
+    await esperarPronto();
+    await screen.findByText(/o filtro por atividade não foi aplicado/);
+    expect(nomes()).toHaveLength(4);
+    expect(screen.getByLabelText('Atividade')).toBeDisabled();
+    expect(screen.queryByText('Sem tarefas')).toBeNull();
+    expect(cartao('Desenvolvimento')).not.toHaveTextContent('2 tarefas');
+    erro.mockRestore();
+  });
+
+  test('enquanto as tarefas carregam, o filtro da URL nao mostra uma lista sem filtro', async () => {
+    let liberar;
+    respostas.tarefas = () => new Promise((resolve) => { liberar = () => resolve(tarefasPadrao()); });
+    renderPage('/admin?atividade=com');
+    expect(await screen.findByText('Carregando as tarefas das equipes...')).toBeInTheDocument();
+    expect(nomes()).toEqual([]);
+    liberar();
+    await esperarPronto();
+    expect(nomes()).toEqual(['Desenvolvimento', 'Qualidade e Validação']);
   });
 });

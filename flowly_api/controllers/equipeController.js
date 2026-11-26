@@ -5,6 +5,7 @@ const mongoose = require('mongoose');
 const { getSignedUrl } = require('../services/storage');
 const { createIdempotencyService, IdempotentRequestError } = require('../services/idempotencyService');
 const { toPublicMessage } = require('../services/chatAttachmentService');
+const { lerDescricaoEquipe } = require('../utils/equipeDescricao');
 
 const MAX_LIMITE_MENSAGENS = 200;
 const DATA_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
@@ -90,6 +91,9 @@ const listaDeMembrosValida = (membros) =>
   Array.isArray(membros) &&
   membros.every((id) => typeof id === 'string' && mongoose.isValidObjectId(id.trim()));
 
+// Descricao so entra no documento quando tem texto: equipe criada sem descricao fica como as antigas.
+const comDescricao = (descricao) => (descricao.valor ? { descricao: descricao.valor } : {});
+
 const garantirCriadorComoMembro = (userId) => Equipe.updateMany(
   { createdBy: userId, membros: { $ne: userId } },
   { $addToSet: { membros: userId } }
@@ -102,6 +106,11 @@ exports.criarEquipe = async (req, res) => {
     // Validação do nome da equipe
     if (!nomeEquipeValido(nome)) {
       return res.status(400).json({ erro: "O nome da equipe é obrigatório" });
+    }
+
+    const descricao = lerDescricaoEquipe(req.body.descricao);
+    if (descricao.erro) {
+      return res.status(400).json({ erro: descricao.erro });
     }
 
     // Normaliza membros para IDs únicos e válidos; isso permite o mesmo colaborador em equipes diferentes.
@@ -122,7 +131,12 @@ exports.criarEquipe = async (req, res) => {
     const membrosComCriador = [...new Set([...membrosUnicos, String(req.user.id)])];
 
     // Criar a equipe
-    const novaEquipe = new Equipe({ nome: formatarNomeEquipe(nome), membros: membrosComCriador, createdBy: req.user.id });
+    const novaEquipe = new Equipe({
+      nome: formatarNomeEquipe(nome),
+      ...comDescricao(descricao),
+      membros: membrosComCriador,
+      createdBy: req.user.id,
+    });
     await novaEquipe.save();
 
     // Retornar a equipe criada com os dados populados
@@ -166,16 +180,20 @@ const obterServicoIdempotencia = () => {
 
 // Validacao de formato (sem banco), identica a do criarEquipe. Roda antes de reivindicar a chave: um pedido
 // malformado responde 400 sem consumir a chave.
-const validarFormatoNovaEquipe = ({ nome, membros }) => {
+const validarFormatoNovaEquipe = ({ nome, membros, descricao }) => {
   if (!nomeEquipeValido(nome)) {
     return { codigo: 'nome_obrigatorio' };
+  }
+  const descricaoLida = lerDescricaoEquipe(descricao);
+  if (descricaoLida.erro) {
+    return { erroDescricao: descricaoLida.erro };
   }
   const membrosArray = Array.isArray(membros) ? membros : [];
   const membrosUnicos = [...new Set(membrosArray.map((id) => String(id).trim()))].filter(Boolean);
   if (membrosUnicos.some((id) => !mongoose.isValidObjectId(id))) {
     return { codigo: 'membros_invalidos' };
   }
-  return { membrosUnicos };
+  return { membrosUnicos, descricao: descricaoLida };
 };
 
 const responderSemEquipe = (res, resposta) => {
@@ -203,11 +221,16 @@ exports.criarEquipeIdempotente = async (req, res) => {
     if (formato.codigo) {
       return res.status(400).json({ erro: MENSAGENS_CRIAR_EQUIPE[formato.codigo] });
     }
+    if (formato.erroDescricao) {
+      return res.status(400).json({ erro: formato.erroDescricao });
+    }
     const usuarioId = String(req.user.id); // so do JWT verificado; nunca do corpo
     const { nome, membros } = req.body;
+    // Sem descricao no corpo, o hash do pedido e o mesmo de antes (clientes antigos repetem a chave sem conflito).
+    const corpoDaChave = req.body.descricao === undefined ? { nome, membros } : { nome, membros, descricao: req.body.descricao };
 
     const resposta = await obterServicoIdempotencia().execute(
-      { userId: usuarioId, key: req.get('Idempotency-Key'), method: 'POST', route: ROTA_CRIAR_EQUIPE, body: { nome, membros } },
+      { userId: usuarioId, key: req.get('Idempotency-Key'), method: 'POST', route: ROTA_CRIAR_EQUIPE, body: corpoDaChave },
       // Pode rodar mais de uma vez (withTransaction repete em erro transitorio): tudo com a session, sem
       // efeito fora da transacao.
       async (session) => {
@@ -218,7 +241,12 @@ exports.criarEquipeIdempotente = async (req, res) => {
           throw new IdempotentRequestError(400, 'membros_nao_usuarios');
         }
         const membrosComCriador = [...new Set([...formato.membrosUnicos, usuarioId])];
-        const novaEquipe = new Equipe({ nome: formatarNomeEquipe(nome), membros: membrosComCriador, createdBy: usuarioId });
+        const novaEquipe = new Equipe({
+          nome: formatarNomeEquipe(nome),
+          ...comDescricao(formato.descricao),
+          membros: membrosComCriador,
+          createdBy: usuarioId,
+        });
         await novaEquipe.save({ session });
         return { statusCode: 201, resourceType: 'equipe', resourceId: novaEquipe._id };
       }
@@ -289,6 +317,12 @@ exports.editarEquipe = async (req, res) => {
       return res.status(400).json({ erro: 'O nome da equipe é obrigatório' });
     }
 
+    // descricao ausente preserva a atual (cliente antigo); '' ou null remove.
+    const descricao = lerDescricaoEquipe(req.body.descricao);
+    if (descricao.erro) {
+      return res.status(400).json({ erro: descricao.erro });
+    }
+
     // membros ausente preserva a lista atual; [] explicito deixa so o criador.
     const atualizarMembros = membros !== undefined;
     if (atualizarMembros && !listaDeMembrosValida(membros)) {
@@ -303,6 +337,7 @@ exports.editarEquipe = async (req, res) => {
     }
 
     const dadosAtualizacao = { nome: formatarNomeEquipe(nome) };
+    if (!descricao.ausente) dadosAtualizacao.descricao = descricao.valor;
 
     if (atualizarMembros) {
       const criadorId = String(equipeAtual.createdBy || req.user.id);

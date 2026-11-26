@@ -1,6 +1,10 @@
 import React, { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { linkTarefas } from './painelIndicadores';
+import { ATIVIDADE_SEM_TAREFAS } from '../admin/adminFiltrosUtils';
+
+// Gestao de Equipes ja filtrada (contrato de URL do PR #62): mesmos dados resumidos, mesma contagem.
+const LINK_EQUIPES_SEM_TAREFAS = `/admin?atividade=${ATIVIDADE_SEM_TAREFAS}`;
 
 // Fatos calculados sobre os dados carregados que pedem uma acao administrativa. Nada inferido sobre pessoas,
 // conflitos ou produtividade, e nenhum dado de insights.
@@ -21,7 +25,7 @@ function PontosAtencao({ pontos, equipeId }) {
             <li key={ponto.chave} className={`atencao-item atencao-${ponto.tom}`} data-ponto={ponto.chave}>
               <span className="atencao-texto">{ponto.texto}</span>
               {ponto.equipes ? (
-                <Link to="/admin" className="atencao-acao">Ver todas as equipes</Link>
+                <Link to={LINK_EQUIPES_SEM_TAREFAS} className="atencao-acao">Ver equipes sem tarefas</Link>
               ) : (
                 <Link to={linkTarefas(equipeId, ponto.destino)} className="atencao-acao" aria-label={`Ver lista: ${ponto.texto}`}>
                   Ver lista

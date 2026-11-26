@@ -1,5 +1,7 @@
 import React, { useId, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { FaComments, FaLightbulb, FaTasks } from 'react-icons/fa';
+import '../../../styles/components/AcoesEquipe.css';
 import { correspondeBusca } from '../adminFiltrosUtils';
 import { formatarQuantidade, linkInsights } from './insightsUtils';
 
@@ -66,18 +68,22 @@ function CartaoEquipe({ item, filtros, filtrando }) {
         </>
       )}
 
-      <div className="insights-equipe-acoes">
+      {/* Mesmas acoes (cores e icones) da gestao de Equipes, em versao compacta. */}
+      <div className="insights-equipe-acoes acoes-equipe acoes-equipe--compactas">
         {!filtrando && (
-          <Link to={linkInsights({ periodo: filtros.periodo, equipe: equipe.id, aba: 'geral' })} className="insights-link" aria-label={`Ver insights da equipe ${equipe.nome}`}>
-            Ver insights da equipe
+          <Link to={linkInsights({ periodo: filtros.periodo, equipe: equipe.id, aba: 'geral' })} className="acao-equipe acao-equipe--insights" aria-label={`Ver insights da equipe ${equipe.nome}`}>
+            <FaLightbulb aria-hidden="true" />
+            <span>Ver insights</span>
           </Link>
         )}
-        <Link to={`/admin/tarefas?equipe=${encodeURIComponent(equipe.id)}`} className="insights-link" aria-label={`Ver tarefas da equipe ${equipe.nome}`}>
-          Ver tarefas
+        <Link to={`/admin/tarefas?equipe=${encodeURIComponent(equipe.id)}`} className="acao-equipe acao-equipe--tarefas" aria-label={`Ver tarefas da equipe ${equipe.nome}`}>
+          <FaTasks aria-hidden="true" />
+          <span>Ver tarefas</span>
         </Link>
         {equipe.participa && (
-          <Link to="/admin/chats" state={{ equipeId: equipe.id }} className="insights-link" aria-label={`Abrir chat da equipe ${equipe.nome}`}>
-            Abrir chat
+          <Link to="/admin/chats" state={{ equipeId: equipe.id }} className="acao-equipe acao-equipe--chat" aria-label={`Abrir chat da equipe ${equipe.nome}`}>
+            <FaComments aria-hidden="true" />
+            <span>Abrir chat</span>
           </Link>
         )}
       </div>

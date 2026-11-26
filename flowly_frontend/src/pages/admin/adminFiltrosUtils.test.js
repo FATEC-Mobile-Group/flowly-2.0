@@ -3,7 +3,10 @@ import {
   ATRIBUICAO_BACKLOG,
   ATRIBUICAO_SEM_RESPONSAVEL,
   FILTROS_TAREFAS_PADRAO,
+  contarTarefasPorEquipe,
+  correspondeAtividade,
   correspondeBusca,
+  equipesComFiltroAtivo,
   correspondeCriacao,
   correspondePrazo,
   filtrarEquipes,
@@ -107,13 +110,63 @@ describe('equipes', () => {
 
   test('parametros: validos sao lidos, invalidos ignorados e o padrao some da URL', () => {
     const lido = lerFiltrosEquipes(new URLSearchParams('q=%20dev%20&criacao=7dias&ordem=nomeZA'));
-    expect(lido).toEqual({ filtros: { busca: 'dev', criacao: '7dias', ordem: 'nomeZA' }, invalidos: [] });
-    const invalido = lerFiltrosEquipes(new URLSearchParams('criacao=ontem&ordem=aleatoria'));
-    expect(invalido.filtros).toEqual({ busca: '', criacao: '', ordem: 'recentes' });
-    expect(invalido.invalidos).toEqual(['data de criação', 'ordenação']);
+    expect(lido).toEqual({ filtros: { busca: 'dev', criacao: '7dias', atividade: '', ordem: 'nomeZA' }, invalidos: [] });
+    const invalido = lerFiltrosEquipes(new URLSearchParams('criacao=ontem&atividade=talvez&ordem=aleatoria'));
+    expect(invalido.filtros).toEqual({ busca: '', criacao: '', atividade: '', ordem: 'recentes' });
+    expect(invalido.invalidos).toEqual(['data de criação', 'atividade', 'ordenação']);
     expect(serializarFiltrosEquipes({ busca: '', criacao: '', ordem: 'recentes' }).toString()).toBe('');
     expect(serializarFiltrosEquipes({ busca: 'ana', criacao: '30dias', ordem: 'antigas' }).toString())
       .toBe('q=ana&criacao=30dias&ordem=antigas');
+    expect(lerFiltrosEquipes(new URLSearchParams('atividade=sem')).filtros.atividade).toBe('sem');
+    expect(serializarFiltrosEquipes({ busca: '', criacao: '', atividade: 'com', ordem: 'recentes' }).toString()).toBe('atividade=com');
+  });
+
+  test('pesquisa tambem pela descricao opcional (equipes antigas sem o campo continuam aparecendo)', () => {
+    const comDescricao = [...equipes, { _id: oid(6), nome: 'Suporte', descricao: 'Atendimento ao cliente', membros: [] }];
+    expect(ids(filtrarEquipes(comDescricao, { busca: 'atendimento', criacao: '', ordem: 'recentes' }, AGORA))).toEqual([oid(6)]);
+    expect(filtrarEquipes(comDescricao, { busca: '', criacao: '', ordem: 'recentes' }, AGORA)).toHaveLength(6);
+  });
+});
+
+describe('equipes por atividade (com ou sem tarefas)', () => {
+  const equipes = [
+    { _id: oid(1), nome: 'Alfa', membros: [] },
+    { _id: oid(2), nome: 'Beta', membros: [] },
+    { _id: oid(3), nome: 'Gama', membros: [] },
+  ];
+  const tarefas = [
+    { _id: 't1', equipe: { _id: oid(1), nome: 'Alfa' } },
+    { _id: 't2', equipe: oid(1) },
+    { _id: 't3', equipe: { _id: oid(3) } },
+    { _id: 't4', equipe: null },
+  ];
+  const filtrar = (atividade, contagem) =>
+    ids(filtrarEquipes(equipes, { busca: '', criacao: '', atividade, ordem: 'nomeAZ' }, AGORA, contagem));
+
+  test('conta as tarefas por equipe, com equipe populada ou so o id', () => {
+    const contagem = contarTarefasPorEquipe(tarefas);
+    expect([...contagem]).toEqual([[oid(1), 2], [oid(3), 1]]);
+  });
+
+  test('com tarefas, sem tarefas e todas', () => {
+    const contagem = contarTarefasPorEquipe(tarefas);
+    expect(filtrar('com', contagem)).toEqual([oid(1), oid(3)]);
+    expect(filtrar('sem', contagem)).toEqual([oid(2)]);
+    expect(filtrar('', contagem)).toEqual([oid(1), oid(2), oid(3)]);
+  });
+
+  test('lista sem tarefas e diferente de dados indisponiveis: indisponivel nao classifica ninguem como sem tarefas', () => {
+    expect(filtrar('sem', contarTarefasPorEquipe([]))).toEqual([oid(1), oid(2), oid(3)]);
+    expect(contarTarefasPorEquipe(undefined)).toBeNull();
+    expect(contarTarefasPorEquipe({ erro: 'x' })).toBeNull();
+    expect(filtrar('sem', null)).toEqual([oid(1), oid(2), oid(3)]);
+    expect(filtrar('com', null)).toEqual([oid(1), oid(2), oid(3)]);
+    expect(correspondeAtividade(equipes[1], 'sem', null)).toBe(true);
+  });
+
+  test('o filtro conta como ativo (Limpar filtros aparece)', () => {
+    expect(equipesComFiltroAtivo({ busca: '', criacao: '', atividade: 'sem' })).toBe(true);
+    expect(equipesComFiltroAtivo({ busca: '', criacao: '', atividade: '' })).toBe(false);
   });
 });
 

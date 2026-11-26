@@ -6,10 +6,13 @@ import "../../styles/pages/admin/DashboardAdmin.css";
 import "../../styles/pages/admin/Equipes.css";
 import Sidebar from "../../components/layout/Sidebar";
 import ConfirmDialog from "../../components/common/ConfirmDialog";
+import { LIMITE_DESCRICAO_EQUIPE, montarDadosEquipe } from "./equipeFormUtils";
 
 export default function Equipes() {
   const [equipes, setEquipes] = useState([]);
   const [nome, setNome] = useState("");
+  const [descricao, setDescricao] = useState("");
+  const [descricaoOriginal, setDescricaoOriginal] = useState("");
   const [membros, setMembros] = useState([]); // Array de objetos completos
   const [editandoId, setEditandoId] = useState(null);
   const [mensagemErro, setMensagemErro] = useState("");
@@ -60,6 +63,8 @@ export default function Equipes() {
         const res = await apiClient.get(API_ENDPOINTS.EQUIPES_BY_ID(id));
         const equipe = res.data;
         setNome(equipe.nome);
+        setDescricao(equipe.descricao || "");
+        setDescricaoOriginal(equipe.descricao || "");
         setMembros(equipe.membros);
         setEditandoId(equipe._id);
       } catch (err) {
@@ -139,7 +144,7 @@ export default function Equipes() {
     try {
       // Extrair IDs antes de enviar
       const membrosIds = membros.map((m) => (typeof m === "string" ? m : m._id));
-      const dados = { nome, membros: Array.from(new Set(membrosIds)) };
+      const dados = montarDadosEquipe({ nome, membrosIds, descricao, descricaoOriginal, editando: Boolean(editandoId) });
 
       if (editandoId) {
         await apiClient.put(API_ENDPOINTS.UPDATE_EQUIPE(editandoId), dados);
@@ -150,6 +155,8 @@ export default function Equipes() {
       }
 
       setNome("");
+      setDescricao("");
+      setDescricaoOriginal("");
       setMembros([]);
       setEditandoId(null);
       carregarEquipes();
@@ -178,6 +185,8 @@ export default function Equipes() {
 
   const editarEquipe = (equipe) => {
     setNome(equipe.nome);
+    setDescricao(equipe.descricao || "");
+    setDescricaoOriginal(equipe.descricao || "");
     setMembros(equipe.membros);
     setEditandoId(equipe._id);
   };
@@ -208,7 +217,23 @@ export default function Equipes() {
             value={nome}
             onChange={(e) => setNome(e.target.value)}
             required
+            aria-label="Nome da equipe"
           />
+
+          <label className="label" htmlFor="equipe-descricao">Descrição (opcional)</label>
+          <textarea
+            id="equipe-descricao"
+            className="input equipe-descricao-campo"
+            placeholder="Para que serve esta equipe? Ex.: atendimento aos clientes da região Sul"
+            value={descricao}
+            maxLength={LIMITE_DESCRICAO_EQUIPE}
+            rows={3}
+            aria-describedby="equipe-descricao-contador"
+            onChange={(e) => setDescricao(e.target.value)}
+          />
+          <span id="equipe-descricao-contador" className="equipe-descricao-contador">
+            {`${descricao.length}/${LIMITE_DESCRICAO_EQUIPE} caracteres`}
+          </span>
 
           <label className="label">Selecionar membros:</label>
           <div className="user-search">

@@ -1,0 +1,140 @@
+/* Acoes de uma equipe (gestao de Equipes e cartoes de equipe dos Insights): rotulo em texto com icone discreto e
+   uma cor por acao. Grade uniforme de 2 colunas; numero impar de acoes: a ultima ocupa a linha inteira.
+   Tarefas: cor primaria do tema; chat: azul; insights: ciano; editar: verde; excluir: vermelho. */
+
+.acoes-equipe {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.acoes-equipe > .acao-equipe:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+.acao-equipe {
+  --acao-fundo: var(--surface-bg);
+  --acao-borda: var(--glass-border);
+  --acao-texto: var(--text-primary);
+  --acao-fundo-hover: var(--surface-hover);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--acao-borda);
+  background: var(--acao-fundo);
+  color: var(--acao-texto);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.acao-equipe svg {
+  flex: none;
+  font-size: 0.9em;
+  opacity: 0.85;
+}
+
+.acao-equipe span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Mais especifico que o a:hover global (App.css), que trocaria a cor do rotulo. */
+.acao-equipe:hover {
+  background: var(--acao-fundo-hover);
+  color: var(--acao-texto);
+}
+
+.acao-equipe:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.acao-equipe--tarefas {
+  --acao-fundo: var(--primary-soft);
+  --acao-borda: var(--primary-shadow);
+  --acao-fundo-hover: var(--surface-active);
+}
+
+.acao-equipe--chat {
+  --acao-fundo: rgba(90, 162, 255, 0.14);
+  --acao-borda: rgba(90, 162, 255, 0.34);
+  --acao-texto: #a9cdff;
+  --acao-fundo-hover: rgba(90, 162, 255, 0.28);
+}
+
+.acao-equipe--insights {
+  --acao-fundo: rgba(34, 211, 238, 0.12);
+  --acao-borda: rgba(34, 211, 238, 0.32);
+  --acao-texto: #8ae9f7;
+  --acao-fundo-hover: rgba(34, 211, 238, 0.26);
+}
+
+.acao-equipe--editar {
+  --acao-fundo: rgba(76, 175, 80, 0.16);
+  --acao-borda: rgba(76, 175, 80, 0.32);
+  --acao-texto: #81c784;
+  --acao-fundo-hover: rgba(76, 175, 80, 0.3);
+}
+
+.acao-equipe--excluir {
+  --acao-fundo: rgba(255, 51, 102, 0.12);
+  --acao-borda: rgba(255, 51, 102, 0.32);
+  --acao-texto: #ffb3c6;
+  --acao-fundo-hover: rgba(255, 51, 102, 0.26);
+}
+
+[data-theme="light"] .acao-equipe--chat {
+  --acao-fundo: rgba(25, 118, 210, 0.08);
+  --acao-borda: rgba(25, 118, 210, 0.24);
+  --acao-texto: #1565c0;
+  --acao-fundo-hover: rgba(25, 118, 210, 0.16);
+}
+
+[data-theme="light"] .acao-equipe--insights {
+  --acao-fundo: rgba(0, 131, 143, 0.08);
+  --acao-borda: rgba(0, 131, 143, 0.24);
+  --acao-texto: #00707a;
+  --acao-fundo-hover: rgba(0, 131, 143, 0.16);
+}
+
+[data-theme="light"] .acao-equipe--editar {
+  --acao-fundo: rgba(46, 125, 50, 0.08);
+  --acao-borda: rgba(46, 125, 50, 0.22);
+  --acao-texto: #2e7d32;
+  --acao-fundo-hover: rgba(46, 125, 50, 0.16);
+}
+
+[data-theme="light"] .acao-equipe--excluir {
+  --acao-fundo: rgba(211, 47, 47, 0.06);
+  --acao-borda: rgba(211, 47, 47, 0.22);
+  --acao-texto: #c62828;
+  --acao-fundo-hover: rgba(211, 47, 47, 0.14);
+}
+
+/* Versao compacta (cartoes dos Insights): mesmas cores, menor. */
+.acoes-equipe--compactas {
+  gap: 6px;
+}
+
+.acoes-equipe--compactas .acao-equipe {
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 360px) {
+  .acoes-equipe { grid-template-columns: 1fr; }
+}
