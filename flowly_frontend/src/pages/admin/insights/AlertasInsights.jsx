@@ -33,8 +33,18 @@ function Alerta({ alerta, destacado = false, titulo }) {
       <h4>{alerta.categoria.rotulo}</h4>
       <dl className="insights-alerta-dados">
         <div><dt>Equipe</dt><dd title={alerta.equipe?.nome}>{alerta.equipe?.nome || 'Equipe indisponível'}</dd></div>
-        {alerta.colaborador && <div><dt>Colaborador</dt><dd>{alerta.colaborador.nome}</dd></div>}
-        {alerta.ocorrencias !== null && <div><dt>Ocorrências registradas</dt><dd>{alerta.ocorrencias}</dd></div>}
+        {/* "Participante": administradores tambem conversam no chat da equipe e podem estar na ocorrencia. */}
+        {alerta.colaborador && <div><dt>Participante</dt><dd>{alerta.colaborador.nome}</dd></div>}
+        {alerta.ocorrencias !== null && (alerta.escopo === 'individual' ? (
+          // metadata.occurrences do alerta individual: bloqueios da mesma pessoa, na mesma equipe, nas 24 horas
+          // ate o alerta, incluindo o bloqueio que o gerou (services/assistantInsightService.js).
+          <div>
+            <dt>Bloqueios em 24 horas</dt>
+            <dd>{`${alerta.ocorrencias} (da mesma pessoa nesta equipe, nas 24 horas até o alerta, incluindo o que o gerou)`}</dd>
+          </div>
+        ) : (
+          <div><dt>Ocorrências registradas</dt><dd>{alerta.ocorrencias}</dd></div>
+        ))}
         {alerta.vinculo !== 'confiavel' && (
           <div><dt>Vínculo com a ocorrência</dt><dd>{alerta.vinculo === 'divergente' ? 'Identificadores divergentes' : 'Não registrado'}</dd></div>
         )}
@@ -122,7 +132,10 @@ export default function AlertasInsights({ dados }) {
       <p className="insights-nota">
         Alertas emitidos são as notificações enviadas aos administradores, com as regras do momento em que foram gerados
         (por exemplo, recorrência em 24 horas e intervalo mínimo entre alertas). Sinais detectados na análise nem sempre
-        geram alerta. O período escolhido só define quais alertas são listados.
+        geram alerta. O período escolhido só define quais alertas são listados. As contagens de alertas diferentes
+        podem se sobrepor: um mesmo bloqueio entra na contagem de todos os alertas da mesma pessoa emitidos nas 24
+        horas seguintes, e um alerta coletivo pode envolver mensagens que também geraram alertas individuais. Por
+        isso, não some as ocorrências entre alertas.
       </p>
 
       <div className="insights-filtros-locais">

@@ -456,10 +456,8 @@
   color: var(--text-primary);
 }
 
+/* Grade e cores vem de components/AcoesEquipe.css (as mesmas acoes da gestao de Equipes). */
 .insights-page .insights-equipe-acoes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 16px;
   margin-top: auto;
   padding-top: 8px;
   border-top: 1px solid var(--border-color);

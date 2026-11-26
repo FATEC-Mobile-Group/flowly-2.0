@@ -545,6 +545,19 @@ describe('aba Equipes', () => {
     expect(local()).toBe(`/admin/chats|{"equipeId":"${GAMA}"}`);
   });
 
+  test('acoes do cartao: compactas, com icone e as mesmas cores da gestao de Equipes (sem links sublinhados)', async () => {
+    renderPage('/admin/insights?aba=equipes');
+    await esperarPronto();
+    const cartao = within(painel()).getByRole('listitem', { name: 'Equipe Gama' });
+    const acoes = cartao.querySelector('.insights-equipe-acoes');
+    expect(acoes).toHaveClass('acoes-equipe', 'acoes-equipe--compactas');
+    expect(within(cartao).getByRole('link', { name: 'Ver insights da equipe Gama' })).toHaveClass('acao-equipe', 'acao-equipe--insights');
+    expect(within(cartao).getByRole('link', { name: 'Ver tarefas da equipe Gama' })).toHaveClass('acao-equipe', 'acao-equipe--tarefas');
+    expect(within(cartao).getByRole('link', { name: 'Abrir chat da equipe Gama' })).toHaveClass('acao-equipe', 'acao-equipe--chat');
+    expect(cartao.querySelectorAll('.insights-equipe-acoes svg[aria-hidden="true"]')).toHaveLength(3);
+    expect(cartao.querySelector('.insights-link')).toBeNull();
+  });
+
   test('insights da equipe mantem o periodo e vai para a visao geral', async () => {
     renderPage('/admin/insights?aba=equipes&periodo=14');
     await esperarPronto();
@@ -599,19 +612,21 @@ describe('aba Alertas', () => {
     const [odio, coletivo, historico, ameaca] = alertas;
     expect(odio).toHaveTextContent('Individual');
     expect(odio).toHaveTextContent('Gravidade: Alto');
-    expect(odio).toHaveTextContent('ColaboradorBruno');
-    expect(odio).toHaveTextContent('Ocorrências registradas2');
+    expect(odio).toHaveTextContent('ParticipanteBruno');
+    expect(odio).toHaveTextContent('Bloqueios em 24 horas2 (da mesma pessoa nesta equipe, nas 24 horas até o alerta, incluindo o que o gerou)');
+    expect(odio).not.toHaveTextContent('Colaborador');
     expect(odio).toHaveTextContent(`Equipe${NOME_BETA}`);
     expect(coletivo).toHaveTextContent('Coletivo');
     expect(coletivo).toHaveTextContent('Possível conflito na conversa');
-    expect(coletivo).not.toHaveTextContent('Colaborador');
+    expect(coletivo).not.toHaveTextContent('Participante');
     expect(historico).toHaveTextContent('Histórico sem escopo');
     expect(historico).toHaveTextContent('Motivo registradoNão registrado');
-    expect(historico).not.toHaveTextContent('Colaborador');
-    expect(ameaca).toHaveTextContent('ColaboradorAna');
+    expect(historico).not.toHaveTextContent('Participante');
+    expect(ameaca).toHaveTextContent('ParticipanteAna');
     expect(painel().textContent).not.toContain('%');
     expect(screen.getByLabelText('Alertas emitidos no período por escopo')).toHaveTextContent('2 individuais1 coletivos1 históricos sem escopo1 mensagens');
     expect(screen.getByText(/Sinais detectados na análise nem sempre geram alerta/)).toBeInTheDocument();
+    expect(screen.getByText(/As contagens de alertas diferentes podem se sobrepor/)).toHaveTextContent('não some as ocorrências entre alertas');
   });
 
   test('filtros locais e paginacao de 10, sem consultar a API', async () => {

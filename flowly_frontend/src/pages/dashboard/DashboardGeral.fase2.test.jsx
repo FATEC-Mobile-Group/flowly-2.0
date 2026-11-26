@@ -583,7 +583,7 @@ describe('pontos de atencao', () => {
       ['atrasadas', '1 tarefa atrasada (não concluídas, prazo vencido)', '/admin/tarefas?prazo=atrasadas'],
       ['vencemHoje', '1 tarefa vence hoje', '/admin/tarefas?prazo=hoje'],
       ['semResponsavel', '3 tarefas sem responsável, sendo 2 disponíveis no backlog', '/admin/tarefas?semResponsavel=1'],
-      ['equipesSemTarefas', '1 equipe sem tarefas', '/admin'],
+      ['equipesSemTarefas', '1 equipe sem tarefas', '/admin?atividade=sem'],
     ]);
     // O total do ponto e o mesmo do indicador "Sem responsável", cujo link e o mesmo semResponsavel=1.
     expect(valor('semResponsavel')).toBe('3');

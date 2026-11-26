@@ -1,126 +1,316 @@
-.backlog-page {
-  display: flex;
-  min-height: 100vh;
-  background: transparent;
-}
+/* Backlog do colaborador (lista e detalhe). Estrutura do Painel Geral (.dashboard-geral: sidebar expandida ou
+   recolhida, cabecalho e mobile) e dos filtros administrativos; aqui so o que e proprio do backlog. Cores pelas
+   variaveis do tema; as etiquetas de urgencia e prazo sao as da gestao de tarefas (DashboardAdmin.css). */
 
-.backlog-content {
-  flex: 1;
-  margin-left: 260px;
-  min-width: 0;
-  transition: margin-left 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.sidebar.collapsed ~ .backlog-content {
-  margin-left: 78px;
-}
-
-.backlog-container {
-  width: 100%;
-  max-width: 1100px;
-  padding: 40px 24px;
-  position: relative;
-  z-index: 10;
-}
-
-.backlog-container h2 {
-  color: var(--text-primary);
-  margin-bottom: 8px;
-  font-size: 2rem;
-  font-weight: 800;
-}
-
-.backlog-subtitle {
-  color: var(--text-subtitle);
-  margin-bottom: 20px;
-}
-
-.backlog-list {
-  display: grid;
-  gap: 12px;
-}
-
-.backlog-item {
-  width: 100%;
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  background: var(--surface-bg);
-  color: var(--text-primary);
-  padding: 16px;
-  text-align: left;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  cursor: pointer;
-}
-
-.backlog-item-main {
-  min-width: 0;
-  flex: 1;
-}
-
-.backlog-item:hover {
-  background: var(--surface-hover);
-}
-
-.backlog-item h3 {
-  margin: 0 0 6px;
-  font-size: 1.1rem;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.backlog-item p {
-  margin: 0;
-  color: var(--text-desc);
-}
-
-.backlog-item-meta {
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.backlog-item-preview {
-  margin-top: 8px;
+.backlog-pagina .backlog-contador {
+  margin: 0 auto 0 0;
   color: var(--text-secondary);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  font-size: 0.95rem;
+}
+
+.backlog-pagina .backlog-contador strong {
+  color: var(--text-primary);
+  font-size: 1.35rem;
+  font-weight: 800;
+  margin-right: 2px;
+}
+
+.backlog-pagina .backlog-filtros-grade {
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
+/* ---------------------------------------------------------------- Avisos */
+.backlog-pagina .backlog-aviso {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  border-left: 4px solid var(--primary-color);
+  background: var(--glass-bg);
+  color: var(--text-primary);
+  font-size: 0.92rem;
+}
+
+.backlog-pagina .backlog-aviso--sucesso { border-left-color: var(--success-color); }
+.backlog-pagina .backlog-aviso--erro { border-left-color: var(--error-color); }
+
+.backlog-pagina .backlog-aviso a {
+  color: var(--text-primary);
+  font-weight: 700;
+  text-underline-offset: 3px;
+}
+
+/* ---------------------------------------------------------------- Cartoes */
+.backlog-pagina .backlog-grade {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.backlog-pagina .backlog-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px solid var(--glass-border);
+  border-left: 4px solid var(--border-color);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-shadow);
+  color: var(--text-primary);
+}
+
+/* Faixa lateral pela urgencia, com as mesmas cores das etiquetas (o texto da etiqueta tambem informa). */
+.backlog-pagina .backlog-card--alta { border-left-color: #ff6b8b; }
+.backlog-pagina .backlog-card--media { border-left-color: #f4b740; }
+.backlog-pagina .backlog-card--baixa { border-left-color: #3ccf7f; }
+[data-theme="light"] .backlog-pagina .backlog-card--alta { border-left-color: #c62828; }
+[data-theme="light"] .backlog-pagina .backlog-card--media { border-left-color: #b45309; }
+[data-theme="light"] .backlog-pagina .backlog-card--baixa { border-left-color: #2e7d32; }
+
+.backlog-pagina .backlog-card-topo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.backlog-pagina .backlog-card-equipe {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--primary-shadow);
+  background: var(--primary-soft);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.backlog-pagina .backlog-card-equipe span {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.backlog-item-action {
-  color: var(--text-info-blue);
-  font-weight: 600;
-  align-self: center;
   white-space: nowrap;
 }
 
-.backlog-empty {
-  color: var(--text-desc);
-  padding: 28px;
-  border-radius: 12px;
-  border: 1px dashed var(--border-color);
-  background: var(--surface-bg);
+.backlog-pagina .backlog-card h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
-@media (max-width: 768px) {
-  .backlog-content {
-    margin-left: 0;
-  }
+.backlog-pagina .backlog-card-descricao {
+  margin: 0;
+  color: var(--text-desc);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
-  .backlog-container {
-    padding: 88px 16px 24px;
-  }
+.backlog-pagina .backlog-card-descricao--vazia {
+  color: var(--text-muted);
+  font-style: italic;
+}
 
-  .backlog-item {
-    flex-direction: column;
-    align-items: flex-start;
-  }
+.backlog-pagina .backlog-card-dados {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin: 2px 0 0;
+}
 
-  .backlog-item-action {
-    align-self: flex-end;
-  }
+.backlog-pagina .backlog-card-dados dt {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.backlog-pagina .backlog-card-dados dd {
+  margin: 3px 0 0;
+  font-size: 0.92rem;
+}
+
+.backlog-pagina .backlog-prazo {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.backlog-pagina .backlog-prazo-texto { font-weight: 700; }
+
+.backlog-pagina .backlog-prazo-detalhe {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+/* Acoes no rodape do cartao, alinhadas entre cartoes de alturas diferentes. */
+.backlog-pagina .backlog-card-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 6px;
+}
+
+.backlog-pagina .backlog-botao-atribuir,
+.backlog-pagina .backlog-botao-secundario {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 16px;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, opacity 0.2s;
+}
+
+.backlog-pagina .backlog-botao-atribuir {
+  flex: 1 1 170px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  background: var(--primary-color);
+  color: #fff;
+  box-shadow: 0 6px 18px var(--primary-shadow);
+}
+
+.backlog-pagina .backlog-botao-atribuir:hover:not(:disabled) { background: var(--primary-hover); }
+
+.backlog-pagina .backlog-botao-atribuir:disabled {
+  opacity: 0.6;
+  cursor: progress;
+  box-shadow: none;
+}
+
+.backlog-pagina .backlog-botao-secundario {
+  flex: 0 1 auto;
+  border: 1px solid var(--glass-border);
+  background: var(--surface-bg);
+  color: var(--text-primary);
+}
+
+.backlog-pagina .backlog-botao-secundario:hover { background: var(--surface-hover); }
+
+.backlog-pagina .backlog-botao-atribuir:focus-visible,
+.backlog-pagina .backlog-botao-secundario:focus-visible,
+.backlog-pagina .backlog-aviso a:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.backlog-pagina .backlog-vazio {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.backlog-pagina .backlog-vazio h3,
+.backlog-pagina .backlog-vazio p { margin: 0; }
+.backlog-pagina .backlog-vazio p { color: var(--text-secondary); }
+
+/* ---------------------------------------------------------------- Detalhe */
+.backlog-pagina .backlog-detalhe-voltar {
+  margin-bottom: 16px;
+}
+
+.backlog-pagina .backlog-detalhe {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 860px;
+}
+
+.backlog-pagina .backlog-detalhe-topo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.backlog-pagina .backlog-detalhe h3 {
+  margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.backlog-pagina .backlog-detalhe-dados {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.backlog-pagina .backlog-detalhe-dados > div {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-bg);
+  min-width: 0;
+}
+
+.backlog-pagina .backlog-detalhe-dados dt {
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.backlog-pagina .backlog-detalhe-dados dd {
+  margin: 4px 0 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.backlog-pagina .backlog-detalhe-descricao h4 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
+.backlog-pagina .backlog-detalhe-descricao p {
+  margin: 0;
+  color: var(--text-desc);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.backlog-pagina .backlog-detalhe .backlog-card-acoes { padding-top: 0; }
+
+@media (max-width: 480px) {
+  .backlog-pagina .backlog-grade { grid-template-columns: 1fr; }
+  .backlog-pagina .backlog-card { padding: 16px; }
+  .backlog-pagina .backlog-card-acoes > * { flex: 1 1 100%; }
 }
