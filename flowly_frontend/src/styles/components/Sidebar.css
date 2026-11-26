@@ -413,3 +413,31 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
   pointer-events: none;
 }
+
+/* Nao lidas no item Notificacoes: numero com a sidebar expandida, ponto com ela recolhida (PR #66). */
+.sidebar-link-icon { position: relative; }
+
+.sidebar-contador {
+  margin-left: auto;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--error-color);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+
+.sidebar-contador--ponto {
+  position: absolute;
+  top: -3px;
+  right: -5px;
+  min-width: 0;
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: 2px solid var(--glass-bg);
+}

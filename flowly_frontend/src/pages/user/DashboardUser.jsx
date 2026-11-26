@@ -7,6 +7,7 @@ import { formatarStatus } from "../../config/statusUtils";
 import "../../styles/pages/user/DashboardUser.css";
 import "../../styles/pages/admin/DashboardAdmin.css";
 import Sidebar from "../../components/layout/Sidebar";
+import { useNaoLidas } from '../../components/notifications/notificationStore';
 import TarefaModal from "../../components/tarefas/TarefaModal";
 import { chaveDiaLocal, formatarDataEntrega, formatarDia } from "../dashboard/painelGeralUtils";
 import {
@@ -199,7 +200,8 @@ function DashboardUser() {
   const cronometroEmAndamento = useRef(new Set());
   const [cronometrosPendentes, setCronometrosPendentes] = useState({});
   const [avisoErro, setAvisoErro] = useState('');
-  const [notificationCount, setNotificationCount] = useState(0);
+  // Contador compartilhado com a sidebar e a central (atualizado tambem pelo Socket.IO).
+  const notificationCount = useNaoLidas() ?? 0;
   // "Hoje" no calendario local de quem olha o painel (mesma regra do Painel Geral).
   const hoje = chaveDiaLocal();
 
@@ -242,18 +244,8 @@ function DashboardUser() {
     }
   }, []);
 
-  const buscarNotificationCount = async () => {
-    try {
-      const res = await apiClient.get(API_ENDPOINTS.NOTIFICATIONS_COUNT);
-      setNotificationCount(res.data?.count || 0);
-    } catch (err) {
-      console.error('Erro ao buscar notificações:', err);
-    }
-  };
-
   useEffect(() => {
     buscarTarefas();
-    buscarNotificationCount();
     setUserName(localStorage.getItem('nome') || '');
   }, [buscarTarefas]);
 

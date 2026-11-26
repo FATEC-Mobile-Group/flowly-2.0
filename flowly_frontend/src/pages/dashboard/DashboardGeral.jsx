@@ -10,6 +10,7 @@ import {
 } from 'chart.js';
 import Sidebar from "../../components/layout/Sidebar";
 import { useFotoPerfil } from "../../components/layout/useFotoPerfil";
+import { useNaoLidas } from '../../components/notifications/notificationStore';
 import { API_ENDPOINTS } from "../../config/config";
 import RankingEquipes from "./RankingEquipes";
 import IndicadoresPainel from "./IndicadoresPainel";
@@ -51,7 +52,8 @@ function DashboardGeral() {
   const [atualizando, setAtualizando] = useState(false);
   const [equipeId, setEquipeId] = useState('');
   const [avisoFiltro, setAvisoFiltro] = useState('');
-  const [notificationCount, setNotificationCount] = useState(0);
+  // Contador compartilhado com a sidebar e a central (atualizado tambem pelo Socket.IO).
+  const notificationCount = useNaoLidas() ?? 0;
   const carregamentoAtual = useRef(null);
   const idFiltro = useId();
   const cores = useCoresDoTema();
@@ -92,19 +94,6 @@ function DashboardGeral() {
     carregarDados();
     return () => carregamentoAtual.current?.abort();
   }, [carregarDados]);
-
-  // O contador do sino e independente: se falhar, o painel segue normalmente.
-  useEffect(() => {
-    const controle = new AbortController();
-    apiClient.get(API_ENDPOINTS.NOTIFICATIONS_COUNT, { signal: controle.signal })
-      .then((res) => {
-        if (!controle.signal.aborted) setNotificationCount(res.data?.count || 0);
-      })
-      .catch((err) => {
-        if (!controle.signal.aborted) console.error('Erro ao buscar notificações:', err);
-      });
-    return () => controle.abort();
-  }, []);
 
   const tentarNovamente = () => {
     setEstado('carregando');

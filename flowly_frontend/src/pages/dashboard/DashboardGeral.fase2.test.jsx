@@ -5,6 +5,7 @@ import DashboardGeral from './DashboardGeral';
 import { CORES_STATUS, CORES_STATUS_CLARO } from './DistribuicaoTarefas';
 import apiClient from '../../config/apiClient';
 import { API_ENDPOINTS, LOCAL_STORAGE_KEYS } from '../../config/config';
+import { redefinirNotificacoes } from '../../components/notifications/notificationStore';
 
 // Painel Geral (PR #63): carregamento/erro/retry, indicadores e seus links, filtro por equipe, distribuicao,
 // entregas atrasadas x proximos 7 dias, pontos de atencao, tema e sino. API simulada e data do sistema fixa.
@@ -110,6 +111,7 @@ const abrirPronto = async (dados = dadosPadrao()) => {
 };
 
 beforeEach(() => {
+  redefinirNotificacoes();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(AGORA);
   localStorage.clear();
@@ -202,7 +204,9 @@ describe('carregamento, erro e nova tentativa', () => {
     expect(screen.queryByRole('alert')).toBeNull();
     expect(valor('tarefas')).toBe('5');
     expect(document.querySelector('.notification-badge')).toBeNull();
-    expect(erros).toHaveBeenCalledWith('Erro ao buscar notificações:', expect.any(Error));
+    // O contador e o compartilhado (notificationStore): pedido uma vez, falha silenciosa, sem log do painel.
+    expect(pedidos(API_ENDPOINTS.NOTIFICATIONS_COUNT)).toBe(1);
+    expect(erros).not.toHaveBeenCalledWith('Erro ao carregar o Painel Geral:', expect.anything());
   });
 
   test('desmontar no meio do carregamento cancela os pedidos e nada e atualizado depois', async () => {
@@ -213,7 +217,9 @@ describe('carregamento, erro e nova tentativa', () => {
     await waitFor(() => expect(pedidos(API_ENDPOINTS.EQUIPES)).toBe(1));
 
     const sinais = apiClient.get.mock.calls.map(([, opcoes]) => opcoes?.signal).filter(Boolean);
-    expect(sinais.length).toBeGreaterThanOrEqual(3); // equipes, tarefas e notificacoes
+    // Equipes e tarefas. O contador do sino e o compartilhado com a sidebar (notificationStore), sem cancelamento
+    // por pagina: a resposta so atualiza o store, nunca o estado de um componente desmontado.
+    expect(sinais.length).toBeGreaterThanOrEqual(2);
     unmount();
     expect(sinais.every((sinal) => sinal.aborted)).toBe(true);
 

@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import App from './App';
 import apiClient from './config/apiClient';
 import { API_ENDPOINTS, LOCAL_STORAGE_KEYS } from './config/config';
+import { redefinirNotificacoes } from './components/notifications/notificationStore';
 
 // C1: o toast de chat muda o estado do AppContent. Isso nao pode desmontar a pagina protegida
 // (antes, o ProtectedRoute era recriado a cada render e o Perfil inteiro remontava: webcam reiniciada,
@@ -55,6 +56,8 @@ const notificar = (notificacao) => act(async () => { handlersDoSocket.notificati
 const esperar = (ms) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
 
 beforeEach(() => {
+  // A deduplicacao por _id e do modulo (PR #66): cada caso comeca sem ids vistos.
+  redefinirNotificacoes();
   streams = [];
   localStorage.clear();
   Object.keys(handlersDoSocket).forEach((evento) => delete handlersDoSocket[evento]);

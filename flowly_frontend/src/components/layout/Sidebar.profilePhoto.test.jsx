@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import apiClient from '../../config/apiClient';
 import { API_ENDPOINTS, LOCAL_STORAGE_KEYS } from '../../config/config';
+import { redefinirNotificacoes } from '../notifications/notificationStore';
 
 // D25: a foto vem assinada com token de 5 minutos. O Sidebar nao pode depender para sempre da URL
 // guardada no login: renova ao montar e tenta renovar uma unica vez quando a imagem falha.
@@ -29,10 +30,12 @@ const sessao = ({ tipo = 'user', nome = 'Ana', foto = FOTO_A } = {}) => {
   if (foto) localStorage.setItem(LOCAL_STORAGE_KEYS.USER_PHOTO, foto);
 };
 
-// Respostas de /users/me em ordem; a ultima se repete.
+// Respostas de /users/me em ordem; a ultima se repete. O contador de notificacoes da Sidebar (PR #66) tem resposta
+// propria e nao consome a sequencia.
 const respostasMe = (...fotos) => {
   let i = 0;
-  apiClient.get.mockImplementation(async () => {
+  apiClient.get.mockImplementation(async (pedido) => {
+    if (pedido === API_ENDPOINTS.NOTIFICATIONS_COUNT) return { data: { count: 0 } };
     const foto = fotos[Math.min(i, fotos.length - 1)];
     i += 1;
     if (foto instanceof Error) throw foto;
@@ -58,6 +61,7 @@ const deixarAssentar = () => act(async () => { await new Promise((resolve) => se
 beforeEach(() => {
   localStorage.clear();
   apiClient.get.mockReset();
+  redefinirNotificacoes();
 });
 
 describe('D25 - renovacao ao montar (F5 / sessao longa)', () => {
@@ -128,7 +132,9 @@ describe('D25 - renovacao no erro da imagem', () => {
   test('a URL velha falha antes da resposta do mount: espera a resposta, sem pedido extra', async () => {
     sessao({ foto: FOTO_A });
     let responder;
-    apiClient.get.mockImplementation(() => new Promise((resolve) => { responder = resolve; }));
+    apiClient.get.mockImplementation((pedido) => (pedido === API_ENDPOINTS.NOTIFICATIONS_COUNT
+      ? Promise.resolve({ data: { count: 0 } })
+      : new Promise((resolve) => { responder = resolve; })));
     montar();
     await waitFor(() => expect(pedidosMe()).toHaveLength(1));
 
