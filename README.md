@@ -31,7 +31,8 @@ A aplicação é composta por:
 * Comunicação em tempo real com Socket.IO
 * Infraestrutura em nuvem com Google Cloud Run, Azure Static Web Apps, Google Cloud Storage e Secret Manager, com containers Docker (manifests Kubernetes e imagens no Docker Hub mantidos como alternativa)
 * Assistente em Python para comandos por texto e voz, com confirmação explícita das alterações, e analytics
-* Microserviço Python para reconhecimento facial
+* Microserviço Python para reconhecimento facial, com anti-spoofing
+* Painéis administrativos (Painel Geral e Insights inteligentes), central de notificações e central de preferências no frontend web
 
 ---
 
@@ -58,7 +59,7 @@ flowly-2.0/
 * **Serviços:** API Node.js, assistente Python e serviço de reconhecimento facial no **Google Cloud Run** (`southamerica-east1`), publicados automaticamente por três gatilhos do **Cloud Build** a cada push na `main`.
 * **Dados e arquivos:** **MongoDB** para os dados e **Google Cloud Storage** para anexos e fotos.
 * **Segredos:** o segredo interno entre assistente e API fica no **Secret Manager**.
-* **Qualidade:** o workflow `Quality` testa API, frontend, assistente, serviço facial e mobile em todo pull request.
+* **Qualidade:** o workflow `Quality` roda em todo pull request: testes da API, do frontend e do assistente, checagem de sintaxe do serviço facial e análise e testes do mobile.
 
 Docker Hub e Kubernetes (`k8s/`) são uma arquitetura alternativa, mantida apenas como registro; não fazem parte da produção atual.
 
@@ -83,6 +84,7 @@ Docker Hub e Kubernetes (`k8s/`) são uma arquitetura alternativa, mantida apena
 | Multer | Upload de arquivos | Middleware usado para receber anexos e fotos antes de validar e persistir. |
 | Google Cloud Storage | Armazenamento de uploads | Separa arquivos do container e permite persistencia em ambiente cloud. |
 | Google Vision API | Moderacao de imagens | Analisa uploads de imagem antes do armazenamento para reduzir risco de conteudo impróprio. |
+| Moderacao textual | Chat das equipes | Filtro conservador na API bloqueia mensagens ofensivas antes de gravar; o bloqueio vira indicador nos Insights, sem guardar o texto. |
 | Nodemailer | Envio de e-mails | Suporta verificacao de conta/2FA por codigo enviado ao usuario. |
 | CORS/dotenv | Configuracao operacional | Controla origens permitidas e variaveis sensiveis por ambiente. |
 | Jest/Supertest | Testes de API | Valida endpoints e regras de autenticacao sem depender de fluxo manual. |
@@ -109,7 +111,7 @@ Docker Hub e Kubernetes (`k8s/`) são uma arquitetura alternativa, mantida apena
 | Three.js/OGL | Efeitos visuais | Apoia componentes visuais e fundos interativos da interface. |
 | Cypress/Testing Library | Testes web | Cobre fluxos E2E e testes de componentes. |
 | Vitest | Execucao dos testes de componentes | Roda os testes do frontend (`npm test`), inclusive no CI. |
-| Web Speech API | Voz no navegador | Reconhecimento de fala e resposta falada do assistente, nativos do Chrome/Edge. |
+| Web Speech API | Voz no navegador | Reconhecimento de fala e resposta falada do assistente, nativos do Chrome/Edge. A voz tecnologica usa a voz Microsoft Daniel (pt-BR) quando o sistema a oferece, com fallback para outra voz pt-BR. |
 
 </details>
 
@@ -129,6 +131,7 @@ Docker Hub e Kubernetes (`k8s/`) são uma arquitetura alternativa, mantida apena
 | google_fonts | Tipografia | Mantem identidade visual consistente. |
 | pdf/printing | Geracao e impressao | Suporta exportacao de documentos no mobile. |
 | image_picker/file_picker | Imagens e anexos | Permite foto de perfil, captura facial e upload de arquivos. |
+| url_launcher | Abertura de arquivos | Abre anexos baixados pela rota autenticada. |
 | flutter_dotenv | Configuracao | Carrega URLs e variaveis por ambiente. |
 | flutter_lints/flutter_test | Qualidade | Apoia padronizacao e testes do app. |
 
@@ -185,7 +188,7 @@ Docker Hub e Kubernetes (`k8s/`) são uma arquitetura alternativa, mantida apena
 | Azure Static Web Apps | Frontend web publicado | Hospeda build estatico React com HTTPS. |
 | Kubernetes | Manifests em `k8s/` | Mantem alternativa/registro de deploy orquestrado para API, frontend e MongoDB (nao usada na producao atual). |
 | Docker Hub | Imagens da alternativa Kubernetes | Os manifests `k8s/` referenciam imagens publicadas no Docker Hub. |
-| GitHub Actions | CI e deploy do frontend | `Quality` testa API, frontend, assistente, servico facial e mobile; o workflow do Azure publica o frontend a cada push na `main`. |
+| GitHub Actions | CI e deploy do frontend | `Quality` testa API, frontend e assistente, confere a sintaxe do servico facial e roda `flutter analyze` e `flutter test` no mobile; o workflow do Azure publica o frontend a cada push na `main`. |
 
 </details>
 
@@ -220,25 +223,26 @@ Desenvolver uma solução web e mobile para:
 
 ## Administrador
 
+Pode (no frontend web):
+
+* Criar e editar equipes, com descrição opcional, e gerenciar participantes
+* Gerenciar tarefas com pesquisa, filtros e ordenação
+* Acompanhar o Painel Geral, com indicadores, filtros e pontos de atenção
+* Identificar equipes com e sem tarefas
+* Consultar os Insights inteligentes das equipes de que participa
+* Receber alertas de moderação e abri-los direto nos Insights
+
+## Usuário (colaborador)
+
 Pode:
 
-* Criar equipes
-* Gerenciar tarefas
-* Visualizar dashboards
-* Acompanhar métricas
-* Gerenciar usuários
-
-## Usuário
-
-Pode:
-
-* Visualizar tarefas atribuídas
-* Atualizar status
-* Registrar tempo gasto
-* Participar de chats
-* Adicionar comentários
-* Manipular subtarefas
-* Realizar upload de anexos
+* Acompanhar o Meu Dia e as tarefas atribuídas
+* Organizar as tarefas no Kanban e atualizar status
+* Assumir tarefas disponíveis no Backlog
+* Registrar tempo gasto com o cronômetro
+* Participar de chats e compartilhar arquivos
+* Adicionar comentários, subtarefas e anexos
+* Usar o assistente por voz ou texto (frontend web)
 
 ---
 
@@ -251,6 +255,7 @@ Pode:
 * Verificação de e-mail por código 2FA
 * Redirecionamento automático para a dashboard após validação do cadastro
 * Recuperação de senha por código enviado por e-mail
+* Verificação facial no login, com anti-spoofing, e recuperação facial excepcional (ver [Variáveis de Ambiente](#variáveis-de-ambiente))
 * Criptografia de senhas com Argon2
 * Controle de acesso por roles
 * Logout
@@ -261,6 +266,9 @@ Pode:
 * CRUD de equipes
 * Associação de membros
 * Visualização de participantes
+* Descrição opcional, exibida no card da equipe
+* Pesquisa, ordenação, filtro por data de criação e filtro de equipes com e sem tarefas, com os filtros na URL
+* Atalhos para tarefas, chat e insights de cada equipe
 * Código identificador de equipe
 * Popup de confirmação antes de excluir equipes
 
@@ -268,11 +276,22 @@ Pode:
 
 * CRUD completo
 * Kanban com drag and drop
-* Controle de urgência
-* Filtros
+* Controle de status, urgência e prazos (datas de entrega exibidas pelo dia gravado, sem deslocamento de fuso)
+* Pesquisa, filtros (equipe, responsável, status, urgência, prazo e criação) e ordenação, com os filtros na URL
 * PDF de tarefas
 * Modal de detalhes
 * Popup de confirmação antes de excluir tarefas
+
+## Painel Geral e Meu Dia
+
+* **Painel Geral (administrador):** indicadores de tarefas, distribuição por status, ranking de equipes, entregas atrasadas e próximas, e pontos de atenção com atalhos para as listas já filtradas
+* **Meu Dia (colaborador):** visão do dia com as tarefas que pedem atenção
+
+## Backlog
+
+* Tarefas pendentes e sem responsável das equipes do colaborador
+* Pesquisa por título e descrição, filtros por equipe e urgência e ordenação por prazo, prioridade ou criação
+* "Atribuir para mim" com atribuição atômica: só tarefas pendentes e sem responsável podem ser assumidas, e conflitos (409) são informados
 
 ## Cronômetro
 
@@ -300,26 +319,52 @@ Pode:
 * Upload de anexos
 * Limite de 10MB
 * Controle de MIME types
-* Download de arquivos
+* Moderação de imagens antes do armazenamento
+* Download autorizado de arquivos e exclusão de anexos de tarefas
 
 ## Chat em Tempo Real
 
 * Comunicação por equipe
-* Histórico persistente
-* Socket.IO
+* Histórico persistente e paginado (mensagens anteriores sob demanda)
+* Socket.IO, sem mensagens duplicadas nem misturadas entre equipes
 * Controle de acesso
-* Popup no canto superior direito para novas mensagens
+* Compartilhamento de arquivos PNG, JPG e PDF, com visualização de imagens e download autorizado
+* Moderação textual: mensagens bloqueadas não são enviadas e o autor recebe o motivo
+* Pesquisa de equipes e pesquisa nas mensagens carregadas (sem diferenciar maiúsculas e acentos)
+* Separadores por data, agrupamento de mensagens seguidas e rascunho por conversa
+* Popup no canto superior direito para novas mensagens (pode ser desativado nas preferências)
 * Popup de mensagem com remetente, foto de perfil, equipe e conteúdo
 
-## Dashboards
+## Notificações
+
+* Central de notificações com pesquisa, filtros por leitura e categoria e agrupamento por data
+* Marcar como lida e marcar todas como lidas
+* Contador de não lidas sincronizado entre sidebar, sino do cabeçalho e central, atualizado em tempo real
+* Navegação contextual: abrir a tarefa, a conversa da equipe ou o alerta nos Insights
+* Alertas de moderação com gravidade textual e escopo (individual, coletivo ou histórico)
+
+## Dashboards e Insights inteligentes
 
 * Métricas gerais
 * Ranking de equipes
 * Indicadores por status
 * Dashboard do usuário
-* Painel de insights com abas Resumo, Equipes e Alertas
+* Insights inteligentes com abas Visão geral, Equipes, Moderação e Alertas
+* Filtros por equipe e por período (7, 14 ou 30 dias), mantidos na URL
+* Indicadores de comunicação e moderação e recomendações baseadas nos registros
+* Alertas individuais, coletivos e históricos, com gravidade textual
 * Insights restritos às equipes das quais o administrador participa
-* Alertas com nome do usuário e motivo traduzido/formatado
+
+## Preferências e personalização
+
+* Temas claro e escuro e paletas roxa, azul, ciano e verde
+* Central de preferências (web), com alterações aplicadas na hora e salvas por conta
+* Fundo animado opcional, substituído por um fundo estático quando desativado
+* Sidebar expandida ou recolhida
+* Avisos flutuantes de novas mensagens
+* Envio de mensagens com Enter
+* Voz do assistente: tecnológica ou original
+* Restauração das preferências padrão
 
 ## Assistente de Voz e Texto
 
@@ -330,14 +375,33 @@ Disponível:
 * Pedidos em linguagem natural, como "liste as tarefas que já tenho cadastradas" ou "quais tarefas tenho?"
 * Perguntas pendentes e seleção de tarefas que continuam entre mensagens, mesmo com várias instâncias do assistente
 * Memória curta da conversa para fatos ditos pelo usuário (ex.: "minha prioridade de hoje é X"), sem executar nenhuma ação
-* Escuta que conclui sozinha após uma pausa de 2 s, encerra sem fala em 8 s e dura no máximo 30 s, com botões Cancelar e Concluir
+* Conversa contínua: depois de cada resposta falada, o microfone volta sozinho (só quando a voz do assistente terminou)
+* Escuta que conclui sozinha após uma pausa adaptativa (1,4 s quando a frase chegou completa; 2 s com resultado parcial ou frase incompleta), encerra sem fala em 8 s e dura no máximo 30 s, com botões Cancelar e Concluir
+* Resposta falada em português brasileiro, com a voz tecnológica (Microsoft Daniel) quando disponível e fallback para outra voz pt-BR
 * Alterações (criar equipe ou tarefa, comentar, adicionar subtarefa, atribuir, mudar status e cronômetro) só depois de um cartão de confirmação com o resumo da operação, confirmado por botão, texto ou voz
 
 Desativado por segurança:
 
 * Exclusões pelo assistente: nunca executadas, por nenhum caminho
-* Alterações pelo assistente: **desativadas em produção** (`FLOWLY_ASSISTANT_WRITES_ENABLED` desligada, que também é o padrão); funcionam apenas no ambiente em que a variável estiver como `true`
+* Alterações pelo assistente: a disponibilidade depende da configuração `FLOWLY_ASSISTANT_WRITES_ENABLED` de cada ambiente (desligada por padrão; só funcionam com `true`) e, mesmo ligadas, das regras de autorização da API e da confirmação explícita de cada operação
 * Respostas ambíguas ("sim", "ok", ruído de voz) e transcrições incompletas nunca executam uma alteração
+
+## Web e mobile
+
+O frontend web e o aplicativo Flutter consomem a mesma API (REST e Socket.IO), mas não têm as mesmas telas:
+
+| Recurso | Web | Mobile (Flutter) |
+| ------- | --- | ---------------- |
+| Login, cadastro, verificação de e-mail e verificação facial | Sim | Sim |
+| Perfil, foto e cadastro facial | Sim | Sim |
+| Painel do colaborador, tarefas, detalhes, Kanban e Backlog | Sim | Sim |
+| Minhas equipes e participantes | Sim | Sim |
+| Chat por equipe com anexos PNG, JPG e PDF | Sim | Sim |
+| Notificações | Sim | Sim |
+| Painel Geral, gestão administrativa de equipes e tarefas e Insights inteligentes | Sim | Não (as telas administrativas existem no código, mas não estão nas rotas do app) |
+| Assistente por voz e texto | Sim | Não |
+| Central de preferências, paletas e fundo animado opcional | Sim | Não |
+| Pesquisa nas mensagens, histórico paginado e rascunho por conversa | Sim | Não |
 
 ---
 
@@ -379,13 +443,15 @@ GET    /api/equipes/:id
 PUT    /api/equipes/:id
 DELETE /api/equipes/:id
 GET    /api/equipes/:id/membros
-GET    /api/equipes/:id/messages
+GET    /api/equipes/:id/messages            # paginação opcional: ?limit, ?before, ?after
+POST   /api/equipes/:id/mensagens/anexos
+GET    /api/equipes/:id/mensagens/:messageId/anexo
 ```
 
 ### Tarefas
 
 ```http
-GET    /api/tarefas
+GET    /api/tarefas                         # ?resumo=1: só os campos dos indicadores
 POST   /api/tarefas
 PUT    /api/tarefas/:id
 DELETE /api/tarefas/:id
@@ -396,6 +462,8 @@ POST   /api/tarefas/:id/comentarios
 POST   /api/tarefas/:id/subtarefas
 PUT    /api/tarefas/:id/subtarefas/:subId
 POST   /api/tarefas/:id/anexos
+GET    /api/tarefas/:id/anexos/:anexoId/download
+DELETE /api/tarefas/:id/anexos/:anexoId
 PUT    /api/tarefas/:id/atribuir-para-mim
 PUT    /api/tarefas/:id/status
 PUT    /api/tarefas/:id/cronometro
@@ -447,7 +515,7 @@ POST /api/assistant/conversations/current/clear
 ```http
 GET  /api/admin/metricas
 POST /api/admin/assistant-insights/ingest
-GET  /api/admin/assistant-insights
+GET  /api/admin/assistant-insights          # ?versao=2: Insights com filtros de equipe e período
 GET  /api/storage/files/:encodedPath
 ```
 
@@ -457,12 +525,12 @@ GET  /api/storage/files/:encodedPath
 
 O Flowly 2.0 é distribuído entre dois provedores de nuvem. O **Microsoft Azure** hospeda o frontend estático. O **Google Cloud** executa os três serviços em containers no Cloud Run, guarda os arquivos e os segredos e analisa as imagens. O banco é um MongoDB gerenciado (Atlas). Todos os serviços são *stateless*: o estado (dados, confirmações do assistente, contexto das conversas e chaves de idempotência) fica no MongoDB. Assim, o Cloud Run pode criar ou remover instâncias sem perder informação.
 
-**Estado atual da produção:**
+**Estado no último ciclo validado** (referência desta documentação, não um valor permanentemente atual):
 
-* A `main` está no commit `1e27e24`, com o PR #26 integrado.
-* O frontend está publicado no Azure Static Web Apps.
-* A API, o assistente e o serviço facial estão publicados no Cloud Run, no projeto GCP `projeto-functions`, região `southamerica-east1`.
-* As alterações de dados pelo assistente estão **desativadas** em produção.
+* A `main` estava no commit `94fc84a`, com o PR #69 integrado.
+* O frontend é publicado no Azure Static Web Apps.
+* A API, o assistente e o serviço facial são publicados no Cloud Run, no projeto GCP `projeto-functions`, região `southamerica-east1`.
+* As alterações de dados pelo assistente dependem de `FLOWLY_ASSISTANT_WRITES_ENABLED` no ambiente (desligada por padrão), das regras de autorização da API e da confirmação explícita.
 
 ## Componentes e responsabilidades
 
@@ -540,8 +608,8 @@ flowchart LR
 * **Rotas internas fail-closed:** sem o segredo interno configurado, ou sem os índices obrigatórios no MongoDB, as rotas internas do assistente respondem 503 em vez de operar sem proteção.
 * **Confirmação explícita:** toda alteração pedida ao assistente gera uma operação com resumo. Ela só é executada se a confirmação trouxer o mesmo `operationId` mostrado na tela, dentro do prazo.
 * **Idempotência:** as escritas do assistente usam `Idempotency-Key`. Uma repetição (rede instável, duas instâncias, clique duplo) nunca executa a mesma alteração duas vezes.
-* **Chave de desligamento:** `FLOWLY_ASSISTANT_WRITES_ENABLED` vem desligada por padrão e está desligada em produção. Exclusões nunca são feitas pelo assistente.
-* **CORS explícito:** em produção, a API recusa iniciar com `CORS_ORIGIN` curinga; o assistente aceita uma única origem (`FLOWLY_CORS_ORIGIN`).
+* **Chave de desligamento:** `FLOWLY_ASSISTANT_WRITES_ENABLED` vem desligada por padrão; as alterações só ficam disponíveis no ambiente em que ela estiver como `true`, sempre sujeitas à autorização da API e à confirmação explícita. Exclusões nunca são feitas pelo assistente.
+* **CORS explícito:** em produção, a API recusa iniciar com `CORS_ORIGIN` curinga; o assistente aceita uma ou mais origens explícitas, separadas por vírgula (`FLOWLY_CORS_ORIGIN`).
 * **Biometria isolada:** o serviço facial não é exposto aos clientes; só a API o chama.
 
 ## CI/CD
@@ -550,7 +618,7 @@ flowchart LR
 flowchart LR
   Dev["Equipe"]
   GH["GitHub<br/>FATEC-Mobile-Group/flowly-2.0"]
-  Quality["GitHub Actions: Quality<br/>API: Jest + npm audit<br/>Frontend: Vitest + build + npm audit<br/>Assistente: unittest<br/>Facial: sintaxe - Mobile: flutter analyze"]
+  Quality["GitHub Actions: Quality<br/>API: Jest + npm audit<br/>Frontend: Vitest + build + npm audit<br/>Assistente: unittest<br/>Facial: sintaxe - Mobile: flutter analyze + flutter test"]
   SWAFlow["GitHub Actions: Azure Static Web Apps<br/>npm run build (Vite)"]
   Preview["Ambiente de preview do Static Web Apps"]
   SWA["Azure Static Web Apps<br/>produção"]
@@ -569,10 +637,11 @@ flowchart LR
 
 * **Quality** (`.github/workflows/quality.yml`): roda em todo pull request e em todo push na `main`.
   * API: testes Jest e `npm audit`.
-  * Frontend: testes Vitest, build e `npm audit`.
+  * Frontend: testes Vitest, build e `npm audit` (dependências de produção e política de exceções em `scripts/audit-policy.mjs`).
   * Assistente: testes Python, após instalar o `requirements.txt`.
   * Serviço facial: checagem de sintaxe.
-  * Mobile: `flutter analyze`.
+  * Mobile: `flutter analyze` e `flutter test`.
+  * Os testes E2E com Cypress e as suítes que exigem MongoDB com replica set real não fazem parte do workflow; são executados localmente.
 * **Frontend** (`.github/workflows/azure-static-web-apps-*.yml`): o merge na `main` gera o build e publica no Azure Static Web Apps. Cada pull request ganha um ambiente de preview. As URLs da API e do assistente vêm de secrets do repositório.
 * **Serviços Cloud Run:** três gatilhos do Cloud Build (região `global`, branch `^main$`) publicam automaticamente uma nova revisão a cada push na `main`. São eles `flowly-api-backend`, `flowly-assistente-voz` e `flowly-recon-facial`. Foi assim que os três serviços entraram em produção depois do merge do PR #26. A configuração dos gatilhos fica no Google Cloud, não no repositório.
 * **Deploy manual (alternativa):** `gcloud run deploy --source` continua disponível para publicar um serviço fora do fluxo automático (ver o procedimento do serviço facial em [Variáveis de Ambiente](#variáveis-de-ambiente)).
@@ -580,6 +649,8 @@ flowchart LR
 * **Índices do MongoDB:** os modelos do assistente e da idempotência não criam índices automaticamente (`autoIndex` desligado). Os índices obrigatórios são criados por migração antes do deploy, e a API recusa operar sem eles.
 
 ## Alternativa Kubernetes (versionada em `/k8s`, não usada na produção atual)
+
+> Diagrama conceitual da arquitetura alternativa descrita pelos manifests `k8s/`. Não representa a infraestrutura de produção, que usa Azure Static Web Apps e Google Cloud Run.
 
 ```mermaid
 flowchart TB
@@ -612,9 +683,9 @@ flowchart TB
 | Coleção      | Finalidade               |
 | ------------ | ------------------------ |
 | User         | Usuários e autenticação  |
-| Equipe       | Organização de equipes   |
+| Equipe       | Organização de equipes, com descrição opcional |
 | Tarefa       | Gerenciamento de tarefas |
-| Message      | Chat em tempo real       |
+| Message      | Chat em tempo real (texto e anexos) |
 | Comment      | Comentários              |
 | Notification | Notificações             |
 | ActivityLog  | Histórico de ações       |
@@ -626,6 +697,8 @@ flowchart TB
 | TwoFactorToken | Códigos temporários (15 minutos) de verificação de e-mail, recuperação de senha e recuperação facial |
 | FaceRecoveryAuthorization | Autorizações da recuperação facial excepcional |
 | SecurityAuditEvent | Eventos de auditoria de segurança, sem dados sensíveis |
+| RoleChangeEvent | Registro das mudanças de perfil (papel) feitas pelo script administrativo |
+| RoleLock | Trava que impede mudanças de perfil concorrentes na mesma conta |
 
 ---
 
@@ -644,15 +717,16 @@ flowchart TB
 
 ## Ferramentas
 
-* Cypress
-* Jest
-* React Testing Library
-* Vitest
+* Cypress (E2E do frontend, execução local)
+* Jest e Supertest (API)
+* React Testing Library e Vitest (frontend)
 * unittest (Python), no assistente
-* flutter analyze, no mobile
+* flutter analyze e flutter test, no mobile
 * GitHub Actions (workflow `Quality`, em todo pull request e push na `main`)
 
 ## Fluxos testados
+
+> Lista referente aos testes automatizados do último ciclo validado (PR #69). Não representa cobertura total nem garante funcionamento sem falhas.
 
 * Login
 * Cadastro
@@ -665,7 +739,14 @@ flowchart TB
 * Pausa/remoção visual do cronômetro ao pausar ou alterar status da tarefa
 * Navegação inicial
 * Assistente: confirmação explícita das escritas, vínculo ao `operationId`, idempotência, contexto compartilhado entre instâncias, memória curta, chave de desligamento das escritas e autenticação IAM opcional
-* Captura de voz: pausa, silêncio, duração máxima, Concluir, Cancelar e resultados parciais nunca enviados como comando
+* Captura de voz: pausa adaptativa, silêncio, duração máxima, Concluir, Cancelar e resultados parciais nunca enviados como comando
+* Conversa por voz contínua, retomada só após o fim da voz, seleção da voz tecnológica e fallback pt-BR
+* Painel Geral, filtros administrativos e equipes com e sem tarefas
+* Insights inteligentes: escopo por equipe, período, limites de agregação e alertas
+* Backlog: datas, filtros, atribuição e conflitos
+* Chat: anexos, moderação, paginação, pesquisa, troca de equipe e deduplicação via Socket.IO
+* Notificações: filtros, marcação como lida, contadores sincronizados e navegação contextual
+* Central de preferências: persistência por conta, tema, fundo animado, sidebar, avisos e Enter
 
 ---
 
@@ -683,6 +764,9 @@ flowchart TB
 * Configuração CORS
 * Confirmação explícita e idempotência nas alterações feitas pelo assistente
 * Segredo interno entre assistente e API, e IAM opcional para API privada no Cloud Run
+* Moderação textual do chat e moderação de imagens nos uploads
+* Anexos baixados só por rotas autenticadas, com verificação de acesso à equipe
+* Reconhecimento facial com anti-spoofing antes de gerar qualquer embedding
 
 ## Usabilidade
 
@@ -692,12 +776,14 @@ flowchart TB
 * Modais organizados
 * Popups de confirmação para ações destrutivas
 * Popups temporários para mensagens recebidas em tempo real
+* Temas claro e escuro, paletas e central de preferências
+* Sidebar expandida ou recolhida e layout adaptado ao celular
 
 ## Performance
 
-* WebSocket
+* WebSocket (Socket.IO) para chat, notificações e contadores em tempo real, sem polling periódico nessas telas
 * Atualização otimista
-* Polling eficiente
+* Carregamento paginado do histórico do chat e consulta resumida de tarefas para os indicadores
 
 ---
 
@@ -908,8 +994,10 @@ npm start
 ```bash
 cd flowly_mobal
 flutter pub get
-flutter run
+flutter run --dart-define=FLOWLY_API_URL=http://10.0.2.2:5000
 ```
+
+> A URL da API também pode vir de um `.env` criado a partir do `.env.example` (`FLOWLY_API_URL`). `10.0.2.2` é o endereço do computador visto pelo emulador Android.
 
 ## Assistente
 
@@ -926,6 +1014,27 @@ Para subir o assistente como servidor HTTP local, igual ao container do Cloud Ru
 ```bash
 cd flowly_assistente
 functions-framework --target trigger_http --port 8080
+```
+
+## Reconhecimento Facial
+
+```bash
+cd flowly_iot_face
+pip install -r requirements.txt
+cp .env.example .env
+python main.py
+```
+
+> Localmente o serviço escuta a porta `5001` (variável `PORT`). `FACE_SERVICE_SECRET` precisa ter o mesmo valor na API. Os pesos do modelo podem ser baixados uma vez com `python fetch_face_weights.py`.
+
+## Testes locais
+
+```bash
+# Cada comando a partir da raiz do repositório
+(cd flowly_api && npm test)                                # Jest e Supertest
+(cd flowly_frontend && npm test)                           # Vitest e React Testing Library
+(cd flowly_assistente && python -m unittest discover -s tests -v)
+(cd flowly_mobal && flutter test)
 ```
 
 ---
@@ -1076,10 +1185,11 @@ FLOWLY_DEBUG=false
 ### IoT Face (`flowly_iot_face`)
 
 ```env
+FACE_SERVICE_SECRET=GERAR_UM_SEGREDO_LONGO_IGUAL_NA_API
 FACE_MODEL=VGG-Face
 FACE_DETECTOR=opencv
-FACE_MATCH_THRESHOLD=0.46
-FACE_VERIFY_THRESHOLD=0.50
+FACE_MATCH_THRESHOLD=0.4
+FACE_VERIFY_THRESHOLD=0.5
 ```
 
 > Em Cloud Run, não configure `HOST` nem `PORT` para o serviço facial. O container já usa a porta injetada pela plataforma.
@@ -1115,7 +1225,6 @@ Os logs do serviço facial registram cada falha numa linha `face_failure`, com c
 
 * Notificações push
 * Planos Free/Pro/Enterprise
-* Personalização de perfil
 * Modo offline
 * Analytics avançado
 * Busca global
