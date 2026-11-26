@@ -3,7 +3,8 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "r
 import { publicRoutes, adminRoutes, userRoutes } from "./config/routes";
 import { authUtils } from "./config/authUtils";
 import { USER_TYPES } from "./config/config";
-import { ThemeProvider } from "./config/ThemeContext";
+import { ThemeProvider, useTheme } from "./config/ThemeContext";
+import { lerPreferencias, usePreferencias } from "./config/preferencias";
 import createSocketConnection from "./config/socketClient";
 import ThemeToggle from "./components/layout/ThemeToggle";
 import FloatingTimer from "./components/timer/FloatingTimer";
@@ -29,6 +30,14 @@ const homeDoUsuario = () => {
 const ProtectedRoute = ({ element, requiredRole }) => {
   const isAuthenticated = authUtils.isAuthenticated();
   const userType = authUtils.getUserType();
+  const userId = authUtils.getUserId();
+  const { sincronizarConta } = useTheme();
+  const { fundoAnimado } = usePreferencias();
+
+  // Login de outra conta sem recarregar: aparencia (tema e paleta) da conta atual.
+  useEffect(() => {
+    if (isAuthenticated) sincronizarConta();
+  }, [isAuthenticated, userId, sincronizarConta]);
 
   if (!isAuthenticated) {
     return <Navigate to="/" replace />;
@@ -41,7 +50,9 @@ const ProtectedRoute = ({ element, requiredRole }) => {
 
   return (
     <>
-      <ColorBendsBackground />
+      {/* Fundo animado desligado: o componente sai da arvore (as animacoes param) e fica um fundo estatico com as
+          cores do tema. Mesma posicao no fragmento: a pagina, o seletor e o timer nao sao remontados. */}
+      {fundoAnimado ? <ColorBendsBackground /> : <div className="fundo-estatico" aria-hidden="true" data-testid="fundo-estatico" />}
       <ThemeToggle />
       {element}
       {/* O timer usa /tarefas/minhas, exclusivo de user; admin nao tem tarefas e receberia 403. */}
@@ -92,6 +103,8 @@ function AppContent() {
       // Contador compartilhado e central; repeticao do mesmo _id (reconexao) nao conta nem gera outro aviso.
       if (!receberNotificacao(notification)) return;
       if (notification?.tipo !== 'chat') return;
+      // Preferencia "Avisos de novas mensagens": so o toast deixa de aparecer; contador e central seguem acima.
+      if (!lerPreferencias().toastsMensagens) return;
 
       const toastId = notification._id || `${Date.now()}-${Math.random()}`;
       setMessageToasts((current) => [...current, { ...notification, toastId }].slice(-4));

@@ -364,3 +364,15 @@ a:hover {
 button {
   font-family: 'Outfit', sans-serif;
 }
+
+/* Fundo estatico (preferencia "Fundo animado" desligada, PR #68): a mesma base de cores do fundo animado,
+   pelas variaveis do tema e da paleta, sem nenhuma animacao. */
+.fundo-estatico {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 48%, var(--xmb-radial), transparent 34%),
+    linear-gradient(180deg, var(--xmb-bg-top) 0%, var(--xmb-bg-mid) 48%, var(--xmb-bg-bottom) 100%);
+}

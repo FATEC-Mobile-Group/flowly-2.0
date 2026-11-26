@@ -20,6 +20,7 @@ import Equipes from '../pages/admin/Equipes';
 import ChatsPage from '../pages/common/ChatsPage';
 import NotificationsPage from '../pages/common/NotificationsPage';
 import VoiceAssistantPage from '../pages/common/VoiceAssistantPage';
+import PreferenciasPage from '../pages/common/PreferenciasPage';
 import { USER_TYPES } from './config';
 
 /**
@@ -141,6 +142,11 @@ export const userRoutes = [
   {
     path: '/notificacoes',
     element: <NotificationsPage />,
+  },
+  {
+    // Compartilhada: administradores e colaboradores autenticados (so preferencias da propria conta).
+    path: '/preferencias',
+    element: <PreferenciasPage />,
   },
   {
     path: '/perfil',

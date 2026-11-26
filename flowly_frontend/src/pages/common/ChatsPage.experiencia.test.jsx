@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router-dom';
 import ChatsPage from './ChatsPage';
 import { API_ENDPOINTS, LOCAL_STORAGE_KEYS } from '../../config/config';
 import { redefinirNotificacoes } from '../../components/notifications/notificationStore';
+import { definirPreferencia, redefinirCacheDePreferencias } from '../../config/preferencias';
 import {
   buscarMensagens,
   filtrarEquipesDoChat,
@@ -71,6 +72,7 @@ afterAll(() => { delete Element.prototype.scrollIntoView; });
 beforeEach(() => {
   seq = 0;
   redefinirNotificacoes();
+  redefinirCacheDePreferencias();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(AGORA);
   localStorage.clear();
@@ -260,6 +262,21 @@ describe('pagina do chat', () => {
     expect(socket.sendCount()).toBe(1);
     await act(async () => socket.lastAck()(null, { ok: true, messageId: 'x' }));
     expect(campo()).toHaveValue('');
+  });
+
+  test('preferencia "Enviar com Enter" desligada: Enter quebra a linha e o botao Enviar continua enviando', async () => {
+    renderPage();
+    await screen.findByText('Vou revisar o relatorio final');
+    await act(async () => { definirPreferencia('enviarComEnter', false); });
+    expect(screen.getByText('Enter quebra a linha · use o botão Enviar')).toBeInTheDocument();
+    fireEvent.change(campo(), { target: { value: 'linha 1' } });
+    // O Enter nao e interceptado (comportamento normal do campo: nova linha) e nada e enviado.
+    expect(fireEvent.keyDown(campo(), { key: 'Enter' })).toBe(true);
+    expect(sockets[0].sendCount()).toBe(0);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Enviar' })); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Enviar|Enviando/ })); });
+    expect(sockets[0].sendCount()).toBe(1);
+    expect(sockets[0].emit).toHaveBeenCalledWith('send_message', { equipeId: ALFA, texto: 'linha 1' }, expect.any(Function));
   });
 
   test('mensagem bloqueada nao aparece como enviada e o texto continua para correcao', async () => {

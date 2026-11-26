@@ -8,6 +8,7 @@ import apiClient, { getFullApiUrl } from '../../config/apiClient';
 import Sidebar from '../../components/layout/Sidebar';
 import { useFotoPerfil } from '../../components/layout/useFotoPerfil';
 import { useNaoLidas } from '../../components/notifications/notificationStore';
+import { usePreferencias } from '../../config/preferencias';
 import { authUtils } from '../../config/authUtils';
 import { API_ENDPOINTS } from '../../config/config';
 import { CHAT_SEND_TITLES, sendChatMessage } from '../../utils/chatSend';
@@ -126,6 +127,8 @@ const ChatsPageContent = ({ requestedEquipeId = null, onRequestHandled }) => {
   const userId = authUtils.getUserId();
   const emRoteador = useInRouterContext();
   const naoLidas = useNaoLidas() ?? 0;
+  // Preferencia "Enviar mensagens com Enter" (padrao: ligada). Desligada: Enter quebra a linha e o botao envia.
+  const { enviarComEnter } = usePreferencias();
   const { fotoUrl, aoFalharFoto } = useFotoPerfil();
   const nomeUsuario = localStorage.getItem('nome') || 'Usuário';
 
@@ -502,8 +505,9 @@ const ChatsPageContent = ({ requestedEquipeId = null, onRequestHandled }) => {
   };
 
   // Enter envia; Shift+Enter quebra a linha; durante a composicao (IME) o Enter confirma a palavra.
+  // Com a preferencia desligada, o Enter segue o comportamento normal do campo (nova linha).
   const aoTeclarNoCampo = (event) => {
-    if (event.key !== 'Enter' || event.shiftKey) return;
+    if (!enviarComEnter || event.key !== 'Enter' || event.shiftKey) return;
     if (event.nativeEvent?.isComposing || event.keyCode === 229) return;
     event.preventDefault();
     handleSendMessage();
@@ -878,7 +882,9 @@ const ChatsPageContent = ({ requestedEquipeId = null, onRequestHandled }) => {
                   {busy ? 'Enviando...' : 'Enviar'}
                 </button>
               </form>
-              <p id="chats-dica-envio" className="chats-dica">Enter envia · Shift+Enter quebra a linha</p>
+              <p id="chats-dica-envio" className="chats-dica">
+                {enviarComEnter ? 'Enter envia · Shift+Enter quebra a linha' : 'Enter quebra a linha · use o botão Enviar'}
+              </p>
             </div>
           </section>
         </div>

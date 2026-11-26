@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useState, useEffect, useRef } from 'react';
 
 const ThemeContext = createContext();
 
@@ -48,15 +48,32 @@ const readAppearance = () => {
   };
 };
 
+export const APARENCIA_PADRAO = Object.freeze({ theme: 'dark', palette: 'purple' });
+
 export function ThemeProvider({ children }) {
   const [appearance, setAppearance] = useState(readAppearance);
+  // Conta cuja aparencia esta carregada. Outra conta (login sem recarregar a pagina) le a propria aparencia.
+  const chaveCarregada = useRef(getUserAppearanceKey());
   const { theme, palette } = appearance;
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     document.documentElement.setAttribute('data-palette', palette);
-    localStorage.setItem(getUserAppearanceKey(), JSON.stringify({ theme, palette }));
+    localStorage.setItem(chaveCarregada.current, JSON.stringify({ theme, palette }));
   }, [theme, palette]);
+
+  // Chamado pelas paginas protegidas: se a sessao agora e de outra conta, troca para a aparencia dela.
+  const sincronizarConta = useCallback(() => {
+    const chave = getUserAppearanceKey();
+    if (chave === chaveCarregada.current) return;
+    chaveCarregada.current = chave;
+    setAppearance(readAppearance());
+  }, []);
+
+  // Restaurar padrao (central de preferencias): escuro e roxo, so para esta conta.
+  const restaurarAparencia = useCallback(() => {
+    setAppearance({ ...APARENCIA_PADRAO });
+  }, []);
 
   const toggleTheme = () => {
     setAppearance((prev) => ({
@@ -76,7 +93,9 @@ export function ThemeProvider({ children }) {
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, palette, palettes, toggleTheme, setTheme, setPalette }}>
+    <ThemeContext.Provider
+      value={{ theme, palette, palettes, toggleTheme, setTheme, setPalette, sincronizarConta, restaurarAparencia }}
+    >
       {children}
     </ThemeContext.Provider>
   );
