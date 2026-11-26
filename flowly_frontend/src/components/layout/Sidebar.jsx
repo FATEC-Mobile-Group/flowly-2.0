@@ -2,16 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   FaChartPie, FaUsers, FaTasks, FaSignOutAlt,
-  FaBars, FaTimes, FaPlus, FaClipboardList, FaHome, FaInbox, FaComments, FaBell, FaMicrophone, FaLightbulb
+  FaBars, FaTimes, FaPlus, FaClipboardList, FaHome, FaInbox, FaComments, FaBell, FaMicrophone, FaLightbulb, FaSlidersH
 } from 'react-icons/fa';
 import { authUtils } from '../../config/authUtils';
 import { useFotoPerfil } from './useFotoPerfil';
 import { useNaoLidas } from '../notifications/notificationStore';
+import { definirPreferencia, usePreferencias } from '../../config/preferencias';
 import '../../styles/components/Sidebar.css';
 
 const Sidebar = () => {
-  const [expanded, setExpanded] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Expandida ou recolhida: preferencia da conta (central de preferencias e o botao de recolher), aplicada em todas
+  // as paginas. O menu aberto no celular e so temporario e mostra sempre os rotulos.
+  const { sidebarRecolhida } = usePreferencias();
+  const expanded = mobileOpen || !sidebarRecolhida;
+  const alternarRecolhida = () => definirPreferencia('sidebarRecolhida', !sidebarRecolhida);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -140,8 +145,9 @@ const Sidebar = () => {
           </div>
           <button
             className="sidebar-toggle"
-            onClick={() => setExpanded(!expanded)}
+            onClick={alternarRecolhida}
             aria-label={expanded ? 'Recolher menu' : 'Expandir menu'}
+            aria-pressed={sidebarRecolhida}
           >
             <FaBars />
           </button>
@@ -181,6 +187,14 @@ const Sidebar = () => {
 
         {/* Bottom Section */}
         <div className="sidebar-footer">
+          <Link
+            to="/preferencias"
+            className={`sidebar-link sidebar-preferencias ${isActive('/preferencias') ? 'active' : ''}`}
+            title="Preferências"
+          >
+            <span className="sidebar-link-icon"><FaSlidersH /></span>
+            {expanded && <span className="sidebar-link-text">Preferências</span>}
+          </Link>
           {/* User Info */}
           <button
             type="button"

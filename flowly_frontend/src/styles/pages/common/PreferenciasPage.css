@@ -1,0 +1,255 @@
+/* Central de preferencias (PR #68). Estrutura do Painel Geral (.dashboard-geral: sidebar expandida ou recolhida,
+   cabecalho e mobile); aqui so os cartoes e controles. Cores pelas variaveis do tema e da paleta. */
+
+.preferencias-pagina .preferencias-grade {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.preferencias-pagina .preferencias-cartao {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.preferencias-pagina .preferencias-cartao-topo {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.preferencias-pagina .preferencias-cartao-topo h3 { margin: 0; font-size: 1.1rem; }
+.preferencias-pagina .preferencias-cartao-topo p { margin: 4px 0 0; color: var(--text-secondary); font-size: 0.85rem; }
+
+.preferencias-pagina .preferencias-cartao-icone {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--primary-soft);
+  color: var(--primary-color);
+}
+
+.preferencias-pagina .preferencia-grupo { display: flex; flex-direction: column; gap: 8px; }
+
+.preferencias-pagina .preferencia-titulo { font-weight: 700; font-size: 0.95rem; color: var(--text-primary); }
+
+.preferencias-pagina .preferencia-descricao {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+/* ---------------------------------------------------------------- Opcoes de tema e paleta */
+.preferencias-pagina .preferencias-opcoes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.preferencias-pagina .preferencias-opcoes--paletas { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+.preferencias-pagina .preferencias-opcao {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: var(--surface-bg);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.preferencias-pagina .preferencias-opcao:hover { background: var(--surface-hover); }
+
+.preferencias-pagina .preferencias-opcao.is-selecionada {
+  border-color: var(--primary-color);
+  background: var(--surface-active);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.preferencias-pagina .preferencias-opcao-rotulo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.preferencias-pagina .preferencias-check { color: var(--primary-color); }
+
+/* Previa do tema: cores fixas de cada tema (nao dependem do tema atual). */
+.preferencias-pagina .preferencias-previa {
+  position: relative;
+  display: block;
+  height: 64px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+}
+
+.preferencias-pagina .preferencias-previa--dark { background: #0d0b16; }
+.preferencias-pagina .preferencias-previa--light { background: #f5f3fb; }
+
+.preferencias-pagina .previa-barra {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 22%;
+}
+
+.preferencias-pagina .preferencias-previa--dark .previa-barra { background: #17142a; }
+.preferencias-pagina .preferencias-previa--light .previa-barra { background: #ffffff; }
+
+.preferencias-pagina .previa-cartao {
+  position: absolute;
+  left: 30%;
+  right: 8%;
+  top: 14%;
+  height: 28%;
+  border-radius: 4px;
+  background: var(--primary-color);
+  opacity: 0.85;
+}
+
+.preferencias-pagina .previa-cartao--curto { top: 54%; right: 34%; opacity: 0.45; }
+
+.preferencias-pagina .preferencias-paleta { align-items: center; }
+
+.preferencias-pagina .preferencias-amostra {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--amostra-cor);
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+
+/* ---------------------------------------------------------------- Interruptores */
+.preferencias-pagina .preferencia-linha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.preferencias-pagina .preferencias-cartao-topo + .preferencia-linha { padding-top: 0; border-top: 0; }
+
+.preferencias-pagina .preferencia-texto { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+
+.preferencias-pagina .preferencia-switch {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.preferencias-pagina .preferencia-switch-trilho {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--surface-active);
+  border: 1px solid var(--glass-border);
+  transition: background 0.2s;
+}
+
+.preferencias-pagina .preferencia-switch-botao {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: transform 0.2s;
+}
+
+.preferencias-pagina .preferencia-switch.is-ativo { color: var(--text-primary); }
+.preferencias-pagina .preferencia-switch.is-ativo .preferencia-switch-trilho { background: var(--primary-color); border-color: transparent; }
+.preferencias-pagina .preferencia-switch.is-ativo .preferencia-switch-botao { transform: translateX(20px); }
+
+.preferencias-pagina .preferencia-switch-estado { min-width: 66px; text-align: left; }
+
+/* ---------------------------------------------------------------- Atalhos e restaurar */
+.preferencias-pagina .preferencias-atalhos { display: grid; gap: 8px; }
+
+.preferencias-pagina .preferencias-atalho {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: var(--surface-bg);
+  color: var(--text-primary);
+  font-weight: 700;
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.preferencias-pagina .preferencias-atalho:hover { background: var(--surface-hover); color: var(--text-primary); }
+.preferencias-pagina .preferencias-atalho svg { color: var(--primary-color); grid-row: span 2; }
+.preferencias-pagina .preferencias-atalho small { grid-column: 2; color: var(--text-secondary); font-weight: 500; font-size: 0.78rem; }
+
+.preferencias-pagina .preferencias-restaurar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  padding: 9px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  background: var(--surface-bg);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.preferencias-pagina .preferencias-restaurar:hover { background: var(--surface-hover); }
+
+.preferencias-pagina .preferencias-opcao:focus-visible,
+.preferencias-pagina .preferencia-switch:focus-visible,
+.preferencias-pagina .preferencias-atalho:focus-visible,
+.preferencias-pagina .preferencias-restaurar:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+@container painel-geral (max-width: 900px) {
+  .preferencias-pagina .preferencias-grade { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 480px) {
+  .preferencias-pagina .preferencias-opcoes--paletas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .preferencias-pagina .preferencia-linha { align-items: flex-start; }
+  .preferencias-pagina .preferencia-switch-estado { display: none; }
+}
