@@ -117,7 +117,8 @@ describe('ChatsPage: anexos no chat', () => {
       if (url.startsWith('http://api.test/api/equipes/')) {
         return { data: new Blob(['conteudo'], { type: 'application/octet-stream' }) };
       }
-      if (url.includes('/messages')) return { data: options?.params ? [] : historico };
+      // Historico inicial vem com ?limit (PR #67); so a sincronizacao de reconexao usa ?after.
+      if (url.includes('/messages')) return { data: options?.params?.after ? [] : historico };
       return { data: [{ _id: EQUIPE_ID, nome: 'Equipe Alfa', membros: [ME, OTHER] }, { _id: OUTRA_EQUIPE_ID, nome: 'Equipe Beta', membros: [ME] }] };
     });
     let seq = 0;
@@ -594,7 +595,7 @@ describe('ChatsPage: anexos no chat', () => {
       act(() => socket.trigger('connect'));
       const perdida = { _id: 'eeeeeeeeeeeeeeeeeeeeeee2', texto: 'chegou durante a queda', createdAt: '2026-11-21T09:00:00.000Z', user: OTHER };
       apiGet.mockImplementation(async (url, options) => {
-        if (url.includes('/messages')) return { data: options?.params ? [textoAntigo, perdida] : historico };
+        if (url.includes('/messages')) return { data: options?.params?.after ? [textoAntigo, perdida] : historico };
         return { data: [] };
       });
 
@@ -609,7 +610,7 @@ describe('ChatsPage: anexos no chat', () => {
       await abrirChat();
       act(() => socket.trigger('connect'));
 
-      expect(apiGet.mock.calls.filter(([, options]) => options?.params)).toHaveLength(0);
+      expect(apiGet.mock.calls.filter(([, options]) => options?.params?.after)).toHaveLength(0);
     });
   });
 

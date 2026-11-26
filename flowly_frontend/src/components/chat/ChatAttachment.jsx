@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FaDownload, FaFileImage, FaFilePdf, FaTimes } from 'react-icons/fa';
+import { FaDownload, FaFileImage, FaFilePdf, FaRedo, FaTimes } from 'react-icons/fa';
 import {
   describeAttachmentFetchError,
   fetchAttachmentBlob,
@@ -10,6 +10,10 @@ import {
 
 // Visualizacao dos anexos do chat. Todo arquivo vem pela requisicao autenticada (Blob) e vira uma URL local
 // (blob:), liberada com URL.revokeObjectURL quando o componente sai da tela. Nada vai para localStorage.
+
+// Tipo exibido ao lado do tamanho: so os formatos aceitos pelo chat (PNG, JPG e PDF).
+const TIPOS = { 'image/png': 'PNG', 'image/jpeg': 'JPG', 'application/pdf': 'PDF' };
+export const tipoDoArquivo = (mimetype) => TIPOS[mimetype] || null;
 
 // Carrega a imagem so quando ela chega perto da area visivel (sem IntersectionObserver, carrega na hora).
 const useNearViewport = (ref) => {
@@ -29,7 +33,8 @@ const useNearViewport = (ref) => {
 };
 
 // URL local de um anexo autenticado. Liberada ao desmontar ou ao trocar de arquivo; cancelada se sair antes.
-export const useAuthorizedObjectUrl = (path, enabled) => {
+// tentativa: muda para buscar de novo depois de uma falha recuperavel (conexao, armazenamento indisponivel).
+export const useAuthorizedObjectUrl = (path, enabled, tentativa = 0) => {
   const [state, setState] = useState({ url: null, error: null, loading: false });
   useEffect(() => {
     if (!enabled || !path) return undefined;
@@ -49,7 +54,7 @@ export const useAuthorizedObjectUrl = (path, enabled) => {
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [path, enabled]);
+  }, [path, enabled, tentativa]);
   return state;
 };
 
@@ -102,7 +107,9 @@ const DownloadButton = ({ anexo, onError }) => {
 const AttachmentImage = ({ anexo, onOpen, onError }) => {
   const boxRef = useRef(null);
   const visible = useNearViewport(boxRef);
-  const { url, error, loading } = useAuthorizedObjectUrl(anexo.previewUrl, visible);
+  const [tentativa, setTentativa] = useState(0);
+  const { url, error, loading } = useAuthorizedObjectUrl(anexo.previewUrl, visible, tentativa);
+  const tipo = tipoDoArquivo(anexo.mimetype);
 
   return (
     <div className="chat-attachment-image" ref={boxRef}>
@@ -119,10 +126,23 @@ const AttachmentImage = ({ anexo, onOpen, onError }) => {
         <div className="chat-attachment-placeholder" role={error ? 'alert' : 'status'}>
           <FaFileImage aria-hidden="true" />
           <span>{error ? error.message : loading ? 'Carregando imagem...' : 'Imagem'}</span>
+          {/* So falha recuperavel (conexao, 503) oferece nova tentativa; arquivo removido ou sem acesso, nao. */}
+          {error?.kind === 'warning' && (
+            <button
+              type="button"
+              className="chat-attachment-retry"
+              onClick={() => setTentativa((n) => n + 1)}
+              aria-label={`Tentar carregar ${anexo.nomeOriginal} novamente`}
+            >
+              <FaRedo aria-hidden="true" />
+              <span>Tentar novamente</span>
+            </button>
+          )}
         </div>
       )}
       <div className="chat-attachment-meta">
         <span className="chat-attachment-name" title={anexo.nomeOriginal}>{anexo.nomeOriginal}</span>
+        {tipo && <span className="chat-attachment-type">{tipo}</span>}
         <span className="chat-attachment-size">{formatBytes(anexo.size)}</span>
         <DownloadButton anexo={anexo} onError={onError} />
       </div>
@@ -136,7 +156,10 @@ const AttachmentFile = ({ anexo, onError }) => (
     <span className="chat-attachment-icon"><FaFilePdf aria-hidden="true" /></span>
     <div className="chat-attachment-info">
       <span className="chat-attachment-name" title={anexo.nomeOriginal}>{anexo.nomeOriginal}</span>
-      <span className="chat-attachment-size">{formatBytes(anexo.size)}</span>
+      <span className="chat-attachment-details">
+        {tipoDoArquivo(anexo.mimetype) && <span className="chat-attachment-type">{tipoDoArquivo(anexo.mimetype)}</span>}
+        <span className="chat-attachment-size">{formatBytes(anexo.size)}</span>
+      </span>
     </div>
     <DownloadButton anexo={anexo} onError={onError} />
   </div>
@@ -194,7 +217,10 @@ export const ComposerAttachmentPreview = ({ draft, progress, uploading, onRemove
     )}
     <div className="chat-attachment-info">
       <span className="chat-attachment-name" title={draft.file.name}>{draft.file.name}</span>
-      <span className="chat-attachment-size">{formatBytes(draft.file.size)}</span>
+      <span className="chat-attachment-details">
+        {tipoDoArquivo(draft.file.type) && <span className="chat-attachment-type">{tipoDoArquivo(draft.file.type)}</span>}
+        <span className="chat-attachment-size">{formatBytes(draft.file.size)}</span>
+      </span>
       {uploading && (
         <div className="chat-upload-progress">
           <div
