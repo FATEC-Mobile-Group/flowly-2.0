@@ -3,6 +3,7 @@
 // SpeechRecognition, speechSynthesis e fetch simulados (relogio falso): isto nao prova o comportamento no Chrome real.
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { API_ENDPOINTS } from '../../config/config';
+import { definirPreferencia, redefinirCacheDePreferencias } from '../../config/preferencias';
 
 vi.mock('../../components/layout/Sidebar', () => ({ __esModule: true, default: () => null }));
 vi.setConfig({ testTimeout: 20000, hookTimeout: 30000 });
@@ -542,15 +543,20 @@ describe('Diagnostico de latencia (flowly:voice-debug)', () => {
     fire(resumed.onaudiostart);
 
     const steps = info.mock.calls.map((call) => call[1]);
+    // PR #69: resposta-ate-sintese, voz (estado) e sintese-ate-onstart detalham o intervalo resposta -> voz.
     expect(steps).toEqual([
       'clique-ate-start', 'start-ate-onstart', 'onstart-ate-audio', 'microfone-pronto',
-      'ultimo-resultado-ate-final', 'fala-encerrada-ate-final', 'envio', 'resposta', 'inicio-da-voz',
+      'ultimo-resultado-ate-final', 'fala-encerrada-ate-final', 'envio', 'resposta',
+      'resposta-ate-sintese', 'voz', 'sintese-ate-onstart', 'inicio-da-voz',
       'espera-da-retomada', 'start-ate-onstart', 'onstart-ate-audio', 'retomada-ate-pronto', 'retomada',
     ]);
+    // Estados tecnicos: so valores fixos (perfil da voz, pausa em ms).
+    const ESTADOS = new Set(['tecnologica', 'original', 'padrao-do-navegador']);
     info.mock.calls.forEach((call) => {
       expect(call).toHaveLength(3);
       expect(call[0]).toBe('[flowly:voz]');
-      expect(call[2]).toMatch(/^\d+ ms$/);
+      if (call[1] === 'voz') expect(ESTADOS.has(call[2])).toBe(true);
+      else expect(call[2]).toMatch(/^\d+ ms$/);
       expect(call.join(' ')).not.toMatch(/minhas tarefas|Resposta|Bearer|voice-/);
     });
     info.mockRestore();
@@ -563,6 +569,157 @@ describe('Diagnostico de latencia (flowly:voice-debug)', () => {
     await say('minhas tarefas');
     await finishSpeechAndResume();
     expect(info).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+});
+
+// PR #69: voz tecnologica (Microsoft Daniel) pela identidade, fallback pt-BR, lista de vozes tardia, sintese sem
+// cancel desnecessario e retomada em 250 ms so depois do fim confirmado da voz.
+describe('PR #69: voz do assistente e latencia', () => {
+  const voz = (name, lang, extra = {}) => ({ name, voiceURI: name, lang, default: false, localService: true, ...extra });
+  const DANIEL = voz('Microsoft Daniel - Portuguese (Brazil)', 'pt-BR');
+  const MARIA = voz('Microsoft Maria - Portuguese (Brazil)', 'pt-BR');
+  const GOOGLE = voz('Google português do Brasil', 'pt-BR', { localService: false });
+
+  beforeEach(() => {
+    localStorage.clear();
+    redefinirCacheDePreferencias();
+  });
+
+  test('voz tecnologica por padrao: Daniel pela identidade (nao pela posicao), pitch 0.75, rate 1.05, volume 1', async () => {
+    voices = [MARIA, GOOGLE, voz('Microsoft David - English', 'en-US', { default: true }), DANIEL];
+    render(<VoiceAssistantPage />);
+    sendTyped('meu perfil');
+    await settle();
+    const fala = lastUtterance();
+    expect(fala.voice).toBe(DANIEL);
+    expect(fala.lang).toBe('pt-BR');
+    expect([fala.pitch, fala.rate, fala.volume]).toEqual([0.75, 1.05, 1]);
+  });
+
+  test('sem Daniel: comportamento original em pt-BR (rate 1, pitch do navegador); "Daniel" ingles nunca e usado', async () => {
+    voices = [voz('Daniel', 'en-GB'), MARIA, GOOGLE];
+    render(<VoiceAssistantPage />);
+    sendTyped('meu perfil');
+    await settle();
+    const fala = lastUtterance();
+    expect(fala.voice).toBe(GOOGLE);
+    expect(fala.rate).toBe(1);
+    expect(fala.pitch).toBeUndefined();
+  });
+
+  test('preferencia "Voz original" da conta: mesmo com Daniel, fica a voz anterior', async () => {
+    localStorage.setItem('id', 'conta-1');
+    definirPreferencia('vozAssistente', 'original');
+    voices = [DANIEL, GOOGLE];
+    render(<VoiceAssistantPage />);
+    sendTyped('meu perfil');
+    await settle();
+    expect(lastUtterance().voice).toBe(GOOGLE);
+    expect(lastUtterance().rate).toBe(1);
+  });
+
+  test('lista de vozes vazia: a resposta fala na hora (lang pt-BR, sem voz); quando a lista chega, passa a usar Daniel', async () => {
+    voices = [];
+    render(<VoiceAssistantPage />);
+    sendTyped('meu perfil');
+    await settle();
+    expect(window.speechSynthesis.speak).toHaveBeenCalledTimes(1);
+    expect(lastUtterance().voice).toBeUndefined();
+    expect(lastUtterance().lang).toBe('pt-BR');
+
+    voices = [MARIA, DANIEL];
+    act(() => voiceListeners.forEach((listener) => listener()));
+    sendTyped('minhas tarefas');
+    await settle();
+    expect(lastUtterance().voice).toBe(DANIEL);
+  });
+
+  test('voz escolhida antes e reaproveitada; lista nova (objetos novos) escolhe de novo, sem referencia invalida', async () => {
+    voices = [DANIEL];
+    render(<VoiceAssistantPage />);
+    sendTyped('meu perfil');
+    await settle();
+    const chamadasAntes = window.speechSynthesis.getVoices.mock.calls.length;
+    sendTyped('minhas tarefas');
+    await settle();
+    expect(window.speechSynthesis.getVoices.mock.calls.length).toBe(chamadasAntes);
+    const danielNovo = { ...DANIEL };
+    voices = [danielNovo];
+    act(() => voiceListeners.forEach((listener) => listener()));
+    sendTyped('meu perfil');
+    await settle();
+    expect(lastUtterance().voice).toBe(danielNovo);
+  });
+
+  test('sintese: sem fala tocando, nao chama cancel antes de speak; com fala tocando, cancela antes', async () => {
+    window.speechSynthesis.speaking = false;
+    window.speechSynthesis.pending = false;
+    render(<VoiceAssistantPage />);
+    window.speechSynthesis.cancel.mockClear();
+    sendTyped('meu perfil');
+    await settle();
+    expect(window.speechSynthesis.speak).toHaveBeenCalledTimes(1);
+    expect(window.speechSynthesis.cancel).not.toHaveBeenCalled();
+
+    window.speechSynthesis.speaking = true;
+    sendTyped('minhas tarefas');
+    await settle();
+    expect(window.speechSynthesis.cancel).toHaveBeenCalled();
+    expect(window.speechSynthesis.speak).toHaveBeenCalledTimes(2);
+  });
+
+  test('retomada: nada de microfone durante a voz; nova escuta 250 ms depois do fim confirmado, uma sessao so', async () => {
+    render(<VoiceAssistantPage />);
+    startConversation();
+    await say('minhas tarefas');
+    const fala = lastUtterance();
+    fire(fala.onstart);
+    await advance(3000); // voz ainda tocando
+    expect(sessions()).toHaveLength(1);
+    fire(fala.onend);
+    await advance(249);
+    expect(sessions()).toHaveLength(1);
+    await advance(1);
+    expect(sessions()).toHaveLength(2);
+    expect(lastSession().start).toHaveBeenCalledTimes(1);
+    fire(fala.onend); // fim repetido nao abre outra sessao
+    await advance(1000);
+    expect(sessions()).toHaveLength(2);
+  });
+
+  test('Standby durante a voz cancela a fala e a retomada', async () => {
+    render(<VoiceAssistantPage />);
+    startConversation();
+    await say('minhas tarefas');
+    const fala = lastUtterance();
+    fire(fala.onstart);
+    clickStandby();
+    await settle();
+    fire(fala.onend);
+    await advance(2000);
+    expect(sessions()).toHaveLength(1);
+    expect(window.speechSynthesis.cancel).toHaveBeenCalled();
+  });
+
+  test('diagnostico: pausa de conclusao e etapas novas so com tempos e estados tecnicos', async () => {
+    localStorage.setItem('flowly:voice-debug', '1');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    voices = [DANIEL];
+    render(<VoiceAssistantPage />);
+    startConversation();
+    fire(lastSession().onresult, resultEvent([['minhas tarefas', true]]));
+    await advance(1400);
+    expect(lastSession().stop).toHaveBeenCalledTimes(1);
+    fire(lastSession().onend);
+    await settle();
+    const registros = info.mock.calls.map((call) => [call[1], call[2]]);
+    expect(registros).toContainEqual(['pausa-de-conclusao', '1400 ms']);
+    expect(registros).toContainEqual(['voz', 'tecnologica']);
+    expect(registros.map(([etapa]) => etapa)).toEqual(expect.arrayContaining([
+      'ultimo-resultado-ate-stop', 'stop-ate-final', 'ultimo-resultado-ate-final', 'envio', 'resposta', 'resposta-ate-sintese',
+    ]));
+    info.mock.calls.forEach((call) => expect(call.join(' ')).not.toMatch(/minhas tarefas|Resposta|Bearer|Daniel/));
     info.mockRestore();
   });
 });

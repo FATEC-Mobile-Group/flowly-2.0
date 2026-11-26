@@ -6,7 +6,8 @@ import { authUtils } from '../../config/authUtils';
 import AssistantQueryResults from '../../components/assistant/AssistantQueryResults';
 import AssistantTaskDetails from '../../components/assistant/AssistantTaskDetails';
 import { PERSONAL_QUERY_TYPES, parseAssistantQuery, parseAssistantTask } from '../../utils/assistantQuery';
-import { pickPortugueseVoice } from '../../utils/voiceSelection';
+import { aplicarVoz, escolherVozDoAssistente, vozAindaDisponivel } from '../../utils/assistantVoice';
+import { usePreferencias } from '../../config/preferencias';
 import { createVoiceTrace } from '../../utils/voiceDiagnostics';
 import '../../styles/pages/common/VoiceAssistantPage.css';
 
@@ -58,7 +59,10 @@ const STATUS_LABELS = {
 // logo apos a resposta se nao houver voz), o microfone volta sozinho. Pausa antes de reabrir, para o fim do audio
 // do assistente nao ser captado. A conversa termina com Standby, Cancelar, digitacao, botoes, erro, resposta com
 // falha ou operacao incerta, e por inatividade: microfone reaberto sem fala por NO_SPEECH_TIMEOUT_MS (8 s).
-const RESUME_DELAY_MS = 400;
+// PR #69: 400 -> 250 ms. A retomada so e agendada depois do fim confirmado da voz (onend, ou a consulta de 0,5 s
+// quando o Chrome nao dispara onend), e o microfone so capta de fato no onaudiostart, medido em ~1,3 s depois do
+// start() em producao: a voz do assistente ja terminou bem antes de a captura comecar.
+const RESUME_DELAY_MS = 250;
 // Voz pedida que nao comecou: a fala e cancelada (nunca toca depois com o microfone aberto) e a conversa segue.
 const SPEECH_START_TIMEOUT_MS = 6000;
 // O Chrome as vezes nao dispara onend: com a fala iniciada, confere se ainda esta tocando.
@@ -83,7 +87,23 @@ const FAILURE_HINT_AFTER = 3;
 // Escuta continua LIMITADA a uma fala: o navegador nao corta a frase na primeira pausa (no modo nao continuo o
 // Chrome encerra no primeiro silencio curto e so entrega o primeiro trecho). A sessao conclui sozinha (stop, so o
 // resultado final e enviado) depois de uma pausa sem novos resultados, fecha sem fala e tem duracao maxima.
+// PR #69: a pausa que conclui a fala e adaptativa. 1400 ms so quando o navegador ja entregou tudo como final e a
+// frase nao termina em palavra de ligacao ("de", "para", "e"...): sinal confiavel de comando completo. Resultado
+// ainda parcial ou frase que parece incompleta mantem os 2000 ms anteriores (pausas naturais e comandos longos).
 const SPEECH_PAUSE_END_MS = 2000;
+const SPEECH_PAUSE_FINAL_MS = 1400;
+const PALAVRAS_DE_LIGACAO = new Set([
+  'a', 'o', 'as', 'os', 'um', 'uma', 'uns', 'umas', 'de', 'da', 'do', 'das', 'dos', 'em', 'no', 'na', 'nos', 'nas',
+  'para', 'pra', 'pro', 'por', 'pelo', 'pela', 'pelos', 'pelas', 'com', 'sem', 'ao', 'aos', 'à', 'às', 'e', 'ou',
+  'que', 'se', 'mas', 'até', 'sobre', 'entre', 'como', 'quando', 'onde', 'qual', 'quais',
+]);
+// Pausa usada para concluir depois do ultimo resultado (exportada para os testes).
+export function pausaDeConclusao(finalText, interimText) {
+  if (interimText || !finalText) return SPEECH_PAUSE_END_MS;
+  const palavras = normalizeSegment(finalText).replace(/[.,;:!?…]+$/u, '').split(' ').filter(Boolean);
+  const ultima = palavras[palavras.length - 1] || '';
+  return PALAVRAS_DE_LIGACAO.has(ultima) ? SPEECH_PAUSE_END_MS : SPEECH_PAUSE_FINAL_MS;
+}
 const NO_SPEECH_TIMEOUT_MS = 8000;
 const MAX_LISTEN_MS = 30000;
 // Falhas em que tentar de novo pode resolver (as de permissao ou de navegador nao).
@@ -303,6 +323,11 @@ function VoiceAssistantPage() {
   const startListeningRef = useRef(null);
   // Vozes do navegador (carregam depois da montagem: voiceschanged) e aviso quando nao ha voz em portugues.
   const voicesRef = useRef([]);
+  // Voz escolhida antecipadamente (preferencia da conta + vozes do navegador), reutilizada em cada resposta.
+  const voiceChoiceRef = useRef(null);
+  const { vozAssistente } = usePreferencias();
+  const vozAssistenteRef = useRef(vozAssistente);
+  vozAssistenteRef.current = vozAssistente;
   const [voiceKind, setVoiceKind] = useState(null);
   const speechTimersRef = useRef({ start: null, poll: null });
   const traceRef = useRef(null);
@@ -361,15 +386,26 @@ function VoiceAssistantPage() {
     const synth = window.speechSynthesis;
     if (!text || !synth || typeof SpeechSynthesisUtterance === 'undefined') return false;
 
-    synth.cancel();
+    traceRef.current.measure('resposta-ate-sintese', 'resposta', { keep: true });
+    // So cancela quando ha fala tocando ou na fila (cancel seguido de speak pode atrasar o inicio no Chrome).
+    // Sem o estado do navegador, cancela como antes.
+    if (typeof synth.speaking !== 'boolean' || synth.speaking || synth.pending) synth.cancel();
     clearSpeechTimers();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = payload?.tts?.language || 'pt-BR';
-    utterance.rate = 1;
-    // Voz brasileira explicita quando o navegador tiver uma (sem ela, pode sair a voz padrao do sistema).
-    const voices = voicesRef.current.length ? voicesRef.current : (synth.getVoices?.() || []);
-    const { voice } = pickPortugueseVoice(voices);
-    if (voice) utterance.voice = voice;
+    // Voz escolhida antes (voiceschanged); sem lista ainda, tenta uma vez agora, sem esperar. Sem nenhuma voz, a
+    // fala sai assim mesmo com lang pt-BR (nunca bloqueia a resposta).
+    let choice = voiceChoiceRef.current;
+    if (!choice || choice.preferencia !== vozAssistenteRef.current || !vozAindaDisponivel(choice, voicesRef.current)) {
+      const voices = voicesRef.current.length ? voicesRef.current : (synth.getVoices?.() || []);
+      choice = { ...escolherVozDoAssistente(voices, vozAssistenteRef.current), preferencia: vozAssistenteRef.current };
+      if (voices.length) {
+        voicesRef.current = voices;
+        voiceChoiceRef.current = choice;
+      }
+    }
+    aplicarVoz(utterance, choice);
+    traceRef.current.state('voz', choice.voice ? choice.perfil : 'padrao-do-navegador');
     utteranceRef.current = utterance;
     const finished = () => {
       if (utteranceRef.current !== utterance) return;
@@ -383,6 +419,7 @@ function VoiceAssistantPage() {
       if (utteranceRef.current !== utterance) return;
       clearTimeout(speechTimersRef.current.start);
       setSpeaking(true);
+      traceRef.current.measure('sintese-ate-onstart', 'sintese-pedida');
       traceRef.current.measure('inicio-da-voz', 'resposta');
       // Fim sem onend (Chrome): a fala ja nao esta tocando nem na fila.
       if (typeof synth.speaking === 'boolean') {
@@ -400,6 +437,7 @@ function VoiceAssistantPage() {
       synth.cancel();
       finished();
     }, SPEECH_START_TIMEOUT_MS);
+    traceRef.current.mark('sintese-pedida');
     synth.speak(utterance);
     return true;
   }, [clearSpeechTimers]);
@@ -736,6 +774,8 @@ function VoiceAssistantPage() {
     clearTimeout(session.noSpeechTimer);
     clearTimeout(session.maxTimer);
     setMic('finishing');
+    traceRef.current.measure('ultimo-resultado-ate-stop', 'ultimo-resultado', { keep: true });
+    if (session.pauseMs) traceRef.current.state('pausa-de-conclusao', `${session.pauseMs} ms`);
     traceRef.current.mark('stop-chamado');
     try {
       session.recognition.stop();
@@ -878,9 +918,10 @@ function VoiceAssistantPage() {
       clearTimeout(session.noSpeechTimer);
       clearTimeout(session.pauseTimer);
       if (shown && !session.finishing) {
+        session.pauseMs = pausaDeConclusao(session.finalText, session.interimText);
         session.pauseTimer = setTimeout(() => {
           if (isCurrent()) finishSession(session);
-        }, SPEECH_PAUSE_END_MS);
+        }, session.pauseMs);
       }
     };
 
@@ -993,14 +1034,22 @@ function VoiceAssistantPage() {
     enterStandby({ silent: true });
   }, [enterStandby]);
 
-  // Vozes do navegador: podem chegar depois da montagem (voiceschanged). Sem voz em portugues, a tela avisa.
+  // Vozes do navegador: podem chegar depois da montagem (voiceschanged). A voz da resposta e escolhida aqui, antes
+  // de qualquer resposta, e reaproveitada; troca de lista ou de preferencia escolhe de novo. Sem voz em portugues,
+  // a tela avisa.
   useEffect(() => {
     const synth = window.speechSynthesis;
     if (!synth || typeof synth.getVoices !== 'function') return undefined;
     const load = () => {
       const voices = synth.getVoices() || [];
       voicesRef.current = voices;
-      if (voices.length) setVoiceKind(pickPortugueseVoice(voices).kind);
+      if (!voices.length) {
+        voiceChoiceRef.current = null;
+        return;
+      }
+      const choice = escolherVozDoAssistente(voices, vozAssistente);
+      voiceChoiceRef.current = { ...choice, preferencia: vozAssistente };
+      setVoiceKind(choice.kind);
     };
     load();
     if (typeof synth.addEventListener === 'function') {
@@ -1012,7 +1061,7 @@ function VoiceAssistantPage() {
     return () => {
       if (synth.onvoiceschanged === load) synth.onvoiceschanged = previous || null;
     };
-  }, []);
+  }, [vozAssistente]);
 
   // Prazo da confirmacao (do backend): vencido, os botoes saem; o backend recusaria de qualquer forma.
   useEffect(() => {

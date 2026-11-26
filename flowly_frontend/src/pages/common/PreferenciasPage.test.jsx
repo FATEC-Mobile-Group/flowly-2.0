@@ -184,3 +184,84 @@ describe('sidebar', () => {
     expect(salvas('u-1').sidebarRecolhida).toBe(true);
   });
 });
+
+describe('voz do assistente (PR #69)', () => {
+  const DANIEL = { name: 'Microsoft Daniel - Portuguese (Brazil)', voiceURI: 'Microsoft Daniel - Portuguese (Brazil)', lang: 'pt-BR', localService: true };
+  const GOOGLE = { name: 'Google português do Brasil', voiceURI: 'Google português do Brasil', lang: 'pt-BR', localService: false };
+  let vozes;
+  let falas;
+  let utteranceOriginal;
+
+  beforeEach(() => {
+    vozes = [GOOGLE, DANIEL];
+    falas = [];
+    utteranceOriginal = global.SpeechSynthesisUtterance;
+    global.SpeechSynthesisUtterance = class {
+      constructor(text) { this.text = text; }
+    };
+    window.speechSynthesis = {
+      getVoices: vi.fn(() => vozes),
+      speak: vi.fn((fala) => falas.push(fala)),
+      cancel: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    };
+  });
+
+  afterEach(() => {
+    global.SpeechSynthesisUtterance = utteranceOriginal;
+    delete window.speechSynthesis;
+  });
+
+  test('tecnologica por padrao; escolha salva por conta; previa com frase fixa e a voz escolhida, sem backend', async () => {
+    const { default: apiClient } = await import('../../config/apiClient');
+    renderCentral();
+    const grupo = screen.getByRole('radiogroup', { name: 'Voz do assistente' });
+    expect(within(grupo).getByRole('radio', { name: /Voz tecnológica/ })).toHaveAttribute('aria-checked', 'true');
+    const chamadasApi = apiClient.get.mock.calls.length;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ouvir prévia' }));
+    expect(falas).toHaveLength(1);
+    expect(falas[0].text).toMatch(/assistente do Flowly/);
+    expect(falas[0].voice).toBe(DANIEL);
+    expect([falas[0].pitch, falas[0].rate, falas[0].volume, falas[0].lang]).toEqual([0.75, 1.05, 1, 'pt-BR']);
+    expect(screen.getByRole('button', { name: 'Parar prévia' })).toBeInTheDocument();
+    act(() => falas[0].onend());
+    expect(screen.getByRole('button', { name: 'Ouvir prévia' })).toBeInTheDocument();
+
+    fireEvent.click(within(grupo).getByRole('radio', { name: /Voz original/ }));
+    expect(salvas('u-1').vozAssistente).toBe('original');
+    fireEvent.click(screen.getByRole('button', { name: 'Ouvir prévia' }));
+    expect(falas[1].voice).toBe(GOOGLE);
+    expect(falas[1].rate).toBe(1);
+    expect(falas[1].pitch).toBeUndefined();
+    expect(apiClient.get.mock.calls.length).toBe(chamadasApi);
+
+    // Outra conta continua com o padrao.
+    entrarComo('u-2');
+    expect(lerPreferencias().vozAssistente).toBe('tecnologica');
+  });
+
+  test('Daniel ausente: aviso de que vale a voz original; restaurar padroes volta para a tecnologica', () => {
+    vozes = [GOOGLE];
+    definirPreferencia('vozAssistente', 'original');
+    renderCentral();
+    expect(screen.queryByText(/não está instalada/)).toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: /Voz tecnológica/ }));
+    expect(screen.getByText(/A voz tecnológica não está instalada neste navegador/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: /Voz original/ }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restaurar preferências padrão' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Restaurar' }));
+    expect(screen.getByRole('radio', { name: /Voz tecnológica/ })).toHaveAttribute('aria-checked', 'true');
+    expect(lerPreferencias().vozAssistente).toBe('tecnologica');
+  });
+
+  test('valor invalido salvo vira o padrao', () => {
+    localStorage.setItem('flowly-preferences:u-1', JSON.stringify({ vozAssistente: 'robotica' }));
+    redefinirCacheDePreferencias();
+    expect(lerPreferencias().vozAssistente).toBe('tecnologica');
+    definirPreferencia('vozAssistente', 'outra');
+    expect(lerPreferencias().vozAssistente).toBe('tecnologica');
+  });
+});

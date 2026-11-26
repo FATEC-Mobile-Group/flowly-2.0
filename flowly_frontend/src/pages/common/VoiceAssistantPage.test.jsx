@@ -1149,15 +1149,17 @@ describe('Escuta limitada a uma fala: pausa nao corta, sem fala fecha, nada parc
     vi.advanceTimersByTime(ms);
   });
 
+  // PR #69: depois de um resultado final que parece completo, a pausa que conclui e de 1400 ms (antes, 2000 ms). O
+  // navegador so marca o trecho como final depois de um silencio, entao a tolerancia real a pausas e maior que isso.
   test('pausa curta no meio da frase nao conclui; a pausa final conclui com stop e envia a frase inteira uma vez', async () => {
     await withFakeClock(async () => {
       render(<VoiceAssistantPage />);
       const session = startListening();
       fire(session.onresult, resultEvent([['mudar status da tarefa relatório final', true]]));
-      advance(1500); // pausa para pensar: no modo nao continuo o navegador ja teria cortado aqui
+      advance(1300); // pausa para pensar: no modo nao continuo o navegador ja teria cortado aqui
       expect(session.stop).not.toHaveBeenCalled();
       fire(session.onresult, resultEvent([['mudar status da tarefa relatório final', true], ['para concluído', true]]));
-      advance(1999);
+      advance(1399);
       expect(session.stop).not.toHaveBeenCalled();
       advance(1);
       expect(session.stop).toHaveBeenCalledTimes(1);
@@ -1166,6 +1168,39 @@ describe('Escuta limitada a uma fala: pausa nao corta, sem fala fecha, nada parc
       expect(sentCommands()).toEqual([]); // so depois do onend
       fire(session.onend);
       expect(sentCommands()).toEqual(['mudar status da tarefa relatório final para concluído']);
+    });
+  });
+
+  test('frase que termina em palavra de ligacao mantem os 2000 ms: pausa natural de 1,5 s nao corta', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      const session = startListening();
+      fire(session.onresult, resultEvent([['mudar status da tarefa relatório final para', true]]));
+      advance(1500);
+      expect(session.stop).not.toHaveBeenCalled();
+      fire(session.onresult, resultEvent([['mudar status da tarefa relatório final para', true], ['concluído', true]]));
+      advance(1400);
+      expect(session.stop).toHaveBeenCalledTimes(1);
+      fire(session.onend);
+      expect(sentCommands()).toEqual(['mudar status da tarefa relatório final para concluído']);
+    });
+  });
+
+  test('resultado ainda parcial mantem os 2000 ms; o final completo encurta para 1400 ms', async () => {
+    await withFakeClock(async () => {
+      render(<VoiceAssistantPage />);
+      const session = startListening();
+      fire(session.onresult, resultEvent([['criar tarefa revisar', false]]));
+      advance(1999);
+      expect(session.stop).not.toHaveBeenCalled();
+      fire(session.onresult, resultEvent([['criar tarefa revisar documentação', true]]));
+      advance(1399);
+      expect(session.stop).not.toHaveBeenCalled();
+      advance(1);
+      expect(session.stop).toHaveBeenCalledTimes(1);
+      fire(session.onend);
+      fire(session.onend);
+      expect(sentCommands()).toEqual(['criar tarefa revisar documentação']);
     });
   });
 

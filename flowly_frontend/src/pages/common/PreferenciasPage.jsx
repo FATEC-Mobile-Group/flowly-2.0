@@ -1,7 +1,8 @@
-import React, { useId, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  FaBell, FaCheck, FaComments, FaDesktop, FaMicrophone, FaMoon, FaPalette, FaShieldAlt, FaSun, FaUndo, FaUserCircle,
+  FaBell, FaCheck, FaComments, FaDesktop, FaMicrophone, FaMoon, FaPalette, FaShieldAlt, FaStop, FaSun, FaUndo, FaUserCircle,
+  FaVolumeUp,
 } from 'react-icons/fa';
 import Sidebar from '../../components/layout/Sidebar';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
@@ -9,6 +10,7 @@ import { useFotoPerfil } from '../../components/layout/useFotoPerfil';
 import { useNaoLidas } from '../../components/notifications/notificationStore';
 import { useTheme } from '../../config/ThemeContext';
 import { definirPreferencia, restaurarPreferencias, usePreferencias } from '../../config/preferencias';
+import { FRASE_DE_PREVIA, aplicarVoz, encontrarVozTecnologica, escolherVozDoAssistente } from '../../utils/assistantVoice';
 import '../../styles/pages/dashboard/DashboardGeral.css';
 import '../../styles/pages/common/PreferenciasPage.css';
 
@@ -42,6 +44,28 @@ function Interruptor({ titulo, descricao, ativo, onAlterar }) {
   );
 }
 
+const VOZES = [
+  { id: 'tecnologica', rotulo: 'Voz tecnológica', descricao: 'Masculina, grave e um pouco mais rápida (Microsoft Daniel, pt-BR).' },
+  { id: 'original', rotulo: 'Voz original', descricao: 'A voz em português do Brasil usada até agora pelo assistente.' },
+];
+
+// Vozes do navegador (podem chegar depois: voiceschanged). So para saber se a voz tecnologica existe e para a previa.
+function useVozesDoNavegador() {
+  const [vozes, setVozes] = useState([]);
+  useEffect(() => {
+    const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
+    if (!synth || typeof synth.getVoices !== 'function') return undefined;
+    const carregar = () => setVozes(synth.getVoices() || []);
+    carregar();
+    if (typeof synth.addEventListener === 'function') {
+      synth.addEventListener('voiceschanged', carregar);
+      return () => synth.removeEventListener('voiceschanged', carregar);
+    }
+    return undefined;
+  }, []);
+  return vozes;
+}
+
 function Cartao({ icone: Icone, titulo, descricao, children }) {
   const id = useId();
   return (
@@ -70,6 +94,43 @@ export default function PreferenciasPage() {
   const nome = localStorage.getItem('nome') || 'Usuário';
   const idTema = useId();
   const idPaleta = useId();
+  const idVoz = useId();
+  const vozes = useVozesDoNavegador();
+  const [tocandoPrevia, setTocandoPrevia] = useState(false);
+  const previaRef = useRef(null);
+  const sintetizador = typeof window !== 'undefined' ? window.speechSynthesis : null;
+  const podeFalar = Boolean(sintetizador) && typeof SpeechSynthesisUtterance !== 'undefined';
+  const tecnologicaDisponivel = Boolean(encontrarVozTecnologica(vozes));
+
+  // Sair da pagina interrompe a previa (so ela: a central nao tem outra fala).
+  useEffect(() => () => {
+    if (previaRef.current && window.speechSynthesis) window.speechSynthesis.cancel();
+  }, []);
+
+  // Previa: frase fixa, com a voz e os ajustes da opcao escolhida. Nao liga o microfone nem consulta o backend.
+  const ouvirPrevia = () => {
+    if (!podeFalar) return;
+    if (tocandoPrevia) {
+      previaRef.current = null;
+      sintetizador.cancel();
+      setTocandoPrevia(false);
+      return;
+    }
+    sintetizador.cancel();
+    const fala = new SpeechSynthesisUtterance(FRASE_DE_PREVIA);
+    fala.lang = 'pt-BR';
+    aplicarVoz(fala, escolherVozDoAssistente(vozes.length ? vozes : (sintetizador.getVoices?.() || []), preferencias.vozAssistente));
+    const terminar = () => {
+      if (previaRef.current !== fala) return;
+      previaRef.current = null;
+      setTocandoPrevia(false);
+    };
+    fala.onend = terminar;
+    fala.onerror = terminar;
+    previaRef.current = fala;
+    setTocandoPrevia(true);
+    sintetizador.speak(fala);
+  };
 
   const alterar = (nomePreferencia) => (valor) => {
     definirPreferencia(nomePreferencia, valor);
@@ -194,14 +255,43 @@ export default function PreferenciasPage() {
             />
           </Cartao>
 
-          <Cartao icone={FaMicrophone} titulo="Assistente">
-            <p className="preferencia-descricao">
-              O assistente de voz não tem preferências salvas: microfone e conversa são controlados na própria página.
-            </p>
-            <Link to="/assistente" className="preferencias-atalho">
-              <FaMicrophone aria-hidden="true" />
-              <span>Abrir o assistente</span>
-            </Link>
+          <Cartao icone={FaMicrophone} titulo="Assistente" descricao="Voz usada nas respostas faladas do assistente.">
+            <div className="preferencia-grupo">
+              <span id={idVoz} className="preferencia-titulo">Voz do assistente</span>
+              <div className="preferencias-opcoes" role="radiogroup" aria-labelledby={idVoz}>
+                {VOZES.map((voz) => (
+                  <button
+                    key={voz.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={preferencias.vozAssistente === voz.id}
+                    className={`preferencias-opcao preferencias-voz ${preferencias.vozAssistente === voz.id ? 'is-selecionada' : ''}`}
+                    onClick={() => alterar('vozAssistente')(voz.id)}
+                  >
+                    <span className="preferencias-opcao-rotulo">
+                      {voz.rotulo}
+                      {preferencias.vozAssistente === voz.id && <FaCheck className="preferencias-check" aria-hidden="true" />}
+                    </span>
+                    <span className="preferencia-descricao">{voz.descricao}</span>
+                  </button>
+                ))}
+              </div>
+              {preferencias.vozAssistente === 'tecnologica' && vozes.length > 0 && !tecnologicaDisponivel && (
+                <p className="preferencia-descricao preferencias-nota" role="status">
+                  A voz tecnológica não está instalada neste navegador. O assistente usa a voz original em português.
+                </p>
+              )}
+            </div>
+            <div className="preferencias-acoes-voz">
+              <button type="button" className="preferencias-restaurar" onClick={ouvirPrevia} disabled={!podeFalar}>
+                {tocandoPrevia ? <FaStop aria-hidden="true" /> : <FaVolumeUp aria-hidden="true" />}
+                <span>{tocandoPrevia ? 'Parar prévia' : 'Ouvir prévia'}</span>
+              </button>
+              <Link to="/assistente" className="preferencias-atalho">
+                <FaMicrophone aria-hidden="true" />
+                <span>Abrir o assistente</span>
+              </Link>
+            </div>
           </Cartao>
 
           <Cartao icone={FaUserCircle} titulo="Conta">
@@ -221,8 +311,8 @@ export default function PreferenciasPage() {
 
           <Cartao icone={FaUndo} titulo="Restaurar padrões">
             <p className="preferencia-descricao">
-              Volta ao tema escuro com a paleta roxa, fundo animado, barra lateral expandida, avisos de mensagens e envio com
-              Enter. Não altera seus dados, tarefas, notificações nem a segurança da conta.
+              Volta ao tema escuro com a paleta roxa, fundo animado, barra lateral expandida, avisos de mensagens, envio com
+              Enter e voz tecnológica do assistente. Não altera seus dados, tarefas, notificações nem a segurança da conta.
             </p>
             <button type="button" className="preferencias-restaurar" onClick={() => setConfirmando(true)}>
               <FaUndo aria-hidden="true" />
